@@ -1,0 +1,11 @@
+---
+title: "notebook"
+output: html_document
+date: "2023-09-25"
+---
+
+Ideas:
+- algatr pipeline - GDM (+ kmeans clustering), MMRR, LFMM, RDA
+- wingen
+- DUI/IUD/UDI?
+- EEMS

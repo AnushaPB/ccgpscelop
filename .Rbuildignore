@@ -1,0 +1,4 @@
+^renv$
+^renv\.lock$
+^ccgpscelop\.Rproj$
+^\.Rproj\.user$
