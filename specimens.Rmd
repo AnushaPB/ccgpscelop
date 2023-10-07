@@ -346,7 +346,7 @@ tracker_final <-
     # create priority column
     priority = case_when(!is.na(p1) ~ "P1",!is.na(p2) ~ "P2",!is.na(p3) ~ "P3"),
     # keep track of museums for requests
-    museum = case_when(is.na(p1) ~ gsub(" ", "", gsub("nearby", "", gsub("request", "", note) ))),
+    near_museum = case_when(is.na(p1) ~ gsub(" ", "", gsub("nearby", "", gsub("request", "", note) ))),
     # keep track of which CCGP samples have specimens that we can access
     genome_and_specimen = !is.na(p1) | !is.na(p2),
     # keep track of which CCGP samples have specimens or nearby options
@@ -388,7 +388,7 @@ ggplot() +
 # color coded by museum for request
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = tracker_final, aes(x = x, y = y, col = museum)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = near_museum)) +
   theme_void()
 
 # color coded by what we have specimens and CCGP data for
