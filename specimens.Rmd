@@ -7,11 +7,9 @@ library(rvertnet)
 library(readxl)
 library(tidyverse)
 library(sf)
+library(tigris)
 ```
 ```{r}
-# Load the tigris package
-library(tigris)
-
 # Download the California shapefile
 california <- states(cb = TRUE, resolution = "20m", class = "sf") %>%
   filter(STUSPS == "CA")
@@ -62,6 +60,13 @@ cas <-
     hastissue = TRUE
   )
 
+cas$data <- 
+  cas$data %>% 
+  mutate(x = as.numeric(decimallongitude), 
+         y = as.numeric(decimallatitude),
+         hasSpecimen = TRUE, 
+         SampleID = paste0(institutioncode, catalognumber))
+
 lacm <-
   searchbyterm(
     scientificname = "Sceloporus occidentalis",
@@ -76,50 +81,42 @@ lacm <-
     hastissue = TRUE
   )
 
+lacm$data <- 
+  lacm$data %>% 
+  mutate(x = as.numeric(decimallongitude), 
+         y = as.numeric(decimallatitude),
+         hasSpecimen = TRUE, 
+         SampleID = paste0(institutioncode, catalognumber)) %>%
+  # remove any without catalogs (just tissue)
+  filter(!is.na(catalognumber))
+
+# LOOKING AT NOTES EVERYTHING IS TISSUE
+
+# bigsearch(
+#     scientificname = "Sceloporus occidentalis",
+#     stateprovince = "California",
+#     mappable = TRUE,
+#     vntype = "specimen",
+#     # couldn't filter by sex:
+#     #sex = "male",
+#     year = '>=1995',
+#     institutioncode = "MVZ",
+#     email = "anusha.bishop@berkeley.edu",
+#     rfile = "MVZ_specimens",
+#     hastissue = TRUE
+# )
+
 mvz <- read_csv("data/MVZ_rvertnet.csv")
+mvz <- 
+  mvz %>%
+  mutate(
+    x = as.numeric(decimallongitude),
+    y = as.numeric(decimallatitude),
+    hasSpecimen = TRUE,
+    SampleID = gsub(":Herp:", "", catalognumber)
+  )
 
-bigsearch(
-    scientificname = "Sceloporus occidentalis",
-    stateprovince = "California",
-    mappable = TRUE,
-    vntype = "specimen",
-    # couldn't filter by sex:
-    #sex = "male",
-    year = '>=1995',
-    institutioncode = "MVZ",
-    email = "anusha.bishop@berkeley.edu",
-    rfile = "MVZ_specimens",
-    hastissue = TRUE
-)
 
-bigsearch(
-  Genus = "Sceloporus",
-  SpecificEpithet = "occidentalis",
-  stateprovince = "California",
-  mappable = TRUE,
-  vntype = "specimen",
-  # couldn't filter by sex:
-  #sex = "male",
-  year = '>=1995',
-  institutioncode = "LACM",
-  email = "anusha.bishop@berkeley.edu",
-  rfile = "LACM_specimens",
-  hastissue = TRUE
-)
-bigsearch(
-  Genus = "Sceloporus",
-  SpecificEpithet = "occidentalis",
-  stateprovince = "California",
-  mappable = TRUE,
-  vntype = "specimen",
-  # couldn't filter by sex:
-  #sex = "male",
-  year = '>=1995',
-  institutioncode = "CAS",
-  email = "anusha.bishop@berkeley.edu",
-  rfile = "CAS_specimens",
-  hastissue = TRUE
-)
 ```
 
 # P1: CCGP scanned (All MVZ)
@@ -138,27 +135,19 @@ tracker1 <-
 ```{r}
 ccgp_lacm_samples <- 
   ccgp_seq %>%
-  filter(grepl("LACM", SampleID))
-
-lacm$data$hasSpecimen <- TRUE
-lacm$data$SampleID <- paste0(lacm$data$institutioncode, lacm$data$catalognumber)
-
-ccgp_lacm_samples <- 
-  left_join(ccgp_lacm_samples, lacm$data)
+  filter(grepl("LACM", SampleID)) %>%
+  left_join(lacm$data, by = "SampleID")
 
 stopifnot(all(ccgp_lacm_samples$hasSpecimen))
+unique(ccgp_lacm_samples$lifestage)
 
 ccgp_cas_samples <- 
   ccgp_seq %>%
-  filter(grepl("CAS", SampleID))
-
-cas$data$hasSpecimen <- TRUE
-cas$data$SampleID <- paste0(cas$data$institutioncode, cas$data$catalognumber)
-
-ccgp_cas_samples <- 
-  left_join(ccgp_cas_samples, cas$data)
+  filter(grepl("CAS", SampleID)) %>%
+  left_join(cas$data, by = "SampleID")
 
 stopifnot(all(ccgp_cas_samples$hasSpecimen))
+unique(ccgp_cas_samples$lifestage)
 
 tracker2 <-
   tracker1 %>%
@@ -168,71 +157,126 @@ tracker2 <-
 
 ```{r}
 
-tracker_sf <- 
-  st_as_sf(tracker2, coords = c("x", "y")) %>% 
-  st_set_crs(st_crs(4326)) %>%
-  st_transform(st_crs(3310))
-
-mvz$SampleID <- gsub(":Herp:", "", mvz$catalognumber)
-mvz_sf <- 
-  st_as_sf(mvz, coords = c("decimallongitude", "decimallatitude")) %>% 
-  st_set_crs(st_crs(4326)) %>%
-  st_transform(st_crs(3310))
-
-close_specimen <- function(i, tracker_sf, mvz_sf, buffer = 10000){
-  ccgp_sample <- tracker_sf[i,]
+close_specimens <- function(i, samples_sf, specimens, buffer = 10000){
+  sample <- samples_sf[i,]
   
   # get distances
-  dists <- as.numeric(st_distance(ccgp_sample, mvz_sf))
-  names(dists) <- mvz_sf$SampleID
+  dists <- as.numeric(st_distance(sample, specimens))
+  names(dists) <- specimens$SampleID
   dists <- dists[as.numeric(dists) < buffer]
   
-  if (length(dists) ==0) return(data.frame(SampleID = ccgp_sample$SampleID))
+  if (length(dists) ==0) return(data.frame(SampleID = sample$SampleID))
   
   # get ID
   dists <- dists[order(dists)]
   sid <- names(dists)
-  sid <- sid[!(sid %in% tracker_sf$SampleID)]
-  if (length(sid) == 0) return(data.frame(SampleID = ccgp_sample$SampleID))
+  sid <- sid[!(sid %in% samples_sf$SampleID)]
+  if (length(sid) == 0) return(data.frame(SampleID = sample$SampleID))
   sid <- t(sid)
   colnames(sid) <- paste0("Specimen", 1:ncol(sid))
   
-  return(data.frame(SampleID = ccgp_sample$SampleID, sid))
+  return(data.frame(SampleID = sample$SampleID, sid))
 }
 
-get_samples <- 
-  map(1:nrow(tracker_sf), ~close_specimen(.x, tracker_sf, mvz_sf)) %>%
-  bind_rows() 
+close_museum <- function(samples, museums){
+  samples_sf <- 
+    st_as_sf(samples, coords = c("x", "y")) %>% 
+    st_set_crs(st_crs(4326)) %>%
+    st_transform(st_crs(3310))
+
+  museums_sf <- 
+    st_as_sf(museums, coords = c("x", "y")) %>% 
+    st_set_crs(st_crs(4326)) %>%
+    st_transform(st_crs(3310))
+
+  get_samples <- 
+    map(1:nrow(samples_sf), ~close_specimens(.x, samples_sf, museums_sf)) %>%
+    bind_rows() 
+  
+  samples_df <- 
+    samples %>%
+    left_join(get_samples, by = "SampleID") %>%
+    mutate(p3 = case_when(is.na(p1) & is.na(p2) & !is.na(Specimen1) ~ "nearby"),
+           near_specimen = Specimen1)
+  
+  near_coords <-
+    samples_df %>%
+    left_join(museums, by = c("near_specimen" = "SampleID")) %>%
+    select(x.y, y.y, near_specimen, lifestage, sex) %>%
+    mutate(near_instid = gsub("[0-9]", "", near_specimen)) %>%
+    rename(near_x = x.y, near_y = y.y, near_lifestage = lifestage, near_sex = sex) %>%
+    distinct()
+  
+  samples_df <-
+    # need to figure out how to deal with duplicates
+    left_join(samples_df, near_coords, by = "near_specimen")
+  
+  return(samples_df)
+}
+
+
+museums <- 
+  bind_rows(select(mvz, x, y, SampleID, lifestage, sex),
+            select(lacm$data, x, y, SampleID, lifestage, sex),
+            select(cas$data, x, y, SampleID, lifestage, sex)) %>%
+  # remove duplicates
+  # check for duplicates: 
+  #museums %>% filter(duplicated(.))
+  #filter(lifestage == "Adult", sex == "male") %>%
+  filter(!(lifestage %in% c("juvenile", "hatchling", "subadult", "Juv"))) %>%
+  distinct()
 
 tracker3 <- 
-  tracker2 %>%
-  left_join(get_samples) %>%
-  mutate(p3 = case_when(is.na(p1) & is.na(p2) & !is.na(Specimen1) ~ "nearby MVZ specimen"),
-         near_specimen = Specimen1)
-
-near_coords <-
-  tracker3 %>%
-  mutate(SampleID = near_specimen) %>%
-  left_join(mvz) %>%
-  select(decimallatitude, decimallongitude, near_specimen) %>%
-  rename(near_x = decimallongitude, near_y = decimallatitude)
-
-tracker3 <-
-  left_join(tracker3, near_coords)
-
-tracker3 <- 
-  tracker3 %>%
+  close_museum(tracker2, museums) %>%
+  mutate(p3 = case_when(!is.na(p3) ~ paste(p3, near_instid))) %>%
   mutate(note = case_when(!is.na(p1) ~ p1,
-                           !is.na(p2) ~ p2,
-                           !is.na(p3) ~ p3))
+                          !is.na(p2) ~ p2,
+                          !is.na(p3) ~ p3)) %>%
+  left_join(select(museums, SampleID, sex, lifestage), by = "SampleID") %>%
+  mutate(genome_and_specimen = !is.na(p1) | !is.na(p2),
+         genome_and_specimenORnearby = !is.na(note))
+
 ggplot() + 
   geom_sf(data = california) +
   geom_point(data = tracker3, aes(x = x, y = y, col = note)) +
   theme_void()
 
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker3, aes(x = x, y = y, col = genome_and_specimen)) +
+  theme_void()
+
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker3[!is.na(tracker3$p3),],
+             aes(x = near_x, y = near_y, col = near_lifestage, pch = near_sex)) +
+  theme_void()
+
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker3[is.na(tracker3$p3),],
+             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  theme_void()
 ```
 
 
-# next steps : check near LACM
-# check near: CAS
+```{r}
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = lacm$data[lacm$data$x < 110, ],
+             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  theme_void()
+
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = mvz,
+             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  theme_void()
+
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = cas$data,
+             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  theme_void()
+```
 
