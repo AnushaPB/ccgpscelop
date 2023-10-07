@@ -1,60 +1,93 @@
 ---
-output: html_document
-date: "2023-10-06"
+output: 
+  html_document
 ---
+
+```{r setup, include=FALSE}
+# Set default chunk options for all code chunks
+knitr::opts_chunk$set(
+  echo = FALSE,      # Do not display code by default
+  message = FALSE,   # Do not display messages by default
+  warning = FALSE, # Do not display warnings by default
+  result = FALSE
+  )
+```
+
 ```{r}
 library(rvertnet)
 library(readxl)
 library(tidyverse)
 library(sf)
 library(tigris)
+library(ggpubr)
 ```
-```{r}
-# Download the California shapefile
-california <- states(cb = TRUE, resolution = "20m", class = "sf") %>%
-  filter(STUSPS == "CA")
 
-# Plot the California map
-ggplot() +
-  geom_sf(data = california) +
-  labs(title = "California Map")
+```{r, include = FALSE}
+# Download California shapefile for plotting
+california <-
+  states(cb = TRUE, resolution = "20m", class = "sf") %>%
+  filter(STUSPS == "CA")
 ```
 
 # Scanning plan
+
 P1 - MVZ CCGP specimen 
+
 P2 - LACNHM/CalAcad CCGP specimen →  check age class/ sex and that there is a specimen, it is not just a tissue → loan request actual specimens
-Everything remaining will not have CCGP genomic data
-P3 - find MVZ specimens that are close to the CCGP specimens (5 - 10km) - that have tissues (that will give us specimens to quantify phenotypic diversity nearby and then also potentially get more genomic data) - INCLUDE ones with and without specimens so that we know what we have for sites, MAKE SURE THE SUGGESTED ONES ARE NOT OTHER CCGP SPECIMENS
+
+*Everything remaining will not have CCGP genomic data*
+
+P3 - find museum specimens that are close to the CCGP specimens (5 - 10km) - that have tissues (that will give us specimens to quantify phenotypic diversity nearby and then also potentially get more genomic data) - INCLUDE ones with and without specimens so that we know what we have for sites, MAKE SURE THE SUGGESTED ONES ARE NOT OTHER CCGP SPECIMENS
+
 P3A ADULT/MALE/5km
+
 P3B NO AGE CLASS DATA OR ADULT/ANY SEX/10km 
-P4 - find LACNHM/CalAcad specimens that are close to the CCGP specimens (5 - 10km)
-P5 - look for any uncaptured environmental diversity across the state (unlikely) for which we would get specimens
+
+P4 - look for any uncaptured environmental diversity across the state (unlikely) for which we would get specimens
 
 
 # Read in CCGP sequencing data and CT specimens
 ```{r}
+# CCGP samples 
 ccgp_seq <- read_table("data/58-Sceloporus.coords.txt", col_names = FALSE) 
 names(ccgp_seq) <- c("SampleID", "x", "y")
-tracker <- ccgp_seq
 
+# Erin's CT specimens
 ct_scanned <- 
   read_csv("data/Copy of CT_scanning - Sheet1.csv") %>%
   mutate(SampleID = paste0(museum_ID, specimen_no))
-```
-# VertNet
 
-Filter to SCOC, California, MVZ, has coordinates, age class = adult, sex = M (?), year > 1995, has tissues
-```{r}
-# read in scelop data
+# I am going to use this df called "tracker" to keep track of the specimens and what type they are)
+tracker <- ccgp_seq
+```
+
+# VertNet Data
+
+Filters:
+
+- Species
+
+- California
+
+- MVZ/CAS/LACM
+
+- has coordinates
+
+- year > 1995
+
+- has tissues
+
+- Late on I will filter for age class = adult, sex = M
+
+```{r, cache = TRUE}
+# CAS
 cas <-
   searchbyterm(
     scientificname = "Sceloporus occidentalis",
     stateprovince = "California",
     mappable = TRUE,
     vntype = "specimen",
-    #sex = "male",
-    #year = '>=1995',
-    #lifestage = "adult",
+    year = '>=1995',
     institutioncode = "CAS",
     limit = 10000,
     hastissue = TRUE
@@ -65,218 +98,431 @@ cas$data <-
   mutate(x = as.numeric(decimallongitude), 
          y = as.numeric(decimallatitude),
          hasSpecimen = TRUE, 
+         # format ID to match CCGP
          SampleID = paste0(institutioncode, catalognumber))
 
+# LACM
 lacm <-
   searchbyterm(
     scientificname = "Sceloporus occidentalis",
     stateprovince = "California",
     mappable = TRUE,
     vntype = "specimen",
-    #sex = "male",
-    #year = '>=1995',
-    #lifestage = "adult",
+    year = '>=1995',
     institutioncode = "LACM",
     limit = 10000,
     hastissue = TRUE
   )
 
+# note: the LACM query doesn't seem to always properly filter full specimens only, 
+# make sure to double check that there are actually specimens
 lacm$data <- 
   lacm$data %>% 
   mutate(x = as.numeric(decimallongitude), 
          y = as.numeric(decimallatitude),
          hasSpecimen = TRUE, 
+         # format ID to match CCGP
          SampleID = paste0(institutioncode, catalognumber)) %>%
-  # remove any without catalogs (just tissue)
+  # remove any without catalogs (just tissue samples)
   filter(!is.na(catalognumber))
 
-# LOOKING AT NOTES EVERYTHING IS TISSUE
 
-# bigsearch(
-#     scientificname = "Sceloporus occidentalis",
-#     stateprovince = "California",
-#     mappable = TRUE,
-#     vntype = "specimen",
-#     # couldn't filter by sex:
-#     #sex = "male",
-#     year = '>=1995',
-#     institutioncode = "MVZ",
-#     email = "anusha.bishop@berkeley.edu",
-#     rfile = "MVZ_specimens",
-#     hastissue = TRUE
-# )
-
-mvz <- read_csv("data/MVZ_rvertnet.csv")
-mvz <- 
-  mvz %>%
-  mutate(
-    x = as.numeric(decimallongitude),
-    y = as.numeric(decimallatitude),
-    hasSpecimen = TRUE,
-    SampleID = gsub(":Herp:", "", catalognumber)
+mvz <-
+  searchbyterm(
+    scientificname = "Sceloporus occidentalis",
+    stateprovince = "California",
+    mappable = TRUE,
+    vntype = "specimen",
+    year = '>=1995',
+    institutioncode = "MVZ",
+    limit = 10000,
+    hastissue = TRUE
   )
 
-
+mvz$data <- 
+  mvz$data %>% 
+  # format ID to match CCGP
+  mutate(x = as.numeric(decimallongitude), 
+         y = as.numeric(decimallatitude),
+         hasSpecimen = TRUE, 
+         SampleID = gsub(":Herp:", "", catalognumber)) 
 ```
 
 # P1: CCGP scanned (All MVZ)
 ```{r}
+# join CCGP and Erin CT data to determine scanned specimens
 p1 <- 
   left_join(ccgp_seq, ct_scanned, by = "SampleID") %>%
   drop_na(specimen_no)
 
 tracker1 <- 
   tracker %>%
-  mutate(instid = gsub("[0-9]", "", SampleID)) %>%
+  # update tracker with information about which samples have been scanned
   mutate(p1 = case_when(SampleID %in% p1$SampleID ~ "scanned", TRUE ~ NA))
+
+# TODO: EW why does it seem like there are so few scanned specimens? Can you double check I have formatted the SampleIDs correctly?
+tracker1 %>% filter(!is.na(p1))
 ```
 
 # P2: CCGP not scanned, from LACM/CAS
 ```{r}
-ccgp_lacm_samples <- 
+# join CCGP data with LACM records to get LACM specimens
+ccgp_lacm <- 
   ccgp_seq %>%
   filter(grepl("LACM", SampleID)) %>%
   left_join(lacm$data, by = "SampleID")
 
-stopifnot(all(ccgp_lacm_samples$hasSpecimen))
-unique(ccgp_lacm_samples$lifestage)
+# check if all of the samples have specimens
+stopifnot(all(ccgp_lacm$basisofrecord == "PreservedSpecimen"))
 
-ccgp_cas_samples <- 
+# check lifestages
+unique(ccgp_lacm$lifestage)
+
+# join CCGP data with CAS records to get CAS specimens
+ccgp_cas <- 
   ccgp_seq %>%
   filter(grepl("CAS", SampleID)) %>%
   left_join(cas$data, by = "SampleID")
 
-stopifnot(all(ccgp_cas_samples$hasSpecimen))
-unique(ccgp_cas_samples$lifestage)
+# check if all of the samples have specimens
+stopifnot(all(ccgp_cas$basisofrecord == "PreservedSpecimen"))
 
+# check lifestages
+# TODO: EW is Juvenile/Adult (J/A) okay or should we find a replacement?
+unique(ccgp_cas$lifestage)
+
+# update tracker to include specimens that need to be requested
 tracker2 <-
   tracker1 %>%
-  mutate(p2 = case_when(SampleID %in% ccgp_cas_samples$SampleID ~ "request from CAS", 
-                        SampleID %in% ccgp_lacm_samples$SampleID ~ "request from LACM"))
+  mutate(p2 = case_when(SampleID %in% ccgp_cas$SampleID ~ "request CAS", 
+                        SampleID %in% ccgp_lacm$SampleID ~ "request LACM"))
 ```
 
+# P3: Finding close museum specimens
+
 ```{r}
-
-close_specimens <- function(i, samples_sf, specimens, buffer = 10000){
-  sample <- samples_sf[i,]
-  
-  # get distances
-  dists <- as.numeric(st_distance(sample, specimens))
-  names(dists) <- specimens$SampleID
-  dists <- dists[as.numeric(dists) < buffer]
-  
-  if (length(dists) ==0) return(data.frame(SampleID = sample$SampleID))
-  
-  # get ID
-  dists <- dists[order(dists)]
-  sid <- names(dists)
-  sid <- sid[!(sid %in% samples_sf$SampleID)]
-  if (length(sid) == 0) return(data.frame(SampleID = sample$SampleID))
-  sid <- t(sid)
-  colnames(sid) <- paste0("Specimen", 1:ncol(sid))
-  
-  return(data.frame(SampleID = sample$SampleID, sid))
-}
-
+# Function to find close museum specimens
+#
+# samples - samples data frame
+# museums - museum specimens data frame
 close_museum <- function(samples, museums){
+  
+  # Convert samples and museums to spatial objects with a common projected CRS
+  # (this is necessary for calculating distances)
   samples_sf <- 
     st_as_sf(samples, coords = c("x", "y")) %>% 
+    # WGS 84 - lat/long
     st_set_crs(st_crs(4326)) %>%
+    # CA Albers
     st_transform(st_crs(3310))
 
   museums_sf <- 
     st_as_sf(museums, coords = c("x", "y")) %>% 
+    # WGS 84 - lat/long
     st_set_crs(st_crs(4326)) %>%
+    # CA Albers
     st_transform(st_crs(3310))
 
+  # Get close specimens and make into df
   get_samples <- 
     map(1:nrow(samples_sf), ~close_specimens(.x, samples_sf, museums_sf)) %>%
     bind_rows() 
   
+  # Merge close samples with original samples data frame
   samples_df <- 
     samples %>%
     left_join(get_samples, by = "SampleID") %>%
-    mutate(p3 = case_when(is.na(p1) & is.na(p2) & !is.na(Specimen1) ~ "nearby"),
+    # add tracker information that these are nearby specimens
+    # only adds this if p1/p2 are NA (i.e., the original specimen is not available)
+    mutate(p3 = case_when(is.na(p1) & is.na(p2) & !is.na(Specimen1) ~ "request nearby"),
+           # make a column for the nearest specimen (Specimen1)
            near_specimen = Specimen1)
   
+  # Extract coordinates and attributes of nearest specimen
   near_coords <-
     samples_df %>%
+    # get data on near specimens from the museum df
     left_join(museums, by = c("near_specimen" = "SampleID")) %>%
+    # take only the cols you need
     select(x.y, y.y, near_specimen, lifestage, sex) %>%
+    # get institution ID from SampleID
     mutate(near_instid = gsub("[0-9]", "", near_specimen)) %>%
+    # rename to specify this is data for the near specimen 
     rename(near_x = x.y, near_y = y.y, near_lifestage = lifestage, near_sex = sex) %>%
+    # sometimes the nearest sample will be the same for multiple samples
+    # only keep distinct rows so that the left_join doesn't give you the multiple x/y warning
     distinct()
   
-  samples_df <-
-    # need to figure out how to deal with duplicates
-    left_join(samples_df, near_coords, by = "near_specimen")
+  # Merge back into the samples data frame
+  samples_df <- left_join(samples_df, near_coords, by = "near_specimen")
   
   return(samples_df)
 }
 
 
+# Function to find nearest specimens to a sample
+# i - sample index (used in a loop)
+# samples_sf - sf object of CCGP samples (tracker df)
+# museums_sf - sf onject of museum specimens (musem df)
+# buffer - furthest distance from which to take a sample (defaults to 10000m = 10km)
+close_specimens <- function(i, samples_sf, museums_sf, buffer = 10000){
+  # get single sample
+  sample <- samples_sf[i,]
+  
+  # get distances from sample to museum specimens
+  dists <- as.numeric(st_distance(sample, museums_sf))
+  names(dists) <- museums_sf$SampleID
+  
+  # get samples that fall within buffer distance
+  dists <- dists[as.numeric(dists) < buffer]
+  
+  # check if there are nearby ccgp samples with specimens
+  ccgp_dist <- as.numeric(st_distance(sample,
+                                      samples_sf[!is.na(samples_sf$p1) | !is.na(samples_sf$p2),]))
+  
+  # get second closest dist (first is the same sample)
+  nearest_dist <- ccgp_dist[order(ccgp_dist)][2]
+  
+  # if there are no samples that fall within the buffer, return a df with just the ID/near dist
+  # (to keep track of what was checkd)
+  if (length(dists) == 0) return(data.frame(SampleID = sample$SampleID, nearest_dist = nearest_dist))
+  
+  # order distances from shortest to longest
+  dists <- dists[order(dists)]
+  
+  # get SampleIDs from distances
+  sid <- names(dists)
+  
+  # remove any museum specimens that are already CCGP samples
+  sid <- sid[!(sid %in% samples_sf$SampleID)]
+  
+  # if there are no samples that are not CCGP samples, return a df with just the ID/near dist
+  if (length(sid) == 0) return(data.frame(SampleID = sample$SampleID, nearest_dist = nearest_dist))
+  
+  # transpose so that specimen options are columns
+  sid <- t(sid)
+  colnames(sid) <- paste0("Specimen", 1:ncol(sid))
+  
+  return(data.frame(SampleID = sample$SampleID, sid, nearest_dist = nearest_dist))
+}
+```
+
+```{r}
+
 museums <- 
-  bind_rows(select(mvz, x, y, SampleID, lifestage, sex),
+  # combine museum data
+  bind_rows(select(mvz$data, x, y, SampleID, lifestage, sex),
             select(lacm$data, x, y, SampleID, lifestage, sex),
             select(cas$data, x, y, SampleID, lifestage, sex)) %>%
-  # remove duplicates
-  # check for duplicates: 
-  #museums %>% filter(duplicated(.))
-  #filter(lifestage == "Adult", sex == "male") %>%
+  # remove any juvis
   filter(!(lifestage %in% c("juvenile", "hatchling", "subadult", "Juv"))) %>%
+  # remove any duplicates
+  # if you want to check for duplicates: museums %>% filter(duplicated(.))
   distinct()
 
+# get museum specimens that are close to ccgp samples
+close_museum_specimens <- close_museum(tracker2, museums)
+
+# update tracker to with close specimens data
 tracker3 <- 
-  close_museum(tracker2, museums) %>%
-  mutate(p3 = case_when(!is.na(p3) ~ paste(p3, near_instid))) %>%
-  mutate(note = case_when(!is.na(p1) ~ p1,
-                          !is.na(p2) ~ p2,
-                          !is.na(p3) ~ p3)) %>%
+  close_museum_specimens %>%
+  # this formats p3 like "nearby [MUSEUM CODE]"
+  mutate(p3 = case_when(!is.na(p3) ~ paste(p3, near_instid)))
+```
+
+# Visualize
+
+```{r}
+# clean up tracker for plotting
+tracker_final <- 
+  tracker3 %>%
+  # get sex and lifestage from museums df
   left_join(select(museums, SampleID, sex, lifestage), by = "SampleID") %>%
-  mutate(genome_and_specimen = !is.na(p1) | !is.na(p2),
-         genome_and_specimenORnearby = !is.na(note))
+  mutate(
+    # create museum code column
+    instid = gsub("[0-9]", "", SampleID),
+    # create note that combines P1/P2/P3 into one column
+    note = case_when(!is.na(p1) ~ p1, !is.na(p2) ~ p2, !is.na(p3) ~ p3),
+    # create priority column
+    priority = case_when(!is.na(p1) ~ "P1",!is.na(p2) ~ "P2",!is.na(p3) ~ "P3"),
+    # keep track of museums for requests
+    museum = case_when(is.na(p1) ~ gsub(" ", "", gsub("nearby", "", gsub("request", "", note) ))),
+    # keep track of which CCGP samples have specimens that we can access
+    genome_and_specimen = !is.na(p1) | !is.na(p2),
+    # keep track of which CCGP samples have specimens or nearby options
+    genome_and_specimenORnearby = !is.na(note),
+    # determine samples that could potentially be dropped from scanning because 
+    # there is another CCGP sample with a specimen nearby
+    potential_drop = case_when(nearest_dist < 50000 & (!is.na(p3) | is.na(note)) ~ TRUE, TRUE ~ FALSE)
+  ) 
+```
 
+```{r}
+# Count CCGP samples with specimens
+table(tracker_final$genome_and_specimen)
+
+# Count CCGP samples with specimens OR nearby options
+table(tracker_final$genome_and_specimenORnearby)
+```
+
+Main notes:
+- we can get a good chunk of coverage from specimens requested from CAS
+- LACM doesn't have a ton of good specimens, but they fill in important gaps
+- We need samples from S. CA and along the coast
+```{r}
+# plot of all samples and color coded by what we need to do for them
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = tracker3, aes(x = x, y = y, col = note)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = note)) +
   theme_void()
 
+# color coded by priority
+# P1 = scanned
+# P2 = need to request CCGP specimen
+# P3 = need to request nearby specimen
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = tracker3, aes(x = x, y = y, col = genome_and_specimen)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = priority)) +
   theme_void()
 
+# color coded by museum for request
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = tracker3[!is.na(tracker3$p3),],
-             aes(x = near_x, y = near_y, col = near_lifestage, pch = near_sex)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = museum)) +
   theme_void()
 
+# color coded by what we have specimens and CCGP data for
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = tracker3[is.na(tracker3$p3),],
-             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
 ```
 
+# Digging more into specimen requests
+```{r}
+requests <-
+  tracker_final %>%
+  filter(!is.na(p3)) %>% 
+  pivot_longer(cols = starts_with("Specimen"), names_to = "Specimen", values_to = "near_SampleID") %>%
+  left_join(select(museums, SampleID, x, y), by = c("near_SampleID" = "SampleID")) %>%
+  mutate(near_x = x.y, near_y = y.y, x = x.x, y = y.x) %>%
+  drop_na(near_SampleID) %>%
+  mutate(
+    # clean up lifestage/sex data
+    lifestage = case_when(
+      lifestage == "Adult" ~ "adult",
+      lifestage == "J/A" ~ "adult/juvenile",
+      is.na(lifestage) ~ "undetermined" ,
+      TRUE ~ lifestage
+    ),
+    near_lifestage = case_when(
+      near_lifestage == "Adult" ~ "adult",
+      near_lifestage == "J/A" ~ "adult/juvenile",
+      is.na(near_lifestage) ~ "undetermined",
+      TRUE ~ near_lifestage
+    ),
+    sex = case_when(is.na(sex) ~ "undetermined", TRUE ~ sex),
+    near_sex = case_when(is.na(near_sex) ~ "undetermined", TRUE ~ near_sex),
+    sex = factor(sex),
+    near_sex = factor(near_sex),
+    lifestage = factor(lifestage),
+    near_lifestage = factor(near_lifestage))
 
+```
+
+It seems like including some females and unknown lifestages is potentially unavoidable because they fill important gaps, however we could probably exclude the adult/juveniles.  
+```{r}
+# lifestage and sex of nearby specimens to request
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = requests,
+             aes(x = near_x, y = near_y, pch = near_lifestage, col = near_sex)) +
+  theme_void()
+
+```
+
+There are also some specimens we might not need to replace because there are others close by (depends on how densely we was to sample)
 ```{r}
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = lacm$data[lacm$data$x < 110, ],
-             aes(x = x, y = y, col = lifestage, pch = sex)) +
-  theme_void()
+  geom_point(data = tracker_final,
+             aes(x = x, y = y, col = "CCGP samples w/o any options"), cex = 1) +
+  geom_point(data = tracker_final[!is.na(tracker_final$p1) | !is.na(tracker_final$p2),],
+               aes(x = x, y = y, col = "CCGP samples w/ specimens"), cex = 1) +
+  geom_point(data = requests,
+             aes(x = x, y = y, col = "CCGP samples that need replacement")) +
+   geom_point(data = requests[requests$potential_drop,],
+             aes(x = x, y = y, col = "CCGP samples that need replacement,\nbut have other CCGP specimens within 50km")) +
+  theme_void() +
+  scale_color_manual(values = c("orange2", "limegreen", "black", "gray"))
+```
 
+
+Looking at each point individually, it looks like Specimen 1 (the closest specimen) is a good pick in all cases (i.e., there aren't cases where another close specimen is better because it is a male or has a classified life stage)
+```{r, fig.width = 10, fig.height = 10}
+# yes I know this is disgusting figure code...but it works
+plts <-
+  map(1:length(unique(requests$SampleID)), ~{
+  tmp <- requests %>% filter(SampleID == unique(requests$SampleID)[.x])
+  plt <- ggplot() +
+    geom_sf(data = california) +
+    geom_point(data = requests[requests$near_sex == "female",],
+               aes(x = near_x, y = near_y, col = "Female replacement"), cex = 2) +
+    geom_point(data = requests[requests$near_lifestage == "undetermined",],
+               aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"), cex = 2) +
+    geom_point(data = tracker_final, aes(x = x, y = y, col = "CCGP samples w/o any options"), cex = 1) +
+    geom_point(data = tracker_final[!is.na(tracker_final$p1) | !is.na(tracker_final$p2),],
+               aes(x = x, y = y, col = "CCGP samples w/ specimens"), cex = 1) +
+    geom_point(data = tmp,
+               aes(x = x, y = y, col = "Focal CCGP sample"), cex = 4) +
+    geom_point(data = tmp,
+               aes(x = near_x, y = near_y, col = "Perfect replacements"), cex = 3) + 
+    geom_point(data = tmp[tmp$near_sex == "female",],
+               aes(x = near_x, y = near_y, col = "Female replacement"), cex = 3) +
+    geom_point(data = tmp[tmp$near_lifestage == "undetermined",],
+               aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"), cex = 3) +
+    geom_point(data = tmp[tmp$Specimen == "Specimen1",], aes(x = near_x, y = near_y), pch = 1, col = "black", cex = 3) +
+    theme_void() + 
+    xlim(tmp$x[1] - 0.2,  tmp$x[1] + 0.2) + 
+    ylim(tmp$y[1] - 0.2,  tmp$y[1] + 0.2) +
+    ggtitle(tmp$SampleID) +
+    scale_color_manual( 
+      values = c("CCGP samples w/o any options" = "gray",
+                 "CCGP samples w/ specimens" = "black",
+                 "Focal CCGP sample" = "orange",
+                 "Perfect replacements" = "cyan3",
+                 "Female replacement" = "red",
+                 "Replacement w/ undetermined lifestage" = "magenta"
+                 ),
+      breaks = c("CCGP samples w/o any options",
+                 "CCGP samples w/ specimens",
+                 "Focal CCGP sample",
+                 "Perfect replacements",
+                 "Female replacement",
+                 "Replacement w/ undetermined lifestage"))
+  
+  return(plt)
+})
+
+suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = TRUE, legend = "top")))
+```
+
+# P4: Identifying gaps
+
+Big gaps:
+
+- Southern CA
+
+- Coastal region just below Bay Area
+
+```{r}
+# color coded by priority
+# P1 = scanned
+# P2 = need to request CCGP specimen
+# P3 = need to request nearby specimen
 ggplot() + 
   geom_sf(data = california) +
-  geom_point(data = mvz,
-             aes(x = x, y = y, col = lifestage, pch = sex)) +
-  theme_void()
-
-ggplot() + 
-  geom_sf(data = california) +
-  geom_point(data = cas$data,
-             aes(x = x, y = y, col = lifestage, pch = sex)) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = priority)) +
   theme_void()
 ```
 
