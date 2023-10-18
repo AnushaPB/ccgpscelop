@@ -399,16 +399,23 @@ ggplot() +
 ```
 
 # Digging more into specimen requests
+
+
 ```{r}
+
 requests <-
   tracker_final %>%
+  # keep only P3
   filter(!is.na(p3)) %>% 
+  # reformatting so that there is a column with all near specimen IDs (not just the nearest)
   pivot_longer(cols = starts_with("Specimen"), names_to = "Specimen", values_to = "near_SampleID") %>%
+  # getting coords for near specimens
   left_join(select(museums, SampleID, x, y), by = c("near_SampleID" = "SampleID")) %>%
   mutate(near_x = x.y, near_y = y.y, x = x.x, y = y.x) %>%
+  # removing NA rows
   drop_na(near_SampleID) %>%
+  # clean up lifestage/sex data
   mutate(
-    # clean up lifestage/sex data
     lifestage = case_when(
       lifestage == "Adult" ~ "adult",
       lifestage == "J/A" ~ "adult/juvenile",
@@ -430,6 +437,17 @@ requests <-
 
 ```
 
+```{r}
+# checking that none of the near specimens have already been scanned
+ct_requests <- 
+  requests %>% 
+  left_join(mutate(ct_scanned, scanned = TRUE), 
+            by = c("near_SampleID" = "SampleID"))
+
+stopifnot(!any(ct_requests$scanned, na.rm = TRUE))
+```
+
+
 It seems like including some females and unknown lifestages is potentially unavoidable because they fill important gaps, however we could probably exclude the adult/juveniles.  
 ```{r}
 # lifestage and sex of nearby specimens to request
@@ -441,7 +459,7 @@ ggplot() +
 
 ```
 
-There are also some specimens we might not need to replace because there are others close by (depends on how densely we was to sample)
+There are also some specimens we might not need to replace because there are others close by (depends on how densely we want to sample)
 ```{r}
 ggplot() + 
   geom_sf(data = california) +
@@ -458,52 +476,105 @@ ggplot() +
 ```
 
 
-Looking at each point individually, it looks like Specimen 1 (the closest specimen) is a good pick in all cases (i.e., there aren't cases where another close specimen is better because it is a male or has a classified life stage)
+Looking at each point individually, it looks like Specimen 1 (the closest specimen; outlined in black in the plot below) is a good pick in all cases (i.e., there aren't cases where another close specimen is better because it is a male or has a classified life stage)
 ```{r, fig.width = 10, fig.height = 10}
 # yes I know this is disgusting figure code...but it works
-plts <-
-  map(1:length(unique(requests$SampleID)), ~{
-  tmp <- requests %>% filter(SampleID == unique(requests$SampleID)[.x])
-  plt <- ggplot() +
-    geom_sf(data = california) +
-    geom_point(data = requests[requests$near_sex == "female",],
-               aes(x = near_x, y = near_y, col = "Female replacement"), cex = 2) +
-    geom_point(data = requests[requests$near_lifestage == "undetermined",],
-               aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"), cex = 2) +
-    geom_point(data = tracker_final, aes(x = x, y = y, col = "CCGP samples w/o any options"), cex = 1) +
-    geom_point(data = tracker_final[!is.na(tracker_final$p1) | !is.na(tracker_final$p2),],
-               aes(x = x, y = y, col = "CCGP samples w/ specimens"), cex = 1) +
-    geom_point(data = tmp,
-               aes(x = x, y = y, col = "Focal CCGP sample"), cex = 4) +
-    geom_point(data = tmp,
-               aes(x = near_x, y = near_y, col = "Perfect replacements"), cex = 3) + 
-    geom_point(data = tmp[tmp$near_sex == "female",],
-               aes(x = near_x, y = near_y, col = "Female replacement"), cex = 3) +
-    geom_point(data = tmp[tmp$near_lifestage == "undetermined",],
-               aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"), cex = 3) +
-    geom_point(data = tmp[tmp$Specimen == "Specimen1",], aes(x = near_x, y = near_y), pch = 1, col = "black", cex = 3) +
-    theme_void() + 
-    xlim(tmp$x[1] - 0.2,  tmp$x[1] + 0.2) + 
-    ylim(tmp$y[1] - 0.2,  tmp$y[1] + 0.2) +
-    ggtitle(tmp$SampleID) +
-    scale_color_manual( 
-      values = c("CCGP samples w/o any options" = "gray",
-                 "CCGP samples w/ specimens" = "black",
-                 "Focal CCGP sample" = "orange",
-                 "Perfect replacements" = "cyan3",
-                 "Female replacement" = "red",
-                 "Replacement w/ undetermined lifestage" = "magenta"
-                 ),
-      breaks = c("CCGP samples w/o any options",
-                 "CCGP samples w/ specimens",
-                 "Focal CCGP sample",
-                 "Perfect replacements",
-                 "Female replacement",
-                 "Replacement w/ undetermined lifestage"))
+# Create a list of ggplot objects
+plts <- map(1:length(unique(requests$SampleID)), ~ {
   
+  # Subset for a specific 'SampleID'
+  tmp <- requests %>% filter(SampleID == unique(requests$SampleID)[.x])
+  
+  # Create a plot  object for the current 'SampleID'
+  plt <- ggplot() +
+  
+    # Add CA background
+    geom_sf(data = california) +
+    
+    # Add points for females (hidden, but helps w/ legend formatting)
+    geom_point(
+      data = requests[requests$near_sex == "female", ],
+      aes(x = near_x, y = near_y, col = "Female replacement"),
+      cex = 2
+    ) +
+    
+    # Add points for undetermined lifestage females (hidden, but helps w/ legend formatting)
+    geom_point(
+      data = requests[requests$near_lifestage == "undetermined", ],
+      aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"),
+      cex = 2
+    ) +
+    
+    # Add points:
+    geom_point(data = tracker_final[is.na(tracker_final$note),],
+               aes(x = x, y = y, col = "CCGP samples w/o any options"),
+               cex = 1) +
+    geom_point(data = tracker_final[!is.na(tracker_final$p1) |
+                                    !is.na(tracker_final$p2), ],
+               aes(x = x, y = y, col = "CCGP samples w/ specimens"),
+               cex = 1) +
+    geom_point(data = tmp,
+               aes(x = x, y = y, col = "Focal CCGP sample"),
+               cex = 4) +
+    geom_point(
+      data = tmp,
+      aes(x = near_x, y = near_y, col = "Perfect replacements"),
+      cex = 3
+    ) +
+    geom_point(
+      data = tmp[tmp$near_sex == "female", ],
+      aes(x = near_x, y = near_y, col = "Female replacement"),
+      cex = 3
+    ) +
+    geom_point(
+      data = tmp[tmp$near_lifestage == "undetermined", ],
+      aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"),
+      cex = 3
+    ) +
+    
+    # Add black outline for the currently selected top specimen 
+    geom_point(
+      data = tmp[tmp$Specimen == "Specimen1", ],
+      aes(x = near_x, y = near_y, pch = "Current replacement selection"),
+      col = "black",
+      cex = 3
+    ) +
+    
+    # Set the plot theme to void (no background)
+    theme_void() +
+    
+    # Set the x and y axis limits based on the current 'SampleID' data to zoom in on the map
+    xlim(tmp$x[1] - 0.2,  tmp$x[1] + 0.2) +
+    ylim(tmp$y[1] - 0.2,  tmp$y[1] + 0.2) +
+    
+    # Set the plot title to the current 'SampleID'
+    ggtitle(tmp$SampleID) +
+    
+    # Customize color scales
+    scale_color_manual(
+      values = c(
+        "CCGP samples w/o any options" = "gray",
+        "CCGP samples w/ specimens" = "black",
+        "Focal CCGP sample" = "orange",
+        "Perfect replacements" = "cyan3",
+        "Female replacement" = "red",
+        "Replacement w/ undetermined lifestage" = "magenta"
+      ),
+      breaks = c(
+        "CCGP samples w/o any options",
+        "CCGP samples w/ specimens",
+        "Focal CCGP sample",
+        "Perfect replacements",
+        "Female replacement",
+        "Replacement w/ undetermined lifestage"
+      )
+    ) +
+    
+    scale_shape_manual(values = c("Current replacement selection" = 1))
+  
+  # Return the current ggplot object
   return(plt)
 })
-
 suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = TRUE, legend = "top")))
 ```
 
@@ -524,5 +595,27 @@ ggplot() +
   geom_sf(data = california) +
   geom_point(data = tracker_final, aes(x = x, y = y, col = priority)) +
   theme_void()
+
+# color coded by museum for nearest specimen request
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = near_museum)) +
+  theme_void()
+```
+```{r}
+# Counts for each P
+tracker_final %>% group_by(note) %>% summarize(n = n())
+
+# TRUE = samples we should have if we can get all the Ps
+tracker_final %>% group_by(!is.na(note)) %>% summarize(n = n())
+```
+```{r}
+
 ```
 
+Next steps:
+1. Request from CAS
+2. Request from LACM
+3. Think about field work in the Spring (check for funding)
+
+# NEXT: CHECK to see if close specimens have been scanned by Erin
