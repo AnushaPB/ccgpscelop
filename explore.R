@@ -20,13 +20,14 @@ colnames(coords) <- c("ID", "x", "y")
 
 # WGS data
 #vcfbig <- read.vcfR(here("58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz"))
-vcf <- read.vcfR(here("data/58-Sceloporus_annotated_pruned_0.6_JALMGF010000010.1.vcf"))
-
+#vcf <- read.vcfR(here("data/58-Sceloporus_annotated_pruned_0.6_JALMGF010000010.1.vcf"))
+vcf <- read.vcfR(here("data/small_vcf.vcf"))
 # only include overlapping samples
 vcf <- vcf[, c(1,which(colnames(vcf@gt) %in% coords$ID))]
-coords <- coords %>% filter(ID %in% colnames(vcf@gt)[-1])
+coords <- coords %>% filter(ID %in% colnames(vcf@gt)[-1]) 
 
 # check order is identical
+coords <- coords %>% arrange(factor(ID, levels =colnames(vcf@gt)[-1]))
 stopifnot(all(coords$ID == colnames(vcf@gt)[-1]))
 
 # project coords
@@ -249,3 +250,51 @@ ggplot_gd(winenv, bkg = NUS_proj) + ggtitle("PCA 1")
 ggplot_gd(winenvvar, bkg = NUS_proj) + ggtitle("PCA 1 (Variance)")
 ggplot_gd(log(winenvdist), bkg = NUS_proj) + ggtitle("PCA 1 log(Distance from Mean)")
 
+
+
+# Distinct individuals ----
+coordscc <- coords[cci,]
+rdapc <- prcomp(rda_gen)$x[,1:3]
+rdapc_mean <- colMeans(rdapc, na.rm = TRUE)
+rda_df <- 
+ data.frame(coordscc, pcdist = rdapc) %>% 
+ pivot_longer(c(PC1, PC2, PC3))
+
+ggplot(rda_df) +
+geom_point(aes(x = x, y = y, col = value))+
+facet_wrap(~name) +
+coord_sf() +
+scale_color_viridis_c(option = "turbo")
+
+rdapc <- prcomp(doscc[cci, !(colnames(doscc) %in% rda_snps)])$x[,1:3]
+rdapc_mean <- colMeans(rdapc, na.rm = TRUE)
+rda_df2 <- 
+ data.frame(coordscc, pcdist = rdapc) %>% 
+ pivot_longer(c(PC1, PC2, PC3))
+
+ggplot(rda_df2) +
+geom_point(aes(x = x, y = y, col = value))+
+facet_wrap(~name) +
+coord_sf() +
+scale_color_viridis_c(option = "turbo")
+
+rda_df3 <-
+  bind_rows(
+    data.frame(rda_df, method = "adaptive"),
+    data.frame(rda_df2, method = "neutral")
+  ) %>%
+  mutate(method = factor(method, levels = c("neutral", "adaptive")))
+
+ggplot(rda_df3) +
+geom_sf(data = NUS_longlat) +
+geom_point(aes(x = x, y = y, col = value))+
+facet_grid(method~name) +
+coord_sf() +
+scale_color_viridis_c(option = "turbo") +
+theme(
+  panel.background = element_rect(color = "gray", fill = NA),
+  strip.background = element_rect(color = "gray", fill = "gray"),
+  axis.text = element_blank(),
+  axis.ticks = element_blank(),
+  axis.title = element_blank()
+)
