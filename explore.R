@@ -6,6 +6,12 @@ library(sf)
 library(algatr)
 library(gdl)
 library(terra)
+library(tigris)
+
+# Load the U.S. state boundaries data
+states <- states(cb = TRUE)
+# Extract the boundary of California (CA)
+ca <- states[states$STUSPS == "CA", "STUSPS"]
 
 # sample coords
 coords <- read_table(here("data/58-Sceloporus.coords.txt"), col_names = FALSE)
@@ -74,7 +80,7 @@ mg2 <- mask_gd(kg[[1]], terra::project(rast(k), terra::crs(kg)), minval = 1)
 
 library(randomForest)
 
-env <- stack(here(wdir, "data", "CLEANED_ENVDATA_NOCOR.tif"))
+env <- raster::stack(here("data", "CLEANED_ENVDATA_NOCOR.tif"))
 abs <- data.frame(layer = sampleRandom(env, 100), pa = 0)
 pres <- data.frame(layer = raster::extract(env, coords), pa = 1)
 df <- rbind(pres, abs)
@@ -206,3 +212,44 @@ resid <- pg
 resid[] <- residuals(mod)
 
 # NO MISSING
+
+# NICHE DISTANCE
+env <- rast(here("data", "CLEANED_ENVDATA_NOCOR.tif"))
+env <- terra::project(env, crs(coords_proj))
+plot(env[[1]], col = viridis::mako(100))
+
+df <- extract(env, coords_proj, xy = TRUE)
+df <- df[,c("x", "y", "CA_rPCA1", "CA_rPCA2", "CA_rPCA3")]
+center <- df %>% summarize_at(c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3"), mean, na.rm = TRUE)
+df <- 
+  df %>% 
+  mutate(envdist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2 + (CA_rPCA2 - center$CA_rPCA2)^2 + (CA_rPCA3 - center$CA_rPCA3)^2),
+         env1dist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2))
+
+env_df <- as.data.frame(env[[1:3]], xy = TRUE)
+env_df <-
+  env_df %>%
+  mutate(envdist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2 + (CA_rPCA2 - center$CA_rPCA2)^2 + (CA_rPCA3 - center$CA_rPCA3)^2),
+         env1dist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2)) %>%
+  mutate(envdist = case_when(envdist > max(df$envdist, na.rm = TRUE) ~ NA, TRUE ~ envdist),
+         env1dist = case_when(env1dist > max(df$env1dist, na.rm = TRUE) ~ NA, TRUE ~ env1dist))
+
+df_sf <- df %>% st_as_sf(coords = c("x", "y"), crs = st_crs(coords_proj))
+
+ggplot() +
+  geom_raster(data = env_df, aes(x = x, y = y, fill = envdist)) +
+  geom_sf(data = df_sf, aes(fill = envdist), cex = 3, pch = 21, col = "black") +
+  scale_color_viridis_c(option = "plasma") +
+  scale_fill_viridis_c(option = "plasma") +
+  theme_void() 
+
+
+lyr <- coords_to_raster(coords_proj, res = 10000, buffer = 10)
+winenv <- window_general(df$CA_rPCA1, coords = coords_proj, lyr = lyr, stat = mean, na.rm = TRUE, wdim = 11, fact = 0)
+winenvvar <- window_general(df$CA_rPCA1, coords = coords_proj, lyr = lyr, stat = var, na.rm = TRUE, wdim = 11, fact = 0)
+winenvdist <- window_general(df$env1dist, coords = coords_proj, lyr = lyr, stat = mean, na.rm = TRUE, wdim = 11, fact = 0)
+
+ggplot_gd(winenv, bkg = NUS_proj) + ggtitle("PCA 1")
+ggplot_gd(winenvvar, bkg = NUS_proj) + ggtitle("PCA 1 (Variance)")
+ggplot_gd(log(winenvdist), bkg = NUS_proj) + ggtitle("PCA 1 log(Distance from Mean)")
+
