@@ -7,6 +7,7 @@ library(algatr)
 library(gdl)
 library(terra)
 library(tigris)
+library(raster)
 
 # Load the U.S. state boundaries data
 states <- states(cb = TRUE)
@@ -19,7 +20,7 @@ colnames(coords) <- c("ID", "x", "y")
 
 # WGS data
 #vcfbig <- read.vcfR(here("58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz"))
-vcf <- read.vcfR(here("data/small_vcf.vcf"))
+vcf <- read.vcfR(here("data/58-Sceloporus_annotated_pruned_0.6_JALMGF010000010.1.vcf"))
 
 # only include overlapping samples
 vcf <- vcf[, c(1,which(colnames(vcf@gt) %in% coords$ID))]
@@ -130,27 +131,15 @@ cor_df <- cor_df %>%
   filter(p < 0.05) %>%
   dplyr::group_by(snp) %>%
   dplyr::filter(abs(r) == max(abs(r)))
-
 cor_df %>% group_by(var) %>% summarize(count = n())
 
 # Distinct maps ----
-
-PC_snps <- cor_df %>% filter(var == "CA_rPCA3") %>% pull(snp)
-rda_snps_i <- which(names(rda_sig_p$pvalues) %in% PC_snps)
-future::plan("sequential")
-future::plan("multisession", workers = 10)
-#safe_window_p <- safely(window_p)
-pstk3 <- window_p(vcf[rda_snps_i,], coords_proj, lyr, wdim = 11, fact = 0, parallel_option = 2)
-pg3 <- window_gd(vcf[rda_snps_i,], coords_proj, lyr, stat = "pi", wdim = 11, fact = 0, rarify = FALSE)
-future::plan("sequential")
-
-
 PC_snps <- cor_df %>% filter(var == "CA_rPCA1") %>% pull(snp)
 rda_snps_i <- which(names(rda_sig_p$pvalues) %in% PC_snps)
-future::plan("multisession", workers = 10)
+future::plan("multisession", workers = 8)
 #safe_window_p <- safely(window_p)
-pstk1 <- window_p(vcf[rda_snps_i,], coords_proj, lyr, wdim = 11, fact = 0, parallel_option = 2)
-pg1 <- window_gd(vcf[rda_snps_i,], coords_proj, lyr, stat = "pi", wdim = 11, fact = 0, rarify = FALSE)
+pstk1 <- window_p(vcf[rda_snps_i,], coords_proj, lyr, wdim = 11, fact = 0)
+dpg1 <- window_gd(vcf[rda_snps_i,], coords_proj, lyr, stat = "pi", wdim = 11, fact = 0, rarify = FALSE)
 future::plan("sequential")
 
 PC_snps <- cor_df %>% filter(var == "CA_rPCA2") %>% pull(snp)
@@ -161,7 +150,17 @@ pstk2 <- window_p(vcf[rda_snps_i,], coords_proj, lyr, wdim = 11, fact = 0, paral
 pg2 <- window_gd(vcf[rda_snps_i,], coords_proj, lyr, stat = "pi", wdim = 11, fact = 0, rarify = FALSE)
 future::plan("sequential")
 
-dlstk <- divloss_p(pstk, prop = TRUE)
+
+PC_snps <- cor_df %>% filter(var == "CA_rPCA3") %>% pull(snp)
+rda_snps_i <- which(names(rda_sig_p$pvalues) %in% PC_snps)
+future::plan("multisession", workers = 10)
+#safe_window_p <- safely(window_p)
+pstk3 <- window_p(vcf[rda_snps_i,], coords_proj, lyr, wdim = 11, fact = 0, parallel_option = 2)
+pg3 <- window_gd(vcf[rda_snps_i,], coords_proj, lyr, stat = "pi", wdim = 11, fact = 0, rarify = FALSE)
+future::plan("sequential")
+
+
+dlstk <- divloss_p(pstk1, prop = TRUE)
 dlavg <- mean(dlstk, na.rm = TRUE)
 dlavgscl <- mean(scale(dlstk), na.rm = TRUE)
 plot_gd(dlavg, lyr, col = viridis::inferno(100, direction = -1))
@@ -181,13 +180,10 @@ mg <-
   terra::mask(NUS_longlat) %>%
   trim()
 
-
-
 dlimp <- abs(dlavg)
-
 col.matrix <- colmat(nquantiles = 5, xlab = "Distinct Diversity", ylab = " Genetic Diversity")
 bivmap <- bivariate.map(rasterx = raster(dlimp),
-                        rastery = raster(pg),
+                        rastery = raster(pg1),
                         colormatrix = col.matrix,
                         nquantiles = 5)
 plot_gd(bivmap, col = as.vector(col.matrix), legend = FALSE, main = "Bivariate Map")
@@ -221,8 +217,8 @@ plot(env[[1]], col = viridis::mako(100))
 df <- extract(env, coords_proj, xy = TRUE)
 df <- df[,c("x", "y", "CA_rPCA1", "CA_rPCA2", "CA_rPCA3")]
 center <- df %>% summarize_at(c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3"), mean, na.rm = TRUE)
-df <- 
-  df %>% 
+df <-
+  df %>%
   mutate(envdist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2 + (CA_rPCA2 - center$CA_rPCA2)^2 + (CA_rPCA3 - center$CA_rPCA3)^2),
          env1dist = sqrt((CA_rPCA1 - center$CA_rPCA1)^2))
 
@@ -241,7 +237,7 @@ ggplot() +
   geom_sf(data = df_sf, aes(fill = envdist), cex = 3, pch = 21, col = "black") +
   scale_color_viridis_c(option = "plasma") +
   scale_fill_viridis_c(option = "plasma") +
-  theme_void() 
+  theme_void()
 
 
 lyr <- coords_to_raster(coords_proj, res = 10000, buffer = 10)
