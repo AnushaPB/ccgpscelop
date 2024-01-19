@@ -1,3 +1,9 @@
+
+# Data files
+data/
+58-Sceloporus/
+*.tif
+
 # History files
 .Rhistory
 .Rapp.history
