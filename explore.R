@@ -298,3 +298,7 @@ theme(
   axis.ticks = element_blank(),
   axis.title = element_blank()
 )
+
+gendist <- as.matrix(dist(rda_gen))
+gdm <- gdm_do_everything(gendist = gendist, coords = coords[cci,c("x", "y")], envlayers = CA_env, scale_gendist = TRUE, quiet = TRUE)
+plotRGB(gdm$rast$pcaRastRGB)
