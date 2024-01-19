@@ -56,7 +56,12 @@ divloss_p <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE, 
   wx <- purrr::map(x, terra::wrap)
 
   # run distinctnesss calculations
-  wr <- furrr::future_map(wx, ~divloss_p_helper(x = .x, prop = prop))
+  wr <- 
+  furrr::future_map(
+    wx, 
+    ~divloss_p_helper(wx = .x, prop = prop),
+    .options = furrr::furrr_options(seed = TRUE, packages = c("terra")),
+    .progress = TRUE)
 
   # unwrap SpatRaster
   r <- purrr::map(wr, terra::unwrap)
@@ -90,7 +95,6 @@ transform_p <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, binary = FA
 
   return(x)
 }
-
 
 
 #' Helper function for divloss_p

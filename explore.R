@@ -22,6 +22,7 @@ colnames(coords) <- c("ID", "x", "y")
 #vcfbig <- read.vcfR(here("58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz"))
 #vcf <- read.vcfR(here("data/58-Sceloporus_annotated_pruned_0.6_JALMGF010000010.1.vcf"))
 vcf <- read.vcfR(here("data/small_vcf.vcf"))
+
 # only include overlapping samples
 vcf <- vcf[, c(1,which(colnames(vcf@gt) %in% coords$ID))]
 coords <- coords %>% filter(ID %in% colnames(vcf@gt)[-1])
@@ -88,27 +89,38 @@ lyr <- coords_to_raster(coords_proj, res = 10000, buffer = 10)
 
 # Set up parallel backend
 library(doParallel)
-cl <- makeCluster(8) 
 
 # setup parallel session
+cl <- makeCluster(8) 
+registerDoParallel(cl)
 
 # Run PC1
-registerDoParallel(cl)
 res_PC1 <- run_windows(snps_i_ls$CA_rPCA1, dos, coords_proj, raster(lyr))
-stopCluster(cl)
+writeRaster(res_PC1$pstk, "pstk_pc1.tif", overwrite = TRUE)
+writeRaster(res_PC1$dpg, "dpg_pc1.tif", overwrite = TRUE)
 
 # repeat for PC2 and 3:
-future::plan("multisession", workers = 10)
-res_PC2 <- run_windows(snps_i_ls$CA_rPCA2, dos, coords_proj, lyr)
-future::plan("sequential")
+res_PC2 <- run_windows(snps_i_ls$CA_rPCA2, dos, coords_proj, raster(lyr))
+writeRaster(res_PC2$pstk, "pstk_pc2.tif", overwrite = TRUE)
+writeRaster(res_PC2$dpg, "dpg_pc2.tif", overwrite = TRUE)
 
 # repeat for PC3: 
-future::plan("multisession", workers = 10)
-res_PC1 <- run_windows(snps_i_ls$CA_rPCA3, dos, coords_proj, lyr)
-future::plan("sequential")
+res_PC3 <- run_windows(snps_i_ls$CA_rPCA3, dos, coords_proj, raster(lyr))
+writeRaster(res_PC3$pstk, "pstk_pc3.tif", overwrite = TRUE)
+writeRaster(res_PC3$dpg, "dpg_pc3.tif", overwrite = TRUE)
+
+stopCluster(cl)
 
 # function to calculate distinct stacks
-dlstk <- divloss_p(pstk1, prop = TRUE)
+future::plan("multisession", workers = 10)
+dlstk1 <- divloss_p(res_PC1$pstk, prop = TRUE)
+writeRaster(dlstk1, "dlstk_pc1.tif", overwrite = TRUE)
+dlstk2 <- divloss_p(res_PC2$pstk, prop = TRUE)
+writeRaster(dlstk2, "dlstk_pc2.tif", overwrite = TRUE)
+dlstk3 <- divloss_p(res_PC3$pstk, prop = TRUE)
+writeRaster(dlstk3, "dlstk_pc3.tif", overwrite = TRUE)
+future::plan("sequential")
+
 dlavg <- mean(dlstk, na.rm = TRUE)
 dlavgscl <- mean(scale(dlstk), na.rm = TRUE)
 plot_gd(dlavg, lyr, col = viridis::inferno(100, direction = -1))
