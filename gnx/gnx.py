@@ -190,7 +190,7 @@ params = {
                     # carrying-capacity Layer name
                     'K_layer': 'klyr',
                     # multiplicative factor for carrying-capacity layer
-                    'K_factor': 1,
+                    'K_factor': 2,
                 },  # <END> 'init'
 
                 # -------------------------------------#
@@ -251,13 +251,13 @@ params = {
                     # 1st param of distr of movement distance
                     'movement_distance_distr_param1': 0,
                     # 2nd param of distr of movement distance
-                    'movement_distance_distr_param2': 0.25,
+                    'movement_distance_distr_param2': 0.5,
                     # movement distance distr to use
                     'movement_distance_distr': 'lognormal',
                     # 1st param of distr of dispersal distance
                     'dispersal_distance_distr_param1': 0,
                     # 2nd param of distr of dispersal distance
-                    'dispersal_distance_distr_param2': 0.25,
+                    'dispersal_distance_distr_param2': 0.5,
                     # dispersal distance distr to use
                     'dispersal_distance_distr': 'lognormal',
                     'move_surf': {
