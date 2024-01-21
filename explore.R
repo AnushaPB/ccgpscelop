@@ -46,6 +46,8 @@ na <- apply(dos, 2, function(x) mean(is.na(x)))
 doscc <- dos[,(na == 0)]
 
 # extract env data and only retain complete cases
+# algatr example contains PCs for CA
+load_algatr_example()
 env <- terra::extract(CA_env, coords[,c("x", "y")])
 cci <- complete.cases(env)
 
@@ -121,13 +123,84 @@ dlstk3 <- divloss_p(res_PC3$pstk, prop = TRUE)
 writeRaster(dlstk3, "dlstk_pc3.tif", overwrite = TRUE)
 future::plan("sequential")
 
-dlavg <- mean(dlstk, na.rm = TRUE)
-dlavgscl <- mean(scale(dlstk), na.rm = TRUE)
-plot_gd(dlavg, lyr, col = viridis::inferno(100, direction = -1))
+# create stack
+dlstk <- map(1:3, ~rast(paste0("dlstk_pc", .x, ".tif")))
+names(dlstk) <- c("PC1", "PC2", "PC3")
+
+dpg <- rast(map(1:3, ~rast(paste0("dpg_pc", .x, ".tif"))[[1]]))
+names(dpg) <- c("PC1", "PC2", "PC3")
+
+dlavg <- rast(map(dlstk, ~mean(.x, na.rm = TRUE)))
+dlavgscl <- rast(map(dlstk, ~mean(scale(.x), na.rm = TRUE)))
+
+CA_env <- project(rast(CA_env), crs(ca))
+dlavg <- project(dlavg, crs(ca))
+dlavgscl <- project(dlavgscl, crs(ca))
+dpg <- project(dpg, crs(ca))
+
+ggdf <-
+  bind_rows(as.data.frame(dlavg, xy = TRUE), data.frame(as.data.frame(dlavgscl, xy = TRUE), scale = "Scaled")) %>%
+  mutate(scale = case_when(is.na(scale) ~ "Not scaled", TRUE ~ scale)) %>% 
+  pivot_longer(c(PC1, PC2, PC3)) %>%
+  # TRANSFORM SO THAT HIGHER VALUES = MORE DISTINCT
+  mutate(value = value * -1)
+
+plt1 <-
+  ggplot(filter(ggdf, scale == "Scaled")) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_grid(scale ~ name) +
+  scale_fill_viridis_c(option = "inferno") +
+  labs(fill = "DI (scaled)") +
+  theme_void() +
+  theme(strip.text.y = element_blank())
+
+plt2 <-
+  ggplot(filter(ggdf, scale == "Not scaled")) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_grid(scale ~ name) +
+  scale_fill_viridis_c(option = "inferno") +
+  labs(fill = "DI") +
+  theme_void() +
+  theme(strip.text.y = element_blank())
+
+plt3 <- 
+  dpg %>%
+  as.data.frame(xy = TRUE) %>%
+  pivot_longer(c(-x, -y)) %>%
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_grid(. ~ name) +
+  scale_fill_viridis_c(option = "inferno", na.value = NA) +
+  labs(fill = "pi") +
+  theme_void() +
+  theme(strip.text = element_blank())
+
+plt4 <- 
+  CA_env %>%
+  #mask(resample(dlavg, CA_env)) %>%
+  as.data.frame(xy = TRUE) %>%
+  mutate_at(c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3"), scale) %>%
+  pivot_longer(c(-x, -y)) %>%
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_grid(. ~ name) +
+  scale_fill_viridis_c(option = "turbo", na.value = NA) +
+  labs(fill = "Env") +
+  theme_void() +
+  theme(strip.text = element_blank())
+
+gridExtra::grid.arrange(plt2, plt1, plt3, plt4, nrow = 4)
+gridExtra::grid.arrange(plt2, plt3, plt4, nrow = 3)
+
+plot(dlavg, col = viridis::inferno(100, direction = -1))
 plot_gd(dlavgscl, lyr, col = viridis::inferno(100, direction = -1))
 
-# krig results
-kdlavg <- krig_gd(dlavg, index = 1, lyr, disagg_grd = 4)
+# krig results for PC1
+kdlavg <- krig_gd(dlavg[[1]], index = 1, lyr, disagg_grd = 4)
 crs(kdlavg) <- terra::crs(NUS_proj)
 mdlavg <-
   terra::project(kdlavg, terra::crs(NUS_longlat)) %>%
