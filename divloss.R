@@ -43,18 +43,26 @@ distinct_map <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRU
   # Transform allele frequency stack so the allele of interest (1) is always the minor/rarer allele
   if(rare_allele) x <- rare_pstk(x)
 
+  # Remove any layers where all the values are 0
+  w <- t(global(x, fun = "sum", na.rm = TRUE))
+  if (any(w == 0)) {
+    warning(paste0(length(which(w == 0)), " layer(s) found where all frequencies are 0, dropping these layer(s)"))
+    x <- x[[-which(w == 0)]]
+  }
+
   # Filter with cutoffs and apply binary transformation
   if (!is.null(lower_cutoff) | !is.null(upper_cutoff) | binary) x <- transform_p(x, lower_cutoff, upper_cutoff, binary)
 
-  # Create distinct map (weighted allele frequency map)
+  # Create distinct map (weighted allele frequency raster)
+  # the weight is 1/w where w is the sum of all the cells in the frequency raster
   dstk <- 
     map(terra::as.list(x), ~{
-      p0 <- as.numeric(global(.x, fun = "sum", na.rm = TRUE))
-      return(.x/p0)
+      w <- as.numeric(global(.x, fun = "sum", na.rm = TRUE))
+      return(.x * 1/w)
     }, .progress = TRUE) %>%
     rast()
 
-  # calculate the average loss across the entire stack
+  # calculate distinctness across the entire stack
   davg <- mean(dstk, na.rm = TRUE)
 
   return(list(DistinctMean = davg,
@@ -92,3 +100,53 @@ rare_pstk <- function(x){
   return(rare_only)
 }
 
+
+distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
+  # Convert to frequencies
+  if (inherits(x, "vcfR") | is.character(x)) x <- wingen::vcf_to_dosage(x)/2
+
+  # Drop any cases where all frequencies are 0
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  if (any(w == 0)) {
+    warning(paste0(length(which(w == 0)), " loci found where all frequencies are 0, dropping these loci"))
+    x <- x[,-which(w == 0)]
+  }
+
+  # Transform allele frequencies so the allele of interest (1) is always the minor/rarer allele
+  if (rare_allele) x <- rare_ind(x)
+
+  # Calculate distinctness for each individual
+  # the weight is 1/w where w is the sum of all the individual frequencies
+  #if (biallelic) x <- cbind(x, (1 - x)) 
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  dind <- sweep(x, 2, 1/w, "*")
+
+  # if data is biallelic and you have provided just the reference (or just the alternate allele)
+  # for example, in a dosage matrix or if you gave a vcf
+  # this will also calculate dind for the other allele
+  if (biallelic){
+    # Calculate dind for 1 - x
+    # note: it is nrow(x) - w since the second set of weights would be the sum of 1 - x, which is the same as the number of rows(number of individuals) minus w
+    dind2 <- sweep((1-x), 2, 1/(nrow(x) -w), "*")
+
+    if (!is.null(colnames(dind))){
+      colnames(dind2) <- paste0(colnames(dind2), "_2")
+      colnames(dind) <- paste0(colnames(dind), "_1")
+    }
+
+    # combine with dind
+    dind <- cbind(dind, dind2)
+  }
+
+  # calculate distinctness for each individual
+  davg <- apply(dind, 1, "mean", na.rm = TRUE)
+
+  return(list(DistinctMean = davg,
+              DistinctInds = dind))
+}
+
+rare_ind <- function(x){
+  p <- apply(x, 2, mean, na.rm = TRUE)
+  x[,p > 0.5] <- 1 - x[,p > 0.5]
+  return(x)
+}
