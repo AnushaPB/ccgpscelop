@@ -1,4 +1,3 @@
-
 import geonomics as gnx
 import numpy as np
 import pandas as pd
@@ -20,7 +19,7 @@ def make_horizontal_split_array(n):
        The top half is filled with ones, and the bottom half is filled with twos."""
     array = np.ones((n, n))  # Start with an array of ones
     half_n = n // 2  # Calculate the halfway point
-    array[half_n:] = 2  # Fill the bottom half with twos
+    array[half_n:] = 0.5  # Fill the bottom half with 0.5
     return array
 
 def make_vertical_split_array(n):
@@ -31,6 +30,7 @@ def make_vertical_split_array(n):
     array[:, half_n:] = 0.5  # Fill the right half with 0.5
     return array
 
+# note: the klyr will be multiplied by the K_factor (it is just that Because Layers’ rasters are constrained to [0,1], you have to stipulate that cells have carrying capacities in excess of 1 using K_factor)
 klyr = make_horizontal_split_array(100)
 envlyr = make_vertical_split_array(100)
 unifenv = make_unif_array(100)
@@ -190,7 +190,7 @@ params = {
                     # carrying-capacity Layer name
                     'K_layer': 'klyr',
                     # multiplicative factor for carrying-capacity layer
-                    'K_factor': 1,
+                    'K_factor': 4,
                 },  # <END> 'init'
 
                 # -------------------------------------#
@@ -251,13 +251,13 @@ params = {
                     # 1st param of distr of movement distance
                     'movement_distance_distr_param1': 0,
                     # 2nd param of distr of movement distance
-                    'movement_distance_distr_param2': 0.25,
+                    'movement_distance_distr_param2': 0.5,
                     # movement distance distr to use
                     'movement_distance_distr': 'lognormal',
                     # 1st param of distr of dispersal distance
                     'dispersal_distance_distr_param1': 0,
                     # 2nd param of distr of dispersal distance
-                    'dispersal_distance_distr_param2': 0.25,
+                    'dispersal_distance_distr_param2': 0.5,
                     # dispersal distance distr to use
                     'dispersal_distance_distr': 'lognormal',
                     'move_surf': {
