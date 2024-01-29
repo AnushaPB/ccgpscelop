@@ -1,5 +1,5 @@
 
-#' Quantify potential diversity loss across space using moving window maps of allele frequency
+#' Quantify distinctness of genetic diversity across space using moving window maps of allele frequency
 #'
 #' @param x either a `vcfR` type object, a path to a .vcf file, or a dosage matrix
 #' @param coords two-column matrix or data.frame representing x (longitude) and y (latitude) coordinates of samples
@@ -8,36 +8,29 @@
 #' @param binary whether to use binary presence/absence for alleles in each cell (`TRUE`) or use allele frequencies in each cell (`FALSE`, default). If `TRUE`, all cells in the moving window raster where the allele frequency is greater than 0 will be assigned a value of 1.
 #' @param lower_cutoff allele frequency lower cutoff. Only alleles with a frequency above this value will be retained.
 #' @param upper_cutoff allele frequency upper cutoff. Only alleles with a frequency below this value will be retained.
+#' @param rare_allele whether to transform the genetic data such that the frequencies always reflect that of the rare allele at the locus (i.e., if p > 0.50, a 1 - p transformation would be applied)
 #' @param ... additional arguments to pass to `window_general`
 #'
 #' @return
 #' @export
 #'
 #' @examples
-divloss <- function(x, coords, lyr, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE, binary = FALSE, ...){
-
+distinct_do_everything <- function(x, coords, lyr, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE, binary = FALSE, rare_allele = FALSE, ...){
   # convert to dosage matrix
   if(inherits(x, "vcfR") | is.character(x)) x <- wingen::vcf_to_dosage(x)
-
-  # make sure that the rarest allele is coded as 1
-  x <- rare_dos(x)
 
   # generate stack of allele frequency rasters
   pstk <- window_p(x, coords, lyr, ...)
 
-  # calculate diversity loss index for each layer
-  dlstk <- divloss_p(pstk, lower_cutoff = lower_cutoff, upper_cutoff = upper_cutoff, prop = prop, binary = binary)
+  # create distinct map for each layer
+  # rare_only set to FALSE because transformation applied earlier
+  dls <- distinct_map(pstk, lower_cutoff = lower_cutoff, upper_cutoff = upper_cutoff, prop = prop, binary = binary, rare_allele = rare_allele)
 
-  # calculate the average loss across the entire stack
-  dlavg <- mean(dlstk, na.rm = TRUE)
-
-  return(list(AvgLoss = dlavg,
-              LossRasterStack = dlstk,
-              AlleleRasterStack = pstk))
+  return(c(dls, list(AlleleStack = pstk)))
 }
 
 
-#' Create diversity loss rasters from allele frequency rasters
+#' Calculate distinct genetic diversity from allele frequency rasters
 #'
 #' @param x RasterStack of allele frequency maps produced by `window_p`
 #' @param prop whether to return the proportional loss (TRUE, default) or the raw loss (FALSE)
@@ -46,30 +39,35 @@ divloss <- function(x, coords, lyr, lower_cutoff = NULL, upper_cutoff = NULL, pr
 #' @export
 #'
 #' @examples
-divloss_p <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE, binary = FALSE){
+distinct_map <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE, binary = FALSE, rare_allele = FALSE){
+  # Transform allele frequency stack so the allele of interest (1) is always the minor/rarer allele
+  if(rare_allele) x <- rare_pstk(x)
 
-  # filter with cutoffs and apply binary transformation
-  if(!is.null(lower_cutoff) | !is.null(upper_cutoff) | binary) x <- transform_p(x, lower_cutoff, upper_cutoff, binary)
+  # Remove any layers where all the values are 0
+  w <- t(global(x, fun = "sum", na.rm = TRUE))
+  if (any(w == 0)) {
+    warning(paste0(length(which(w == 0)), " layer(s) found where all frequencies are 0, dropping these layer(s)"))
+    x <- x[[-which(w == 0)]]
+  }
 
-  # wrap up for parallel task
-  x <- terra::as.list(x)
-  wx <- purrr::map(x, terra::wrap)
+  # Filter with cutoffs and apply binary transformation
+  if (!is.null(lower_cutoff) | !is.null(upper_cutoff) | binary) x <- transform_p(x, lower_cutoff, upper_cutoff, binary)
 
-  # run distinctnesss calculations
-  wr <- 
-  furrr::future_map(
-    wx, 
-    ~divloss_p_helper(wx = .x, prop = prop),
-    .options = furrr::furrr_options(seed = TRUE, packages = c("terra")),
-    .progress = TRUE)
+  # Create distinct map (weighted allele frequency raster)
+  # the weight is 1/w where w is the sum of all the cells in the frequency raster
+  dstk <- 
+    map(terra::as.list(x), ~{
+      w <- as.numeric(global(.x, fun = "sum", na.rm = TRUE))
+      return(.x * 1/w)
+    }, .progress = TRUE) %>%
+    rast()
 
-  # unwrap SpatRaster
-  r <- purrr::map(wr, terra::unwrap)
-  r <- terra::rast(r)
+  # calculate distinctness across the entire stack
+  davg <- mean(dstk, na.rm = TRUE)
 
-  return(r)
+  return(list(DistinctMean = davg,
+              DistinctStack = dstk))
 }
-
 
 #' Transform allele frequency rasters
 #'
@@ -96,64 +94,59 @@ transform_p <- function(x, lower_cutoff = NULL, upper_cutoff = NULL, binary = FA
   return(x)
 }
 
+rare_pstk <- function(x){
+  m <- unlist(global(x, fun = "mean", na.rm = TRUE))
+  rare_only <- map(1:nlyr(x), ~if(m[.x] > 0.5) return(1 - x[[.x]]) else return(x[[.x]])) %>% rast()
+  return(rare_only)
+}
 
-#' Helper function for divloss_p
-#' @param wx packed SpatRaster
-#' @inheritParams divloss_p
-#' @noRd
-divloss_p_helper <- function(wx, lower_cutoff = NULL, upper_cutoff = NULL, prop = TRUE){
-  # convert back to SpatRaster 
-  x <- unwrap(wx)
 
-  # Refill raster with values produced by calc_loss
-  x[] <- purrr::map_dbl(1:terra::ncell(x), ~calc_loss(i = .x, x = x, prop = prop))
+distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
+  # Convert to frequencies
+  if (inherits(x, "vcfR") | is.character(x)) x <- wingen::vcf_to_dosage(x)/2
 
-  # wrap up again
-  x <- wrap(x)
+  # Drop any cases where all frequencies are 0
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  if (any(w == 0)) {
+    warning(paste0(length(which(w == 0)), " loci found where all frequencies are 0, dropping these loci"))
+    x <- x[,-which(w == 0)]
+  }
 
+  # Transform allele frequencies so the allele of interest (1) is always the minor/rarer allele
+  if (rare_allele) x <- rare_ind(x)
+
+  # Calculate distinctness for each individual
+  # the weight is 1/w where w is the sum of all the individual frequencies
+  #if (biallelic) x <- cbind(x, (1 - x)) 
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  dind <- sweep(x, 2, 1/w, "*")
+
+  # if data is biallelic and you have provided just the reference (or just the alternate allele)
+  # for example, in a dosage matrix or if you gave a vcf
+  # this will also calculate dind for the other allele
+  if (biallelic){
+    # Calculate dind for 1 - x
+    # note: it is nrow(x) - w since the second set of weights would be the sum of 1 - x, which is the same as the number of rows(number of individuals) minus w
+    dind2 <- sweep((1-x), 2, 1/(nrow(x) -w), "*")
+
+    if (!is.null(colnames(dind))){
+      colnames(dind2) <- paste0(colnames(dind2), "_2")
+      colnames(dind) <- paste0(colnames(dind), "_1")
+    }
+
+    # combine with dind
+    dind <- cbind(dind, dind2)
+  }
+
+  # calculate distinctness for each individual
+  davg <- apply(dind, 1, "mean", na.rm = TRUE)
+
+  return(list(DistinctMean = davg,
+              DistinctInds = dind))
+}
+
+rare_ind <- function(x){
+  p <- apply(x, 2, mean, na.rm = TRUE)
+  x[,p > 0.5] <- 1 - x[,p > 0.5]
   return(x)
 }
-
-#' Helper function to calculate loss statistic
-#' @param i raster cell index
-#' @param x RasterLayer of allele frequencies
-#' @inheritParams divloss_p
-#' @noRd
-calc_loss <- function(i, x, prop = TRUE){
-
-  # if the cell has an NA value, return NA
-  if(is.na(x[i])) return(NA)
-
-  # calculate the initial global allele frequency
-  begin <- terra::global(x, "mean", na.rm = TRUE)
-
-  # assign the cell a value of 0 (e.g. "remove" that cell)
-  # note: you don't assign this cell an NA value because you
-  # want the total number of cells used to calculate the mean
-  # to remain the same (otherwise you could end up with positive change)
-  x[i] <- 0
-
-  # calculate the resulting global allele frequency
-  end <- terra::global(x, "mean", na.rm = TRUE)
-
-  # calculate the change
-  change <- end - begin
-
-  # if prop, then divide the change by the initial frequency
-  if (prop) change <- change/begin
-
-  # convert to dbl
-  change <- change[1,1]
-
-  return(change)
-}
-
-rare_dos <- function(dos) apply(dos, 2, rare_dos_helper)
-
-rare_dos_helper <- function(x){
-  nalt <- sum(x == 2)*2 + sum(x == 1)
-  nref <- sum(x == 0)*2 + sum(x == 1)
-  if (nalt > nref) return(2 - x) else return(x)
-}
-
-
