@@ -1,0 +1,44 @@
+
+# format genetic distances
+```{r}
+library(tidyverse)
+library(here)
+library(algatr)
+source(here("gendist.R"))
+format_dist('58-Sceloporus')
+```
+
+```{r}
+# Load the U.S. state boundaries data
+states <- states(cb = TRUE)
+# Extract the boundary of California (CA)
+ca <- states[states$STUSPS == "CA", "STUSPS"]
+
+# sample coords
+coords <- read_table(here("data/58-Sceloporus.coords.txt"), col_names = FALSE)
+colnames(coords) <- c("ID", "x", "y")
+```
+
+```{r}
+load_algatr_example()
+
+gendist <- get_gendist()
+
+row.names(gendist)[!(row.names(gendist) %in% coords$ID)]
+
+i <- which(row.names(gendist) == "Array")
+row.names(gendist)[i] <- colnames(gendist)[i] <- "Array#33"
+
+row.names(gendist)[!(row.names(gendist) %in% coords$ID)]
+
+gendist_coords <- 
+  coords %>% 
+  filter(ID %in% row.names(gendist)) %>%
+  mutate(ID = factor(ID, levels = row.names(gendist))) %>%
+  arrange(ID)
+
+stopifnot(gendist_coords$ID == row.names(gendist))
+
+gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], envlayers = CA_env, quiet = TRUE)
+```
+
