@@ -54,6 +54,7 @@ names(ccgp_seq) <- c("SampleID", "x", "y")
 
 # Erin's CT specimens
 ct_scanned <- 
+  #read_csv("data/CT_scanning.csv") %>%
   read_csv("data/Copy of CT_scanning - Sheet1.csv") %>%
   mutate(SampleID = paste0(museum_ID, specimen_no))
 
@@ -77,7 +78,7 @@ Filters:
 
 - has tissues
 
-- Late on I will filter for age class = adult, sex = M
+- Later on I will filter for age class = adult, sex = M
 
 ```{r, cache = TRUE}
 # CAS
@@ -160,7 +161,6 @@ tracker1 <-
   # update tracker with information about which samples have been scanned
   mutate(p1 = case_when(SampleID %in% p1$SampleID ~ "scanned", TRUE ~ NA))
 
-# TODO: EW why does it seem like there are so few scanned specimens? Can you double check I have formatted the SampleIDs correctly?
 tracker1 %>% filter(!is.na(p1))
 ```
 
@@ -244,7 +244,7 @@ close_museum <- function(samples, museums){
     # get data on near specimens from the museum df
     left_join(museums, by = c("near_specimen" = "SampleID")) %>%
     # take only the cols you need
-    select(x.y, y.y, near_specimen, lifestage, sex) %>%
+    dplyr::select(x.y, y.y, near_specimen, lifestage, sex) %>%
     # get institution ID from SampleID
     mutate(near_instid = gsub("[0-9]", "", near_specimen)) %>%
     # rename to specify this is data for the near specimen 
@@ -311,9 +311,9 @@ close_specimens <- function(i, samples_sf, museums_sf, buffer = 10000){
 
 museums <- 
   # combine museum data
-  bind_rows(select(mvz$data, x, y, SampleID, lifestage, sex),
-            select(lacm$data, x, y, SampleID, lifestage, sex),
-            select(cas$data, x, y, SampleID, lifestage, sex)) %>%
+  bind_rows(dplyr::select(mvz$data, x, y, SampleID, lifestage, sex),
+            dplyr::select(lacm$data, x, y, SampleID, lifestage, sex),
+            dplyr::select(cas$data, x, y, SampleID, lifestage, sex)) %>%
   # remove any juvis
   filter(!(lifestage %in% c("juvenile", "hatchling", "subadult", "Juv"))) %>%
   # remove any duplicates
@@ -337,7 +337,7 @@ tracker3 <-
 tracker_final <- 
   tracker3 %>%
   # get sex and lifestage from museums df
-  left_join(select(museums, SampleID, sex, lifestage), by = "SampleID") %>%
+  left_join(dplyr::select(museums, SampleID, sex, lifestage), by = "SampleID") %>%
   mutate(
     # create museum code column
     instid = gsub("[0-9]", "", SampleID),
@@ -396,6 +396,7 @@ ggplot() +
   geom_sf(data = california) +
   geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
+
 ```
 
 # Digging more into specimen requests
@@ -609,13 +610,65 @@ tracker_final %>% group_by(note) %>% summarize(n = n())
 # TRUE = samples we should have if we can get all the Ps
 tracker_final %>% group_by(!is.na(note)) %>% summarize(n = n())
 ```
+
+# Check which samples have been covered by new CT scanning (Feb 2024)
 ```{r}
+# Erin's CT specimens
+ct_scanned <- 
+  read_csv("data/CT_scanning.csv") %>%
+  mutate(SampleID = paste0(museum_ID, specimen_no))
+
+# Look at new scans
+tracker_feb_update <- 
+  tracker_final %>%
+  mutate(updated_note = case_when(SampleID %in% ct_scanned$SampleID ~ "scanned", .default = note))
+
+ggplot(tracker_feb_update) +
+  geom_sf(data = california) +
+  geom_point(aes(x = x, y = y, col = updated_note))
+```
+
+```{r}
+tracker_long <- 
+  tracker_final %>% 
+  pivot_longer(starts_with("Specimen"), values_to = "replacement", names_to = "replacement_number") %>%
+  mutate(replacement_scanned = replacement %in% ct_scanned$SampleID,
+         original_scanned = SampleID %in% ct_scanned$SampleID)
+
+
+# Check what has been scanned of the replacements
+replacement_summary <-
+  tracker_long %>%
+  group_by(SampleID) %>%
+  summarize(number_of_replacements_scanned = sum(replacement_scanned, na.rm = TRUE))
+
+# For some reason none of the CAS samples scanned are in the original intended replacement list
+scanned_cas <- ct_scanned$SampleID[grepl("CAS", ct_scanned$SampleID)]
+replacement_cas <- tracker_long$replacement[grepl("CAS", tracker_long$replacement)]
+any(scanned_cas %in% replacement_cas)
+
+# double checking that intended replacements are in cas specimen list
+cas_specimens <- paste0("CAS", cas$data$catalognumber)
+any(scanned_cas %in% cas_specimens)
+any(replacement_cas %in% cas_specimens)
+
+# plot scanned CAS
+scanned_cas_df <-
+  cas$data %>% 
+  mutate(SampleID = paste0("CAS", cas$data$catalognumber)) %>%
+  mutate(test = case_when(SampleID %in% scanned_cas ~ "Scanned", SampleID %in% replacement_cas ~ "Intended")) %>%
+  drop_na(test)
+
+ggplot(scanned_cas_df) +
+  geom_sf(data = california) +
+  geom_point(aes(x = as.numeric(decimallongitude), y = as.numeric(decimallatitude), col = test))
 
 ```
+
+
+#TODO: figure out why we didn't get the specimens for the bay area
 
 Next steps:
 1. Request from CAS
 2. Request from LACM
 3. Think about field work in the Spring (check for funding)
-
-# NEXT: CHECK to see if close specimens have been scanned by Erin
