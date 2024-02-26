@@ -4,7 +4,7 @@
 library(tidyverse)
 library(here)
 library(algatr)
-source(here("gendist.R"))
+source(here("analyses", "ibdibe", "gendist.R"))
 format_dist('58-Sceloporus')
 ```
 
