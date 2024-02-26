@@ -127,7 +127,10 @@ distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
   if (biallelic){
     # Calculate dind for 1 - x
     # note: it is nrow(x) - w since the second set of weights would be the sum of 1 - x, which is the same as the number of rows(number of individuals) minus w
-    dind2 <- sweep((1-x), 2, 1/(nrow(x) -w), "*")
+    #dind2 <- sweep((1 - x), 2, 1/(nrow(x) - w), "*")
+    x2 <- 1 - x
+    w2 <- apply(x2, 2, "sum", na.rm = TRUE)
+    dind2 <- sweep(x2, 2, 1/w2, "*")
 
     if (!is.null(colnames(dind))){
       colnames(dind2) <- paste0(colnames(dind2), "_2")
@@ -149,4 +152,30 @@ rare_ind <- function(x){
   p <- apply(x, 2, mean, na.rm = TRUE)
   x[,p > 0.5] <- 1 - x[,p > 0.5]
   return(x)
+}
+
+
+distinct_ind_count <- function(x, rare_allele = FALSE, biallelic = FALSE){
+  # Convert to counts
+  if (inherits(x, "vcfR")) {
+    x <- vcfR2genind(x)@tab
+  }
+
+  # Drop any cases where all counts are 0
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  if (any(w == 0)) {
+    warning(paste0(length(which(w == 0)), " loci found where all counts are 0, dropping these loci"))
+    x <- x[,-which(w == 0)]
+  }
+
+  # Calculate distinctness for each individual
+  # the weight is 1/w where w is the sum of all the individual counts
+  w <- apply(x, 2, "sum", na.rm = TRUE)
+  dind <- sweep(x, 2, 1/w, "*")
+
+  # calculate distinctness for each individual
+  davg <- apply(dind, 1, "mean", na.rm = TRUE)
+
+  return(list(DistinctMean = davg,
+              DistinctInds = dind))
 }
