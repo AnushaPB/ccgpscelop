@@ -3,9 +3,11 @@
 ```{r}
 library(tidyverse)
 library(here)
+library(terra)
+library(sf)
 library(algatr)
 source(here("gendist.R"))
-format_dist('58-Sceloporus')
+
 ```
 
 ```{r}
@@ -21,6 +23,7 @@ colnames(coords) <- c("ID", "x", "y")
 
 ```{r}
 load_algatr_example()
+format_dist()
 
 gendist <- get_gendist()
 
@@ -40,5 +43,42 @@ gendist_coords <-
 stopifnot(gendist_coords$ID == row.names(gendist))
 
 gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], envlayers = CA_env, quiet = TRUE)
+gdm_map(gdm$model, CA_env, gendist_coords[,c("x", "y")], plot_vars = FALSE)
+gdm$coeff_df
+
+
+#id_n <- which(gendist_coords$y < 34.62 & gendist_coords$x < -117.4)
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = CA_env, quiet = FALSE)
+mmrr$coeff_df
+
+# Extract enviro vars
+env <- extract(CA_env, gendist_coords[,c("x", "y")])
+# Calculate environmental distances
+X <- env_dist(env)
+# Add geographic distance to X
+X[["geodist"]] <- geo_dist(gendist_coords[,c("x", "y")])
+Y <- as.matrix(gendist)
+mod <- mmrr_run(Y, X, model = "best")
+
+wmmrr <- function(idx){
+  Xsub <- map(X, ~.x[idx, idx])
+  Ysub <- Y[idx, idx]
+  mod <- mmrr_run(Ysub, Xsub)
+  ibd <- mod$coeff_df %>% filter(var == "CA_rPCA2") %>% pull(estimate)
+  return(ibd)
+}
+library(wingen)
+
+wcoords <- gendist_coords %>% st_as_sf(coords = c("x", "y"), crs = 4326) %>% st_transform(3310)
+lyr <- aggregate(CA_env, 20)[[1]] %>% rast() %>% project(crs(wcoords))
+preview_gd(lyr, wcoords, wdim = 11, min_n = 9)
+
+load_middle_earth_ex()
+wg <- window_general(x = 1:nrow(wcoords), coords = wcoords, lyr = lyr, stat = wmmrr, wdim = 11, min_n = 9)
+# why are there values > 1?
+wg_pc2 <- window_general(x = 1:nrow(wcoords), coords = wcoords, lyr = lyr, stat = wmmrr, wdim = 11, min_n = 9)
+# why are there values > 1?
+
+plot_gd(wg)
 ```
 
