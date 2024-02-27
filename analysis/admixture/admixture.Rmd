@@ -1,0 +1,101 @@
+---
+title: "Admixture analysis"
+output:
+  github_document:
+    toc: TRUE
+---
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(vcfR)
+library(hierfstat)
+library(tigris)
+
+devtools::load_all()
+source(here("analysis", "admixture", "admixture.R"))
+source(here("general_functions.R"))
+
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+```
+
+```{r, echo = FALSE, message = FALSE, include=FALSE}
+# Load the U.S. state boundaries data
+ca <- get_ca()
+
+# make theme for plotting
+theme_custom <- 
+  theme(
+    strip.background = element_rect(color = "gray", fill = "gray"),
+    panel.background = element_rect(color = "gray", fill = NA),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    strip.text = element_text(size = 16, face = "italic")
+    )
+```
+
+```{r, include = FALSE}
+# get coordinates 
+coords <- get_coords()
+```
+
+# 2. ADMIXTURE
+```{r}
+cv <- get_cv()
+```
+
+```{r admixture, fig.width = 13, fig.height = 6}
+ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+
+# join with coords
+Kvals <- c(2:10)
+Q <-
+ map(Kvals, ~get_Q(K = .x) %>% 
+ mutate(K = .x)) %>%
+ bind_rows() %>%
+ arrange(across(starts_with("V"))) %>%
+ mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
+ pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q")
+ 
+df <-
+ left_join(Q, coords[,c("x", "y", "SampleID")], by = "SampleID") %>%
+ st_as_sf(coords = c("x", "y")) %>%
+ st_set_crs(st_crs(4326)) 
+
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  facet_wrap(~K, nrow = 2) +
+  theme_void() +
+  scale_color_manual(values = viridis::turbo(max(Kvals))) 
+
+barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
+do.call(ggarrange, c(barplots, ncol = 1))
+```
+
+```{r, fig.width = 13, fig.height = 6}
+ggplot(filter(df, K %in% 3:6)) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  facet_wrap(~K, nrow = 1) +
+  theme_void() +
+  scale_color_manual(values = viridis::turbo(6))
+
+barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
+do.call(ggarrange, c(barplots, ncol = 1))
+```
