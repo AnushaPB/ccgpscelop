@@ -21,10 +21,11 @@ rm *.log
 rm *.nosex
 mv *.het outputs
 mv *.bed outputs
-mv *.bim outputs
+mv *.bim outputs 
 mv *.fam outputs
 
 # ROH -----------------------------
+
 # Define an array with your population identifiers
 POPS_PATH="../admixture/outputs"
 #POPS=("pop1" "pop2" "pop3" "pop4" "pop5")
