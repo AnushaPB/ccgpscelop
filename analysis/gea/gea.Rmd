@@ -68,7 +68,7 @@ stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
 
 ```{r}
-dem <- elevatr::get_elev_raster(coords, z = 5)
+dem <- elevatr::get_elev_raster(coords, z = 10)
 coords$elevation <- extract(dem, coords)
 
 coords
@@ -99,7 +99,8 @@ rda_sig_p <- rda_getoutliers(mod_full, naxes = "all", outlier_method = "p", p_ad
 rda_snps <- rda_sig_p$rda_snps
 rda_gen <- doscc[cci, rda_snps]
 
-write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
+write.csv(rda_sig_p, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
+write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_gen.csv"), row.names = TRUE)
 
 #arrange by loading
 rda_sig_p %>% arrange(loading) %>% head()
