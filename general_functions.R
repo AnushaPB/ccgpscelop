@@ -16,3 +16,18 @@ get_coords <- function(sf = FALSE){
   }
   return(coords)
 }
+
+get_dem <- function(){
+  coords <- get_coords(sf = TRUE)
+  ca <- get_ca()
+  dem <- elevatr::get_elev_raster(coords, z = 5)
+  dem <- mask(dem, ca)
+  dem <- crop(dem, ca)
+  dem <- as.data.frame(dem, xy = TRUE)
+  colnames(dem) <- c("x", "y", "elev")
+  return(dem)
+}
+
+get_env <- function(){
+  read_csv(here("data", "env", "envdata.csv"))
+}
