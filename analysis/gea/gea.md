@@ -1,50 +1,13 @@
----
-title: "GEA analysis"
-output:
-  github_document:
-    toc: TRUE
----
-```{r, include = FALSE}
-library(here)
-library(tidyverse)
-library(sf)
-library(terra)
-library(ggpubr)
-library(algatr)
-library(viridis)
-library(vcfR)
-library(hierfstat)
-library(tigris)
+GEA analysis
+================
 
-devtools::load_all()
-source(here("analysis", "gea", "gea.R"))
-source(here("general_functions.R"))
-
-# Set global options for caching
-knitr::opts_chunk$set(
-  cache = TRUE,
-  echo = TRUE,
-  message = FALSE,
-  warning = FALSE,
-  result = FALSE
-)
-```
-
-```{r, echo = FALSE, message = FALSE, include=FALSE}
-# Load the U.S. state boundaries data
-ca <- get_ca()
-
-# get coordinates 
-coords <- get_coords(sf = TRUE)
-```
-
-```{r, eval = FALSE}
+``` r
 # get vcf 
 vcf <- read.vcfR(here("58-Sceloporus", "58-Sceloporus_JALMGF010000001.1.vcf.gz"))
 dos <- vcf_to_dosage(vcf)
 ```
 
-```{r, eval = FALSE}
+``` r
 coords <-
   coords %>%
   filter(SampleID %in% colnames(vcf@gt)[-1]) %>%
@@ -53,11 +16,13 @@ coords <-
 
 stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
-```{r, eval = FALSE}
+
+``` r
 dem <- elevatr::get_elev_raster(coords, z = 10)
 coords$elevation <- extract(dem, coords)
 ```
-```{r, eval = FALSE}
+
+``` r
 # deal with NA values (for now just removing SNPs with NA values)
 #dos <- simple_impute(dos)
 na <- apply(dos, 2, function(x) mean(is.na(x)))
@@ -100,7 +65,7 @@ write.csv(cor_df, here("analysis", "gea", "outputs", "cor_df.csv"), row.names = 
 rda_sig_p %>% arrange(loading) %>% head()
 ```
 
-```{r}
+``` r
 cor_df <- 
   read.csv(here("analysis", "gea", "outputs", "cor_df.csv"))
 
@@ -135,7 +100,9 @@ ggplot(rda_df) +
   theme_void()
 ```
 
-```{r}
+![](gea_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+
+``` r
 library(MASS)
 
 df <- 
@@ -150,10 +117,11 @@ error <- sum(predictions != observed, na.rm = TRUE) / length(na.omit(observed))
 
 df <- df %>% mutate(class_factor = factor(class))
 klaR::partimat(class_factor ~ X + Y, data = df, method = "lda")
-
 ```
 
-```{r, fig.width = 10, fig.height = 10}
+![](gea_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+
+``` r
 df <- 
   left_join(st_drop_geometry(coords), rda_gen) %>%
   bind_cols(st_coordinates(coords)) %>%
@@ -176,7 +144,11 @@ errors_df <-
   filter(var == "y")
 
 plot(abs(errors_df$r), errors_df$error)
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+``` r
 high_snps <- errors_df %>% arrange(desc(error)) %>% head(9) %>% pull(snp)
 low_snps <- errors_df %>% arrange(error) %>% head(9) %>% pull(snp)
 
@@ -197,21 +169,28 @@ ggplot(rda_top_df) +
   facet_wrap(~name) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-2.png)<!-- -->
 
+``` r
 ggplot(rda_bottom_df) +
   geom_sf(data = ca) +
   geom_sf(aes(col = value)) +
   facet_wrap(~name) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-3.png)<!-- -->
+
+``` r
 # TRY RF BUT SET THE NUMBER OF TREE BRANCHES AND SEE HOW ERROR CHANGES
 # See how it drops off from 2 to 3 to 4
 # measure of dataset replication
 ```
 
-```{r, fig.width = 10, fig.height = 10}
+``` r
 library(rpart)
 
 df <- 
@@ -254,8 +233,17 @@ error_df <-
   filter(var == "y")
 
 plot(error_df$error1, abs(error_df$r))
-plot(error_df$error2, abs(error_df$r))
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+
+``` r
+plot(error_df$error2, abs(error_df$r))
+```
+
+![](gea_files/figure-gfm/unnamed-chunk-10-2.png)<!-- -->
+
+``` r
 snp_df <-
   left_join(coords, rda_gen) %>%
   pivot_longer(c(-SampleID, -geometry), names_to = "snp")
@@ -273,3 +261,5 @@ ggplot(error_min_max) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
 ```
+
+![](gea_files/figure-gfm/unnamed-chunk-10-3.png)<!-- -->
