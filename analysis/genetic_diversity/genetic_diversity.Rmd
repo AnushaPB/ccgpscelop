@@ -25,7 +25,7 @@ devtools::load_all()
 # Set global options for caching
 knitr::opts_chunk$set(
   cache = TRUE,
-  echo = FALSE,
+  echo = TRUE,
   message = FALSE,
   warning = FALSE,
   result = FALSE
