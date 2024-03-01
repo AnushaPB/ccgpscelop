@@ -103,7 +103,7 @@ ggplot(roh_df) +
 ```
 
 # Models
-```{r models, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE, eval = FALSE}
+```{r models, fig.width = 5, fig.height = 5, result = FALSE, message = FALSE, eval = TRUE}
 envdata <- get_env()
 mod_df <- 
   left_join(roh_df, envdata) %>%
