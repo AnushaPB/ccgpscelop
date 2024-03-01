@@ -1,3 +1,9 @@
+---
+title: "IBD/IBE analysis"
+output:
+  github_document:
+    toc: TRUE
+---
 
 # format genetic distances
 ```{r}
