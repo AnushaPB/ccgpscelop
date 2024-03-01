@@ -38,7 +38,7 @@ knitr::opts_chunk$set(
 )
 
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
-source(here("analysis", "gravity_models", "gravity_models.R"))
+source(here("general_functions.R"))
 ```
 
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
@@ -55,16 +55,10 @@ theme_custom <-
     axis.title = element_blank(),
     strip.text = element_text(size = 16, face = "italic")
     )
+
+coords <- get_coords(sf = TRUE)
 ```
 
-```{r}
-# get coordinates across CA (full_coords) and then within the BA/SF (sub_coords)
-full_coords <- get_coords(split = FALSE)
-sub_coords <- get_coords(filter = TRUE, split = FALSE)
-
-# create cropped polygon of study area for plotting later
-sa <- st_crop(ca, st_bbox(st_buffer(bind_rows(sub_coords), 10000)))
-```
 
 # Heterozygosity
 ```{r heterozygosity, fig.width = 13, fig.height = 7}
