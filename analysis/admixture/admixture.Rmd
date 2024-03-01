@@ -99,3 +99,43 @@ ggplot(filter(df, K %in% 3:6)) +
 barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
+
+```{r, fig.width = 13, fig.height = 6}
+
+# simplified df with only cluster assignments and not Q values
+simplified_df <- 
+  df %>%
+  # doesn't matter which pop group is selected, cluster is repeated
+  filter(PopGroup == "V1") %>%
+  select(SampleID, cluster, K)
+
+IDs <- unique(simplified_df$SampleID)
+
+same_all_df <-
+  map(IDs, ~{
+    pop <- 
+      simplified_df %>%
+      filter(SampleID == .x) %>%
+      st_drop_geometry() %>%
+      rename(reference_cluster = cluster, reference_id = SampleID)
+
+    same_df <-
+      simplified_df %>%
+      left_join(pop, by = "K") %>%
+      mutate(same = (cluster == reference_cluster)) %>%
+      group_by(SampleID, reference_id) %>%
+      summarize(same = mean(same), .groups = "drop")
+
+    return(same_df)
+  }) %>% 
+  bind_rows()
+
+same_summarize_df <-
+  same_all_df %>%
+  group_by(SampleID) %>%
+  summarize(same = mean(same), .groups = "drop")
+
+ggplot(same_summarize_df) +
+  geom_sf(aes(col = same)) +
+  scale_color_viridis_c(option = "plasma")
+```
