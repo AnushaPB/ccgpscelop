@@ -70,7 +70,7 @@ ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
 ```
 
 # ROH
-```{r ROH, fig.width = 13, fig.height = 7}
+```{r ROH, fig.width = 7, fig.height = 7}
 roh_df <- get_roh()
 dem <- get_dem()
 
