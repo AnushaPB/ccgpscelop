@@ -411,7 +411,7 @@ requests <-
   # reformatting so that there is a column with all near specimen IDs (not just the nearest)
   pivot_longer(cols = starts_with("Specimen"), names_to = "Specimen", values_to = "near_SampleID") %>%
   # getting coords for near specimens
-  left_join(select(museums, SampleID, x, y), by = c("near_SampleID" = "SampleID")) %>%
+  left_join(dplyr::select(museums, SampleID, x, y), by = c("near_SampleID" = "SampleID")) %>%
   mutate(near_x = x.y, near_y = y.y, x = x.x, y = y.x) %>%
   # removing NA rows
   drop_na(near_SampleID) %>%
@@ -672,3 +672,5 @@ Next steps:
 1. Request from CAS
 2. Request from LACM
 3. Think about field work in the Spring (check for funding)
+
+Kinsey sampling - samples from San Diego (three samples from campus and from Misson Trails Open Space)
