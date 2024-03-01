@@ -99,3 +99,15 @@ ggplot(filter(df, K %in% 3:6)) +
 barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
+
+```{r}
+# write out population files
+Q %>%
+  filter(K == 5, PopGroup == "V1") %>%
+  mutate(pop = paste0("pop", cluster)) %>%
+  group_by(cluster) %>%
+  group_split() %>%
+  map(~as.character(pull(.x, SampleID))) %>%
+  imap(\(x, idx) write(x, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
+
+```
