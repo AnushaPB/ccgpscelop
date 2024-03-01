@@ -100,6 +100,18 @@ barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + s
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
+```{r}
+# write out population files
+Q %>%
+  filter(K == 5, PopGroup == "V1") %>%
+  mutate(pop = paste0("pop", cluster)) %>%
+  group_by(cluster) %>%
+  group_split() %>%
+  map(~as.character(pull(.x, SampleID))) %>%
+  imap(\(x, idx) write(x, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
+
+```
+
 ```{r, fig.width = 13, fig.height = 6}
 
 # simplified df with only cluster assignments and not Q values

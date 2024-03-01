@@ -19,12 +19,6 @@ library(raster)
 library(igraph)
 library(sp)
 library(gridExtra)
-#remotes::install_github("jeffreyevans/spatialEco")
-library(spatialEco)
-library(leaflet)
-library(sfnetworks)
-library(spdep)
-library(tmap)
 library(wingen)
 devtools::load_all()
 
@@ -47,6 +41,7 @@ ca <- get_ca()
 
 coords <- get_coords(sf = TRUE)
 ```
+
 
 # Heterozygosity
 ```{r heterozygosity, fig.width = 7, fig.height = 7}

@@ -28,8 +28,8 @@ mv *.fam outputs
 
 # Define an array with your population identifiers
 POPS_PATH="../admixture/outputs"
-#POPS=("pop1" "pop2" "pop3" "pop4" "pop5")
-POPS="pop1"
+POPS=("pop1" "pop2" "pop3" "pop4" "pop5")
+
 # Loop through each population
 for POP in "${POPS[@]}"; do
     # Split by population
@@ -40,8 +40,8 @@ for POP in "${POPS[@]}"; do
     zgrep RG ${POP}.roh.gz > ${POP}.rg.roh
 
     # Calculate fROH
-    python -c "from roh import calc_roh; calc_roh('${POP}.rg.roh', '\$GENOME', '${POP}.froh')"
-
+    python -c "from roh import calc_roh; calc_roh('${POP}.rg.roh', '$GENOME', '${POP}.froh')"
+    
     # Get maximum ROH length
     Rscript -e "print(max(read.table('${POP}.rg.roh')\$V6))"
 

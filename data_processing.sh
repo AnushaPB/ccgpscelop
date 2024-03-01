@@ -68,3 +68,13 @@ plink --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz
 plink --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz --out 58-Sceloporus_plinkdist_1ibs --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid
 
 bcftools query -l CCGP/58-Sceloporus_annotated.vcf.gz > samples.txt
+
+# FILTER ONE CONTIG -----------------------------------------------------------------------------------
+# get first contig name: JALMGF010000001.1
+zgrep "^##contig=" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz | head -n 1 | awk -F'[=,]' '{print $3}'
+
+# index file
+tabix -p vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz
+
+# filter out that contig
+bcftools view -r JALMGF010000001.1 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz > 58-Sceloporus_JALMGF010000001.1.vcf.gz

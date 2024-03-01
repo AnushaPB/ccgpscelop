@@ -68,7 +68,7 @@ stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
 ```{r}
 dem <- elevatr::get_elev_raster(coords, z = 10)
-
+coords$elevation <- extract(dem, coords)
 ```
 ```{r}
 # deal with NA values (for now just removing SNPs with NA values)
