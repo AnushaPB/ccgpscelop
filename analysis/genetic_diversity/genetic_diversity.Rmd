@@ -18,14 +18,8 @@ library(tigris)
 library(raster)
 library(igraph)
 library(sp)
-library(GeNetIt)
 library(gridExtra)
-#remotes::install_github("jeffreyevans/spatialEco")
-library(spatialEco)
-library(leaflet)
-library(sfnetworks)
-library(spdep)
-library(tmap)
+library(wingen)
 devtools::load_all()
 
 # Set global options for caching
@@ -45,308 +39,111 @@ source(here("general_functions.R"))
 # Load the U.S. state boundaries data
 ca <- get_ca()
 
-# make theme for plotting
-theme_custom <- 
-  theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    strip.text = element_text(size = 16, face = "italic")
-    )
-
 coords <- get_coords(sf = TRUE)
 ```
 
 
 # Heterozygosity
-```{r heterozygosity, fig.width = 13, fig.height = 7}
+```{r heterozygosity, fig.width = 7, fig.height = 7}
 # get het data
 het <- get_het()
 
-# remove samples
-out <- rm_samples(full_coords, het = het)
-het <- out$het
-full_coords <- out$coords
-
 # Combine coords and het data
-full_coords_gg <- left_join(full_coords, het) 
-full_site_gg <- full_coords_gg %>% geosummarize(stat = "Ho", res = 20000)
+coords <- left_join(coords, het, by = "SampleID") 
 
-sub_coords_gg <- left_join(sub_coords, het)
-sub_site_gg <- sub_coords_gg %>% geosummarize(stat = "Ho", res = 5000)
-
-ggplot(sub_coords_gg) +
- geom_density(aes(x = Ho, fill = group, col = group), alpha = 0.5) +
- facet_wrap(~GenusSpecies, ncol = 1) +
- theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    strip.text = element_text(size = 12, face = "italic")
-    )
-
-ggplot(full_coords_gg) +
- geom_histogram(aes(x = Ho, fill = group, col = group), alpha = 0.5) +
- facet_wrap(~GenusSpecies, ncol = 1) +
- theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    strip.text = element_text(size = 16, face = "italic")
-    )
-
-p <- 
-  ggplot() + 
+ggplot() + 
   geom_sf(data = ca) +
-  facet_wrap(~GenusSpecies) +
-  scale_fill_viridis_c(option = "mako") +
-  theme_custom
+  geom_sf(data = coords, aes(col = Ho), cex = 3) +
+  scale_color_viridis_c(option = "mako") +
+  theme_void()
+```
 
-p +
-  geom_sf(data = full_site_gg, aes(fill = Ho), col = "black", pch = 21, cex = 3) +
-  facet_wrap(~GenusSpecies)
-
-p2 <- 
-  p +
-  geom_sf(data = filter(full_site_gg, GenusSpecies == "Rallus limicola"), aes(fill = Ho), col = "black", pch = 21, cex = 3)
-  
-p1 <- 
-  p +
-  geom_sf(data = filter(full_site_gg, GenusSpecies == "Laterallus jamaicensis"), aes(fill = Ho), col = "black", pch = 21, cex = 3)
-
-grid.arrange(p1, p2, nrow = 1)
-
-p <- 
-  ggplot() + 
-  geom_sf(data = sa) +
-  facet_wrap(~GenusSpecies) +
-  scale_fill_viridis_c(option = "mako") +
-  theme_custom
-
-p +
-  geom_sf(data = sub_site_gg, aes(fill = Ho), col = "black", pch = 21, cex = 3) +
-  facet_wrap(~GenusSpecies)
-
-p2 <- 
-  p +
-  geom_sf(data = filter(sub_site_gg, GenusSpecies == "Rallus limicola"), aes(fill = Ho), col = "black", pch = 21, cex = 2.5)
-  
-p1 <- 
-  p +
-  geom_sf(data = filter(sub_site_gg, GenusSpecies == "Laterallus jamaicensis"), aes(fill = Ho), col = "black", pch = 21, cex = 2.5
-  )
-
-grid.arrange(p1, p2, nrow = 1)
-
-
+```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+lyr <- coords_to_raster(coords_proj, buffer = 1, res = 10000)
+window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+ggplot_gd(window_Ho, bkg = ca_proj, col = magma(100))
+krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
+mask_Ho <- mask_gd(krig_Ho, ca_proj, minval = 2)
+ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
 ```
 
 # ROH
 ```{r ROH, fig.width = 13, fig.height = 7}
 roh_df <- get_roh()
-roh_site_df <- 
-  roh_df %>%
-  geosummarize(stat = c("froh0", "froh"), res = 5000)
+dem <- get_dem()
 
 ggplot(roh_df) +
-  geom_density(aes(x = froh0, fill = group, col = group), alpha = 0.5, lwd = 1) +
-  facet_wrap(~GenusSpecies, ncol = 1) +
-   theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    strip.text = element_text(size = 12, face = "italic")
-    ) +
-  xlab("froh")
-
-ggplot(roh_site_df) +
- geom_sf(data = sa) +
+ geom_sf(data = ca) +
  geom_sf(aes(geometry = geometry, fill = froh), col = "black", pch = 21, cex = 2.5) +
- facet_wrap(~GenusSpecies) +
- scale_fill_viridis_c(option = "inferno", trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
- theme_custom
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ theme_void()
+
+ggplot(roh_df) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = froh), col = "black", pch = 21, cex = 2.5) +
+ labs(fill = "froh\n(log color scale)") +
+ scale_fill_viridis_c(option = "inferno",  trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ theme_void()
+
+ggplot(roh_df) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, col = pop), cex = 2.5) +
+ theme_void()
+
+ggplot(roh_df) +
+ geom_sf(data = ca) +
+ geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
+ geom_sf(aes(geometry = geometry, col = froh), pch = 16, cex = 2.5) +
+ scale_color_viridis_c(option = "inferno", trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ scale_fill_gradient(low = "black", high = "white", na.value = NA) +
+ theme_void()
 
 ```
 
 # Models
-```{r models, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE}
-envdata <- read.csv(here("data", "env", "envdata.csv"))
+```{r models, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE, eval = FALSE}
+envdata <- get_env()
+mod_df <- 
+  left_join(roh_df, envdata) %>%
+  st_drop_geometry() 
 
-envdata <-
-  envdata %>%
-  dplyr::select(all_of(c("Shape_Area", "Shape_Length", "Shape_Area_rwe", "Annual.Precipitation", "SampleID", "x", "y", "wetland_type", "wetland_subtype", "tidal_modifier", "vegetation_modifier"))) %>%
-  mutate_at(c("wetland_type", "wetland_subtype", "vegetation_modifier", "tidal_modifier"), ~case_when(is.na(.x) ~ "Unknown", .default = .x))
+# Climate model:
+mod_clim <- lm(froh0 ~ CA_rPCA1 + CA_rPCA2 + CA_rPCA3, data = mod_df)
+summary(mod_clim)
+mod_clim2 <- lm(froh0 ~ CA_rPCA2 , data = mod_df)
+summary(mod_clim2)
 
-sub_coords_df <- left_join(sub_coords_gg, envdata) 
+# Elevation model:
+mod_elev <- lm(froh0 ~ elevation, data = mod_df)
+summary(mod_elev)
 
-vira_sf_mod_rwe <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = Shape_Area_rwe) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod() %>%
-  mutate(model = "VIRA Sierra Foothills (RWE)")
+# Elevation and CA_rPCA2 are correlated
+mat <- as.matrix(drop_na(mod_df[,c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3", "elevation")]))
+mod_clim_elev <- lm(froh0 ~ CA_rPCA1 + elevation + CA_rPCA3, data = mod_df)
+summary(mod_clim_elev)
 
-blra_sf_mod_rwe <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = Shape_Area_rwe) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod() %>%
-  mutate(model = "BLRA Sierra Foothills (RWE)")
+# Development and imperviousness model
+mod_imperv <- lm(froh0 ~ nlcd_imperviousness, data = mod_df)
+summary(mod_imperv)
 
-vira_sf_mod_cari <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod() %>%
-  mutate(model = "VIRA Sierra Foothills (CARI)")
+mod_devel <- lm(froh0 ~ LF_evh_developed_bin, data = mod_df)
+summary(mod_devel)
 
-blra_sf_mod_cari <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod() %>%
-  mutate(model = "BLRA Sierra Foothills (CARI)")
+# Comparison of AIC suggests that elevation alone is the best model
+AIC(mod_clim_elev)
+AIC(mod_clim)
+AIC(mod_elev)
+AIC(mod_clim2)
 
-vira_sf_mod <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = case_when(is.na(Shape_Area_rwe) ~ Shape_Area, .default = Shape_Area_rwe)) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod() %>%
-  mutate(model = "VIRA Sierra Foothills (RWE + CARI)")
+# plot of elevation vs roh
+# doesn't seem suggestive of a strong relationship
+ggplot(mod_df) +
+  geom_point(aes(x = elevation, y = froh0, col = pop)) +
+  theme_classic()
 
-blra_sf_mod <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  mutate(Shape_Area = case_when(is.na(Shape_Area_rwe) ~ Shape_Area, .default = Shape_Area_rwe)) %>%
-  gd_mod() %>%
-  mutate(model = "BLRA Sierra Foothills (RWE + CARI)")
-
-blra_ba_mod <- 
-  sub_coords_df %>% 
-  filter(group == "Bay Area", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod() %>%
-  mutate(model = "BLRA Bay Area (CARI)")
-
-mod_df <-
- bind_rows(blra_ba_mod, blra_sf_mod, blra_sf_mod_cari, blra_sf_mod_rwe, vira_sf_mod, vira_sf_mod_cari, vira_sf_mod_rwe) %>%
- mutate(significant =  `Pr...t..` < 0.05) %>%
- filter(Variable != "(Intercept)")
-  
-ggplot(mod_df, aes(y = Variable, x = Estimate, fill = significant)) +
-  geom_col() +
-  facet_wrap(~model, nrow = 1) +
-  geom_vline(xintercept = 0) +
-  scale_fill_manual(values = c("gray", "aquamarine3")) +
-  ggtitle("Ho") +
-  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank(), panel.spacing.x = unit(6, "mm"))
-
-mod_df <-
- bind_rows(blra_ba_mod, blra_sf_mod_rwe, vira_sf_mod_rwe) %>%
- mutate(significant =  `Pr...t..` < 0.05) %>%
- filter(Variable != "(Intercept)")
-  
-ggplot(mod_df, aes(y = Variable, x = Estimate, fill = significant)) +
-  geom_col() +
-  facet_wrap(~model, nrow = 1) +
-  geom_vline(xintercept = 0) +
-  scale_fill_manual(values = c("gray", "aquamarine3")) +
-  ggtitle("Ho") +
-  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank(), panel.spacing.x = unit(6, "mm"))
-```
-
-```{r, result = FALSE, message = FALSE} 
-sig_only <- 
-  mod_df %>% 
-  filter(significant) %>%
-  filter(Variable != "wetland_typeUnknown") %>%
-  group_by(model) %>%
-  group_split() 
-
-plts <- map(sig_only, ~visualize_vars(df = sub_coords_df, vars = c("Ho", .x[["Variable"]]), model = .x[["model"]]))
-walk(plts, print)
-```
-
-```{r models3, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE} 
-roh_sf <- st_as_sf(roh_df) 
-roh_sf <- roh_sf %>% mutate(froh = case_when(is.na(froh) ~ 0, TRUE ~ froh))
-sub_coords_df <- left_join(roh_sf, envdata) 
-
-vira_sf_mod_rwe <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = Shape_Area_rwe) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod("froh") %>%
-  mutate(model = "VIRA Sierra Foothills (RWE)")
-
-blra_sf_mod_rwe <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = Shape_Area_rwe) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod("froh") %>%
-  mutate(model = "BLRA Sierra Foothills (RWE)")
-
-vira_sf_mod_cari <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod("froh") %>%
-  mutate(model = "VIRA Sierra Foothills (CARI)")
-
-blra_sf_mod_cari <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod("froh") %>%
-  mutate(model = "BLRA Sierra Foothills (CARI)")
-
-vira_sf_mod <- 
-  sub_coords_df %>% 
-  mutate(Shape_Area = case_when(is.na(Shape_Area_rwe) ~ Shape_Area, .default = Shape_Area_rwe)) %>%
-  filter(group == "Sierra Foothills", GenusSpecies == "Rallus limicola") %>%
-  gd_mod("froh") %>%
-  mutate(model = "VIRA Sierra Foothills (RWE + CARI)")
-
-blra_sf_mod <- 
-  sub_coords_df %>% 
-  filter(group == "Sierra Foothills", GenusSpecies == "Laterallus jamaicensis") %>%
-  mutate(Shape_Area = case_when(is.na(Shape_Area_rwe) ~ Shape_Area, .default = Shape_Area_rwe)) %>%
-  gd_mod("froh") %>%
-  mutate(model = "BLRA Sierra Foothills (RWE + CARI)")
-
-blra_ba_mod <- 
-  sub_coords_df %>% 
-  filter(group == "Bay Area", GenusSpecies == "Laterallus jamaicensis") %>%
-  gd_mod("froh") %>%
-  mutate(model = "BLRA Bay Area (CARI)")
-
-mod_df <-
- bind_rows(blra_ba_mod, blra_sf_mod, blra_sf_mod_cari, blra_sf_mod_rwe, vira_sf_mod, vira_sf_mod_cari, vira_sf_mod_rwe) %>%
- mutate(significant =  `Pr...t..` < 0.05) %>%
- filter(Variable != "(Intercept)")
-  
-ggplot(mod_df, aes(y = Variable, x = Estimate, fill = significant)) +
-  geom_col() +
-  facet_wrap(~model, nrow = 1) +
-  geom_vline(xintercept = 0) +
-  scale_fill_manual(values = c("gray", "aquamarine3")) +
-  ggtitle("fROH") +
-  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank(), panel.spacing.x = unit(6, "mm"))
-
-mod_df <-
- bind_rows(blra_ba_mod, blra_sf_mod_rwe, vira_sf_mod_rwe) %>%
- mutate(significant =  `Pr...t..` < 0.05) %>%
- filter(Variable != "(Intercept)")
-  
-ggplot(mod_df, aes(y = Variable, x = Estimate, fill = significant)) +
-  geom_col() +
-  facet_wrap(~model, nrow = 1) +
-  geom_vline(xintercept = 0) +
-  scale_fill_manual(values = c("gray", "aquamarine3")) +
-  ggtitle("fROH") +
-  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank(), panel.spacing.x = unit(6, "mm"))
-```
-```{r models4, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE} 
-sig_only <- 
-  mod_df %>% 
-  filter(significant) %>%
-  group_by(model) %>%
-  group_split()
-
-plts <- map(sig_only, ~visualize_vars(df = sub_coords_df, vars = c("froh", .x[["Variable"]]), model = .x[["model"]]))
-walk(plts,print)
+ggplot(mod_df) +
+  geom_point(aes(x = CA_rPCA2, y = froh0, col = pop)) +
+  theme_classic()
 ```

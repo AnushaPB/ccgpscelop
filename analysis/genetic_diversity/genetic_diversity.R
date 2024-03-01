@@ -13,10 +13,10 @@ get_het <- function(){
 
 format_het <- function(path, callable_sites){
   # Load the data in R
-  het_data <- read.table(path, header = TRUE)
+  het_data <- read_table(path)
 
   # Calculate the average heterozygosity per individual
-  het_data$Ho <- (het_data$N.NM. - het_data$O.HOM.)/callable_sites
+  het_data$Ho <- (het_data$`N(NM)` - het_data$`O(HOM)`)/callable_sites
 
   return(het_data)
 }
@@ -37,8 +37,8 @@ get_roh <- function(){
   roh <-
     map(paste0("pop", 1:5), ~{
       poproh <- 
-        read.table(here("analysis", "genetic_diversity", "outputs", paste0(.x, ".froh"))) %>%
-        mutate(SampleID = V1, froh = V2) %>%
+        read_table(here("analysis", "genetic_diversity", "outputs", paste0(.x, ".froh")), col_names = FALSE) %>%
+        rename(SampleID = X1, froh = X2) %>%
         right_join(filter(coords, pop == .x)) %>%
         # missing froh values indicates no roh greater than the minimum size were found
         # remains as NA if pop was not found (i.e., individual was not included in analysis)
@@ -46,7 +46,7 @@ get_roh <- function(){
           froh0 = case_when(is.na(froh) & !is.na(pop) ~ 0, .default = froh),
           pop = .x
         )
-    })
+    }) %>% bind_rows()
 
   return(roh)
 }
