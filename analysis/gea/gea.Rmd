@@ -66,17 +66,10 @@ coords <-
 
 stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
-
 ```{r}
-dem <- elevatr::get_elev_raster(coords, z = 5)
-coords$elevation <- extract(dem, coords)
+dem <- elevatr::get_elev_raster(coords, z = 10)
 
-coords
-
-library(algatr)
-rda <-
 ```
-
 ```{r}
 # deal with NA values (for now just removing SNPs with NA values)
 #dos <- simple_impute(dos)
@@ -84,12 +77,14 @@ na <- apply(dos, 2, function(x) mean(is.na(x)))
 doscc <- dos[,(na == 0)]
 
 # extract env data and only retain complete cases
-env <- extract(dem, coords)
+env <- cbind(data.frame(dem = extract(dem, coords)), extract(CA_env, coords))
 cci <- complete.cases(env)
-env_cci <- data.frame(dem = env[cci])
+env_cci <- env[cci,]
 
 # run RDA
-mod_full <- rda_run(doscc[cci,], env_cci, model = "full")
+coords_mat <- st_coordinates(coords)[cci,]
+colnames(coords_mat) <- c("x", "y")
+mod_full <- rda_run(doscc[cci,], env_cci, coords = coords_mat, model = "full", correctGEO = TRUE)
 
 # get outliers
 # note: plotting will cause a crash because there are so many snps
@@ -99,8 +94,210 @@ rda_sig_p <- rda_getoutliers(mod_full, naxes = "all", outlier_method = "p", p_ad
 rda_snps <- rda_sig_p$rda_snps
 rda_gen <- doscc[cci, rda_snps]
 
-write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
+# test for correlations
+cor_df <- rda_cor(rda_gen, cbind(env[cci,], coords_mat))
+cor_df <- 
+  cor_df %>%
+  filter(p < 0.05) %>%
+  dplyr::group_by(snp) %>%
+  dplyr::mutate(strongest = (abs(r) == max(abs(r))))
+
+cor_df %>% group_by(var) %>% summarize(count = n())
+cor_df %>% arrange(desc(abs(r)))
+
+write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_gen.csv"), row.names = TRUE)
+write.csv(rda_snps, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
+write.csv(cor_df, here("analysis", "gea", "outputs", "cor_df.csv"), row.names = FALSE)
 
 #arrange by loading
 rda_sig_p %>% arrange(loading) %>% head()
+```
+
+```{r}
+
+cor_df <- 
+  read.csv(here("analysis", "gea", "outputs", "cor_df.csv"))
+
+geo_snps <- 
+  cor_df %>%
+  filter((var == "y" & strongest) | (var == "y" & r > 0.4)) %>%
+  pull(snp)
+
+top_snps <- 
+  cor_df %>%
+  filter(!(snp %in% geo_snps)) %>%
+  arrange(desc(abs(r))) %>%
+  head() %>%
+  pull(snp)
+
+rda_gen <- 
+  read.csv(here("analysis", "gea", "outputs", "rda_gen.csv")) %>%
+  data.frame() %>%
+  rename(SampleID = X)
+
+rda_top5 <- rda_gen[,c("SampleID", top_snps)]
+
+rda_df <-
+  left_join(coords, rda_top5) %>%
+  pivot_longer(c(-SampleID, -geometry))
+
+ggplot(rda_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value)) +
+  facet_wrap(~name) +
+  scale_color_viridis_c(option = "viridis", end = 0.9) +
+  theme_void()
+```
+
+```{r}
+library(MASS)
+
+df <- 
+  left_join(st_drop_geometry(coords), rda_top5) %>%
+  bind_cols(st_coordinates(coords)) %>%
+  mutate(class = (JALMGF010000001.1_120374359 != 0))
+
+model <- lda(class ~ X + Y, data = df)
+predictions <- predict(model, df)$class
+observed <- df$class
+error <- sum(predictions != observed, na.rm = TRUE) / length(na.omit(observed))
+
+df <- df %>% mutate(class_factor = factor(class))
+klaR::partimat(class_factor ~ X + Y, data = df, method = "lda")
+
+```
+
+```{r}
+df <- 
+  left_join(st_drop_geometry(coords), rda_gen) %>%
+  bind_cols(st_coordinates(coords)) %>%
+  mutate(across(starts_with("JALMGF010000001"), ~(.x != 0)))
+
+snps <- colnames(dplyr::select(df, starts_with("JALMGF010000001")))
+errors <- 
+  map_dbl(snps, ~{ 
+    f <- formula(paste0(.x, "~ X + Y"))
+    model <- lda(f, data = df)
+    predictions <- predict(model, df)$class
+    observed <- pull(df,.x)
+    error <- sum(predictions != observed, na.rm = TRUE) / length(na.omit(observed))
+    return(error)
+  })
+
+errors_df <- 
+  data.frame(error = errors, snp = snps) %>%
+  left_join(cor_df) %>%
+  filter(var == "y")
+
+plot(abs(errors_df$r), errors_df$error)
+
+high_snps <- errors_df %>% arrange(desc(error)) %>% head(9) %>% pull(snp)
+low_snps <- errors_df %>% arrange(error) %>% head(9) %>% pull(snp)
+
+rda_top <- rda_gen[,c("SampleID", high_snps)]
+rda_bottom <- rda_gen[,c("SampleID", low_snps)]
+
+rda_top_df <-
+  left_join(coords, rda_top) %>%
+  pivot_longer(c(-SampleID, -geometry))
+  
+rda_bottom_df <-
+  left_join(coords, rda_bottom) %>%
+  pivot_longer(c(-SampleID, -geometry))
+
+ggplot(rda_top_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value)) +
+  facet_wrap(~name) +
+  scale_color_viridis_c(option = "viridis", end = 0.9) +
+  theme_void()
+
+
+ggplot(rda_bottom_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value)) +
+  facet_wrap(~name) +
+  scale_color_viridis_c(option = "viridis", end = 0.9) +
+  theme_void()
+
+# TRY RF BUT SET THE NUMBER OF TREE BRANCHES AND SEE HOW ERROR CHANGES
+# See how it drops off from 2 to 3 to 4
+# measure of dataset replication
+```
+
+```{r}
+library(randomForest)
+df <- 
+  left_join(st_drop_geometry(coords), rda_top5) %>%
+  bind_cols(st_coordinates(coords)) %>%
+  mutate(class = (JALMGF010000001.1_120374359 != 0))
+
+
+# Set maxnodes to 2 to limit each tree to one split
+rf_simple <- randomForest(class ~ X + Y, data = drop_na(df, class, X, Y), maxnodes = 2)
+
+
+library(rpart)
+
+df <- 
+  left_join(st_drop_geometry(coords), rda_gen) %>%
+  bind_cols(st_coordinates(coords)) %>%
+  mutate(across(starts_with("JALMGF010000001"), ~(.x != 0)))
+
+snps <- colnames(dplyr::select(df, starts_with("JALMGF010000001")))
+errors_1split <- 
+  map_dbl(snps, ~{ 
+    f <- formula(paste0(.x, "~ X + Y"))
+    # Building a simple decision tree model with one split
+    tree_model <- rpart(f, data = df, method="class", control=rpart.control(maxdepth = 1))
+
+    # Making predictions on the testing set
+    predictions <- predict(tree_model, newdata = df, type = "class")
+
+    # Calculating classification error
+    error <- mean(predictions != pull(df, .x), na.rm = TRUE)
+    return(error)
+  }) 
+
+errors_2split <- 
+  map_dbl(snps, ~{ 
+    f <- formula(paste0(.x, "~ X + Y"))
+    # Building a simple decision tree model with two splits
+    tree_model <- rpart(f, data = df, method="class", control=rpart.control(maxdepth = 2))
+
+    # Making predictions on the testing set
+    predictions <- predict(tree_model, newdata = df, type = "class")
+
+    # Calculating classification error
+    error <- mean(predictions != pull(df, .x), na.rm = TRUE)
+    return(error)
+  }) 
+
+error_df <- 
+  data.frame(error1 = errors_1split, error2 = errors_2split, snp = snps) %>%
+  left_join(cor_df) %>%
+  filter(var == "y")
+
+plot(error_df$error1, abs(error_df$r))
+plot(error_df$error2, abs(error_df$r))
+
+
+snp_df <-
+  left_join(coords, rda_gen) %>%
+  pivot_longer(c(-SampleID, -geometry), names_to = "snp")
+
+error1_snps_max <- error_df %>% arrange(desc(error1)) %>% head(4) %>% mutate(group = "Error 1 Max") %>% left_join(snp_df)
+error2_snps_max <- error_df %>% arrange(desc(error2)) %>% head(4) %>% mutate(group = "Error 2 Max") %>% left_join(snp_df)
+error1_snps_min <- error_df %>% arrange((error1)) %>% head(4) %>% mutate(group = "Error 1 Min") %>% left_join(snp_df)
+error2_snps_min <- error_df %>% arrange((error2)) %>% head(4) %>% mutate(group = "Error 2 Min") %>% left_join(snp_df)
+error_min_max <- bind_rows(error1_snps_max, error2_snps_max, error1_snps_min, error2_snps_min)
+
+ggplot(error_min_max) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value, geometry = geometry)) +
+  facet_wrap(~group+snp) +
+  scale_color_viridis_c(option = "viridis", end = 0.9) +
+  theme_void()
+
+
 ```
