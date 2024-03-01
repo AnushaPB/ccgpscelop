@@ -1,8 +1,21 @@
 
 # Data files
 data/
+gnx/
 58-Sceloporus/
 *.tif
+
+# Files in analysis except scripts
+# note this pattern is necessary to properly set-up rules:
+analysis/*
+!analysis/*
+analysis/*/*
+!analysis/*/*.sh
+!analysis/*/*.R
+!analysis/*/*.py
+!analysis/*/*.Rmd
+!analysis/*/*.md
+!analysis/*/*_files/
 
 # History files
 .Rhistory
