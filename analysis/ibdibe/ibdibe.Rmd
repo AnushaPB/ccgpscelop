@@ -4,8 +4,11 @@
 library(tidyverse)
 library(here)
 library(algatr)
-source(here("analyses", "ibdibe", "gendist.R"))
-format_dist('58-Sceloporus')
+source(here("general_functions.R"))
+source(here("analysis", "ibdibe", "gendist.R"))
+
+# Format distances and write out file
+format_dist()
 ```
 
 ```{r}
@@ -19,6 +22,7 @@ coords <- read_table(here("data/58-Sceloporus.coords.txt"), col_names = FALSE)
 colnames(coords) <- c("ID", "x", "y")
 ```
 
+# GDM
 ```{r}
 load_algatr_example()
 
@@ -40,5 +44,26 @@ gendist_coords <-
 stopifnot(gendist_coords$ID == row.names(gendist))
 
 gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], envlayers = CA_env, quiet = TRUE)
+
+print(gdm$coeff_df)
+
+gdm_plot_isplines(gdm$model)
+
+gdm_map(gdm$model, CA_env, gendist_coords[,c("x", "y")])
+```
+
+# MMRR
+```{r}
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = CA_env, quiet = TRUE)
+
+print(mmrr$coeff_df)
+
+# Calculate environmental distances
+X <- env_dist(extract(CA_env, gendist_coords[,c("x", "y")]))
+# Add geographic distance to X
+X[["geodist"]] <- geo_dist(gendist_coords[,c("x", "y")])
+Y <- gendist
+
+mmrr_plot(Y, X, mod = mmrr$mod, plot_type = "all", stdz = TRUE)
 ```
 
