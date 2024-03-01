@@ -54,16 +54,8 @@ gdm_map(gdm$model, CA_env, gendist_coords[,c("x", "y")])
 
 # MMRR
 ```{r}
-mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = CA_env, quiet = TRUE)
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = CA_env, quiet = FALSE)
 
 print(mmrr$coeff_df)
-
-# Calculate environmental distances
-X <- env_dist(extract(CA_env, gendist_coords[,c("x", "y")]))
-# Add geographic distance to X
-X[["geodist"]] <- geo_dist(gendist_coords[,c("x", "y")])
-Y <- gendist
-
-mmrr_plot(Y, X, mod = mmrr$mod, plot_type = "all", stdz = TRUE)
 ```
 
