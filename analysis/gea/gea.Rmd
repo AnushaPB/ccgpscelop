@@ -19,7 +19,7 @@ library(tigris)
 devtools::load_all()
 source(here("analysis", "gea", "gea.R"))
 source(here("general_functions.R"))
-
+source(here("analysis", "gea", "divloss.R"))
 # Set global options for caching
 knitr::opts_chunk$set(
   cache = TRUE,
@@ -28,25 +28,13 @@ knitr::opts_chunk$set(
   warning = FALSE,
   result = FALSE
 )
+
 ```
 
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
 # Load the U.S. state boundaries data
 ca <- get_ca()
 
-# make theme for plotting
-theme_custom <- 
-  theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    strip.text = element_text(size = 16, face = "italic")
-    )
-```
-
-```{r}
 # get coordinates 
 coords <- get_coords(sf = TRUE)
 ```
@@ -55,6 +43,10 @@ coords <- get_coords(sf = TRUE)
 # get vcf 
 vcf <- read.vcfR(here("58-Sceloporus", "58-Sceloporus_JALMGF010000001.1.vcf.gz"))
 dos <- vcf_to_dosage(vcf)
+
+# get pcs
+pcs <- read_table(here("58-Sceloporus", "QC", "58-Sceloporus.eigenvec")) %>% rename(SampleID = `#IID`)
+
 ```
 
 ```{r}
@@ -67,8 +59,7 @@ coords <-
 stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
 ```{r}
-dem <- elevatr::get_elev_raster(coords, z = 10)
-coords$elevation <- extract(dem, coords)
+dem <- rast(here("data", "env", "dem_z10.tif"))
 ```
 ```{r}
 # deal with NA values (for now just removing SNPs with NA values)
@@ -77,47 +68,70 @@ na <- apply(dos, 2, function(x) mean(is.na(x)))
 doscc <- dos[,(na == 0)]
 
 # extract env data and only retain complete cases
-env <- cbind(data.frame(dem = extract(dem, coords)), extract(CA_env, coords))
+env <- cbind(data.frame(dem = extract(dem, coords, ID = FALSE)), extract(CA_env, coords))
 cci <- complete.cases(env)
 env_cci <- env[cci,]
+
+# pcs
+pc_cci <-
+ pcs %>% 
+ filter(SampleID %in% as.character(coords[cci,]$SampleID))
+stopifnot(all(pc_cci$SampleID == coords[cci,]$SampleID))
+pc_cci <- pc_cci %>% select(PC1, PC2)
 
 # run RDA
 coords_mat <- st_coordinates(coords)[cci,]
 colnames(coords_mat) <- c("x", "y")
-mod_full <- rda_run(doscc[cci,], env_cci, coords = coords_mat, model = "full", correctGEO = TRUE)
+gen <- doscc[cci,]
+moddf <- data.frame(env_cci, coords_mat, pc_cci)
 
-# get outliers
-# note: plotting will cause a crash because there are so many snps
-rda_sig_p <- rda_getoutliers(mod_full, naxes = "all", outlier_method = "p", p_adj = "fdr", sig = 0.05, plot = FALSE)
+# create formulas
+f <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+")))
+f_geo <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(x + y)"))
+f_pc <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(", paste(colnames(pc_cci), collapse = "+"),")"))
+f_pc_geo <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(", paste(colnames(pc_cci), collapse = "+"),"+ x + y)"))
+f_ls <- list(default = f, geo = f_geo, pc = f_pc, pc_geo = f_pc_geo)
 
-# pull out outliers from dosage matrix 
-rda_snps <- rda_sig_p$rda_snps
-rda_gen <- doscc[cci, rda_snps]
+run_and_export <- imap(f_ls, \(f, idx){
+  mod <- vegan::rda(f, data = moddf)
 
-# test for correlations
-cor_df <- rda_cor(rda_gen, cbind(env[cci,], coords_mat))
-cor_df <- 
-  cor_df %>%
-  filter(p < 0.05) %>%
-  dplyr::group_by(snp) %>%
-  dplyr::mutate(strongest = (abs(r) == max(abs(r))))
+  # get outliers
+  # note: plotting will cause a crash because there are so many snps
+  rda_sig_p <- rda_getoutliers(mod, naxes = "all", outlier_method = "p", p_adj = "fdr", sig = 0.05, plot = FALSE)
 
-cor_df %>% group_by(var) %>% summarize(count = n())
-cor_df %>% arrange(desc(abs(r)))
+  # pull out outliers from dosage matrix 
+  rda_snps <- rda_sig_p$rda_snps
+  rda_gen <- doscc[cci, rda_snps]
 
-write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_gen.csv"), row.names = TRUE)
-write.csv(rda_snps, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
-write.csv(cor_df, here("analysis", "gea", "outputs", "cor_df.csv"), row.names = FALSE)
+  # test for correlations
+  cor_df <- rda_cor(rda_gen, cbind(env[cci,], coords_mat))
+  cor_df <- rda_cor(rda_gen, env[cci,])
+  cor_df <- 
+    cor_df %>%
+    filter(p < 0.05) %>%
+    dplyr::group_by(snp) %>%
+    dplyr::mutate(strongest = (abs(r) == max(abs(r))))
 
-#arrange by loading
-rda_sig_p %>% arrange(loading) %>% head()
+  cor_df %>% group_by(var) %>% summarize(count = n())
+  cor_df %>% arrange(desc(abs(r)))
+
+  write.csv(rda_gen, here("analysis", "gea", "outputs", paste0(idx, "_rda_gen.csv")), row.names = TRUE)
+  write.csv(rda_snps, here("analysis", "gea", "outputs", paste0(idx, "_rda_snps.csv")), row.names = FALSE)
+  write.csv(cor_df, here("analysis", "gea", "outputs", paste0(idx, "_cor_df.csv")), row.names = FALSE)
+})
 ```
 
 ```{r}
-
 cor_df <- 
-  read.csv(here("analysis", "gea", "outputs", "cor_df.csv"))
+  read.csv(here("analysis", "gea", "outputs", "default_cor_df.csv"))
 
+rda_gen <- 
+  read.csv(here("analysis", "gea", "outputs", "default_rda_gen.csv")) %>%
+  data.frame() %>%
+  rename(SampleID = X)
+```
+
+```{r}
 geo_snps <- 
   cor_df %>%
   filter((var == "y" & strongest) | (var == "y" & r > 0.4)) %>%
@@ -129,11 +143,6 @@ top_snps <-
   arrange(desc(abs(r))) %>%
   head() %>%
   pull(snp)
-
-rda_gen <- 
-  read.csv(here("analysis", "gea", "outputs", "rda_gen.csv")) %>%
-  data.frame() %>%
-  rename(SampleID = X)
 
 rda_top5 <- rda_gen[,c("SampleID", top_snps)]
 
@@ -149,6 +158,59 @@ ggplot(rda_df) +
   theme_void()
 ```
 
+# Distinctness
+```{r}
+results <- map(c("default", "geo", "pc", "pc_geo"), ~{
+    
+  cor_df <- 
+    read.csv(here("analysis", "gea", "outputs", paste0(.x, "_cor_df.csv")))
+
+  rda_gen <- 
+    read.csv(here("analysis", "gea", "outputs", paste0(.x, "_rda_gen.csv"))) %>%
+    data.frame() %>%
+    rename(SampleID = X)
+
+  by_var <-
+    cor_df %>%
+    filter(strongest) %>%
+    group_by(var) %>%
+    group_split()
+  names(by_var) <- map(by_var, ~unique(pull(.x, var)))
+    
+  snps_by_var <-
+    by_var %>%
+    map(~pull(.x, snp))
+
+  rda_coords <- coords %>% filter(coords$SampleID %in% rda_gen$SampleID)
+
+  var_di <- 
+    snps_by_var %>%
+    map(~{
+      rda_gen_sub <- rda_gen[, .x]/2
+      di <- distinct_ind(rda_gen_sub, biallelic = TRUE)$DistinctMean
+    })
+
+  di_df <- 
+    rda_coords %>% 
+    select(SampleID, geometry) %>%
+    bind_cols(var_di) %>%
+    mutate(across(-c(SampleID, geometry), scale)) %>%
+    pivot_longer(-c(SampleID, geometry)) %>%
+    mutate(model = .x)
+
+  return(di_df)
+}) %>% bind_rows()
+
+ggplot(results) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value), cex = 1) + 
+  facet_grid(model~name, switch = "y") +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+```
+
+
+# Splits
 ```{r}
 library(MASS)
 
