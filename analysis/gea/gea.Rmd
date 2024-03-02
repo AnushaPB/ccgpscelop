@@ -204,7 +204,7 @@ results <- map(c("default", "geo", "pc", "pc_geo"), ~{
 ggplot(results) +
   geom_sf(data = ca) +
   geom_sf(aes(col = value), cex = 1) + 
-  facet_grid(model~name, switch = "y") +
+  facet_grid(name~model, switch = "y") +
   scale_color_viridis_c(option = "magma") +
   theme_void()
 ```
