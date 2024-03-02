@@ -159,7 +159,7 @@ ggplot(rda_df) +
 ```
 
 # Distinctness
-```{r}
+```{r, fig.width = 13, fig.height = 13}
 results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     
   cor_df <- 
