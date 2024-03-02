@@ -1,55 +1,13 @@
----
-title: "GEA analysis"
-output:
-  github_document:
-    toc: TRUE
----
-```{r, include = FALSE}
-library(here)
-library(tidyverse)
-library(sf)
-library(terra)
-library(ggpubr)
-library(algatr)
-library(viridis)
-library(vcfR)
-library(hierfstat)
-library(tigris)
+GEA analysis
+================
 
-devtools::load_all()
-source(here("analysis", "gea", "gea.R"))
-source(here("general_functions.R"))
-source(here("analysis", "gea", "divloss.R"))
-# Set global options for caching
-knitr::opts_chunk$set(
-  cache = TRUE,
-  echo = TRUE,
-  message = FALSE,
-  warning = FALSE,
-  result = FALSE
-)
-
-```
-
-```{r, echo = FALSE, message = FALSE, include=FALSE}
-# Load the U.S. state boundaries data
-ca <- get_ca()
-
-# get coordinates 
-coords <- get_coords(sf = TRUE)
-```
-
-```{r, eval = FALSE}
+``` r
 # get vcf 
 vcf <- read.vcfR(here("58-Sceloporus", "58-Sceloporus_JALMGF010000001.1.vcf.gz"))
 dos <- vcf_to_dosage(vcf)
-
-# get pcs
-pcs <- read_table(here("58-Sceloporus", "QC", "58-Sceloporus.eigenvec")) %>% rename(SampleID = `#IID`)
-
 ```
 
-```{r, eval = FALSE}
+``` r
 coords <-
   coords %>%
   filter(SampleID %in% colnames(vcf@gt)[-1]) %>%
@@ -58,80 +16,59 @@ coords <-
 
 stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
-```{r, eval = FALSE}
-dem <- rast(here("data", "env", "dem_z10.tif"))
+
+``` r
+dem <- elevatr::get_elev_raster(coords, z = 10)
+coords$elevation <- extract(dem, coords)
 ```
-```{r, eval = FALSE}
+
+``` r
 # deal with NA values (for now just removing SNPs with NA values)
 #dos <- simple_impute(dos)
 na <- apply(dos, 2, function(x) mean(is.na(x)))
 doscc <- dos[,(na == 0)]
 
 # extract env data and only retain complete cases
-env <- cbind(data.frame(dem = extract(dem, coords, ID = FALSE)), extract(CA_env, coords))
+env <- cbind(data.frame(dem = extract(dem, coords)), extract(CA_env, coords))
 cci <- complete.cases(env)
 env_cci <- env[cci,]
-
-# pcs
-pc_cci <-
- pcs %>% 
- filter(SampleID %in% as.character(coords[cci,]$SampleID))
-stopifnot(all(pc_cci$SampleID == coords[cci,]$SampleID))
-pc_cci <- pc_cci %>% select(PC1, PC2)
 
 # run RDA
 coords_mat <- st_coordinates(coords)[cci,]
 colnames(coords_mat) <- c("x", "y")
-gen <- doscc[cci,]
-moddf <- data.frame(env_cci, coords_mat, pc_cci)
+mod_full <- rda_run(doscc[cci,], env_cci, coords = coords_mat, model = "full", correctGEO = TRUE)
 
-# create formulas
-f <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+")))
-f_geo <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(x + y)"))
-f_pc <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(", paste(colnames(pc_cci), collapse = "+"),")"))
-f_pc_geo <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+"), "+ Condition(", paste(colnames(pc_cci), collapse = "+"),"+ x + y)"))
-f_ls <- list(default = f, geo = f_geo, pc = f_pc, pc_geo = f_pc_geo)
+# get outliers
+# note: plotting will cause a crash because there are so many snps
+rda_sig_p <- rda_getoutliers(mod_full, naxes = "all", outlier_method = "p", p_adj = "fdr", sig = 0.05, plot = FALSE)
 
-run_and_export <- imap(f_ls, \(f, idx){
-  mod <- vegan::rda(f, data = moddf)
+# pull out outliers from dosage matrix 
+rda_snps <- rda_sig_p$rda_snps
+rda_gen <- doscc[cci, rda_snps]
 
-  # get outliers
-  # note: plotting will cause a crash because there are so many snps
-  rda_sig_p <- rda_getoutliers(mod, naxes = "all", outlier_method = "p", p_adj = "fdr", sig = 0.05, plot = FALSE)
-
-  # pull out outliers from dosage matrix 
-  rda_snps <- rda_sig_p$rda_snps
-  rda_gen <- doscc[cci, rda_snps]
-
-  # test for correlations
-  cor_df <- rda_cor(rda_gen, cbind(env[cci,], coords_mat))
-  cor_df <- rda_cor(rda_gen, env[cci,])
-  cor_df <- 
-    cor_df %>%
-    filter(p < 0.05) %>%
-    dplyr::group_by(snp) %>%
-    dplyr::mutate(strongest = (abs(r) == max(abs(r))))
-
-  cor_df %>% group_by(var) %>% summarize(count = n())
-  cor_df %>% arrange(desc(abs(r)))
-
-  write.csv(rda_gen, here("analysis", "gea", "outputs", paste0(idx, "_rda_gen.csv")), row.names = TRUE)
-  write.csv(rda_snps, here("analysis", "gea", "outputs", paste0(idx, "_rda_snps.csv")), row.names = FALSE)
-  write.csv(cor_df, here("analysis", "gea", "outputs", paste0(idx, "_cor_df.csv")), row.names = FALSE)
-})
-```
-
-```{r}
+# test for correlations
+cor_df <- rda_cor(rda_gen, cbind(env[cci,], coords_mat))
 cor_df <- 
-  read.csv(here("analysis", "gea", "outputs", "default_cor_df.csv"))
+  cor_df %>%
+  filter(p < 0.05) %>%
+  dplyr::group_by(snp) %>%
+  dplyr::mutate(strongest = (abs(r) == max(abs(r))))
 
-rda_gen <- 
-  read.csv(here("analysis", "gea", "outputs", "default_rda_gen.csv")) %>%
-  data.frame() %>%
-  rename(SampleID = X)
+cor_df %>% group_by(var) %>% summarize(count = n())
+cor_df %>% arrange(desc(abs(r)))
+
+write.csv(rda_gen, here("analysis", "gea", "outputs", "rda_gen.csv"), row.names = TRUE)
+write.csv(rda_snps, here("analysis", "gea", "outputs", "rda_snps.csv"), row.names = FALSE)
+write.csv(cor_df, here("analysis", "gea", "outputs", "cor_df.csv"), row.names = FALSE)
+
+#arrange by loading
+rda_sig_p %>% arrange(loading) %>% head()
 ```
 
-```{r}
+``` r
+cor_df <- 
+  read.csv(here("analysis", "gea", "outputs", "cor_df.csv"))
+
 geo_snps <- 
   cor_df %>%
   filter((var == "y" & strongest) | (var == "y" & r > 0.4)) %>%
@@ -143,6 +80,11 @@ top_snps <-
   arrange(desc(abs(r))) %>%
   head() %>%
   pull(snp)
+
+rda_gen <- 
+  read.csv(here("analysis", "gea", "outputs", "rda_gen.csv")) %>%
+  data.frame() %>%
+  rename(SampleID = X)
 
 rda_top5 <- rda_gen[,c("SampleID", top_snps)]
 
@@ -158,60 +100,9 @@ ggplot(rda_df) +
   theme_void()
 ```
 
-# Distinctness
-```{r, fig.width = 13, fig.height = 13}
-results <- map(c("default", "geo", "pc", "pc_geo"), ~{
-    
-  cor_df <- 
-    read.csv(here("analysis", "gea", "outputs", paste0(.x, "_cor_df.csv")))
+![](gea_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
 
-  rda_gen <- 
-    read.csv(here("analysis", "gea", "outputs", paste0(.x, "_rda_gen.csv"))) %>%
-    data.frame() %>%
-    rename(SampleID = X)
-
-  by_var <-
-    cor_df %>%
-    filter(strongest) %>%
-    group_by(var) %>%
-    group_split()
-  names(by_var) <- map(by_var, ~unique(pull(.x, var)))
-    
-  snps_by_var <-
-    by_var %>%
-    map(~pull(.x, snp))
-
-  rda_coords <- coords %>% filter(coords$SampleID %in% rda_gen$SampleID)
-
-  var_di <- 
-    snps_by_var %>%
-    map(~{
-      rda_gen_sub <- rda_gen[, .x]/2
-      di <- distinct_ind(rda_gen_sub, biallelic = TRUE)$DistinctMean
-    })
-
-  di_df <- 
-    rda_coords %>% 
-    select(SampleID, geometry) %>%
-    bind_cols(var_di) %>%
-    mutate(across(-c(SampleID, geometry), scale)) %>%
-    pivot_longer(-c(SampleID, geometry)) %>%
-    mutate(model = .x)
-
-  return(di_df)
-}) %>% bind_rows()
-
-ggplot(results) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = value), cex = 1) + 
-  facet_grid(model~name, switch = "y") +
-  scale_color_viridis_c(option = "magma") +
-  theme_void()
-```
-
-
-# Splits
-```{r}
+``` r
 library(MASS)
 
 df <- 
@@ -226,10 +117,11 @@ error <- sum(predictions != observed, na.rm = TRUE) / length(na.omit(observed))
 
 df <- df %>% mutate(class_factor = factor(class))
 klaR::partimat(class_factor ~ X + Y, data = df, method = "lda")
-
 ```
 
-```{r, fig.width = 10, fig.height = 10}
+![](gea_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+
+``` r
 df <- 
   left_join(st_drop_geometry(coords), rda_gen) %>%
   bind_cols(st_coordinates(coords)) %>%
@@ -252,7 +144,11 @@ errors_df <-
   filter(var == "y")
 
 plot(abs(errors_df$r), errors_df$error)
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+``` r
 high_snps <- errors_df %>% arrange(desc(error)) %>% head(9) %>% pull(snp)
 low_snps <- errors_df %>% arrange(error) %>% head(9) %>% pull(snp)
 
@@ -273,21 +169,28 @@ ggplot(rda_top_df) +
   facet_wrap(~name) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-2.png)<!-- -->
 
+``` r
 ggplot(rda_bottom_df) +
   geom_sf(data = ca) +
   geom_sf(aes(col = value)) +
   facet_wrap(~name) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-9-3.png)<!-- -->
+
+``` r
 # TRY RF BUT SET THE NUMBER OF TREE BRANCHES AND SEE HOW ERROR CHANGES
 # See how it drops off from 2 to 3 to 4
 # measure of dataset replication
 ```
 
-```{r, fig.width = 10, fig.height = 10}
+``` r
 library(rpart)
 
 df <- 
@@ -330,8 +233,17 @@ error_df <-
   filter(var == "y")
 
 plot(error_df$error1, abs(error_df$r))
-plot(error_df$error2, abs(error_df$r))
+```
 
+![](gea_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+
+``` r
+plot(error_df$error2, abs(error_df$r))
+```
+
+![](gea_files/figure-gfm/unnamed-chunk-10-2.png)<!-- -->
+
+``` r
 snp_df <-
   left_join(coords, rda_gen) %>%
   pivot_longer(c(-SampleID, -geometry), names_to = "snp")
@@ -349,3 +261,5 @@ ggplot(error_min_max) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
 ```
+
+![](gea_files/figure-gfm/unnamed-chunk-10-3.png)<!-- -->

@@ -25,7 +25,7 @@ devtools::load_all()
 # Set global options for caching
 knitr::opts_chunk$set(
   cache = TRUE,
-  echo = FALSE,
+  echo = TRUE,
   message = FALSE,
   warning = FALSE,
   result = FALSE
@@ -70,7 +70,7 @@ ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
 ```
 
 # ROH
-```{r ROH, fig.width = 13, fig.height = 7}
+```{r ROH, fig.width = 7, fig.height = 7}
 roh_df <- get_roh()
 dem <- get_dem()
 
@@ -103,7 +103,7 @@ ggplot(roh_df) +
 ```
 
 # Models
-```{r models, fig.width = 18, fig.height = 7, result = FALSE, message = FALSE, eval = FALSE}
+```{r models, fig.width = 5, fig.height = 5, result = FALSE, message = FALSE, eval = TRUE}
 envdata <- get_env()
 mod_df <- 
   left_join(roh_df, envdata) %>%

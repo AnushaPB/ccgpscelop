@@ -23,7 +23,7 @@ source(here("general_functions.R"))
 # Set global options for caching
 knitr::opts_chunk$set(
   cache = TRUE,
-  echo = FALSE,
+  echo = TRUE,
   message = FALSE,
   warning = FALSE,
   result = FALSE
@@ -119,7 +119,7 @@ simplified_df <-
   df %>%
   # doesn't matter which pop group is selected, cluster is repeated
   filter(PopGroup == "V1") %>%
-  select(SampleID, cluster, K)
+  dplyr::select(SampleID, cluster, K)
 
 IDs <- unique(simplified_df$SampleID)
 
