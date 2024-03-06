@@ -181,6 +181,9 @@ results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     by_var %>%
     map(~pull(.x, snp))
 
+  snp_count <- map_dbl(snps_by_var, ~length(.x)) 
+  snp_count <- data.frame(name = names(snp_count), nsnps = snp_count)
+
   rda_coords <- coords %>% filter(coords$SampleID %in% rda_gen$SampleID)
 
   var_di <- 
@@ -188,27 +191,53 @@ results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     map(~{
       rda_gen_sub <- rda_gen[, .x]/2
       di <- distinct_ind(rda_gen_sub, biallelic = TRUE)$DistinctMean
-    })
+    }) %>%
+    bind_cols() %>%
+    mutate(across(everything(), scale)) %>%
+    mutate(SampleID = rda_coords$SampleID) %>%
+    pivot_longer(-SampleID, names_to = "name", values_to = "DI")
+
+  # GO OVER THIS: when biallelic = TRUE than you get all 0.5 (which i would expect, but make sure it is clear what DI is doing instead)
+  var_ar <- 
+    snps_by_var %>%
+    map(~{
+      rda_gen_sub <- rda_gen[, .x]/2
+      di <- distinct_ind(rda_gen_sub, rare_allele = TRUE, weight = FALSE)$DistinctMean
+    }) %>%
+    bind_cols() %>%
+    mutate(across(everything(), scale)) %>%
+    mutate(SampleID = rda_coords$SampleID) %>%
+    pivot_longer(-SampleID, names_to = "name", values_to = "AR") 
 
   di_df <- 
     rda_coords %>% 
     dplyr::select(SampleID, geometry) %>%
-    bind_cols(var_di) %>%
-    mutate(across(-c(SampleID, geometry), scale)) %>%
-    pivot_longer(-c(SampleID, geometry)) %>%
-    mutate(model = .x)
+    left_join(var_di) %>%
+    left_join(var_ar) %>%
+    mutate(model = .x) %>%
+    left_join(snp_count) 
 
   return(di_df)
 }) %>% bind_rows()
 
 ggplot(results) +
   geom_sf(data = ca) +
-  geom_sf(aes(col = value), cex = 1) + 
+  geom_sf(aes(col = DI), cex = 1) + 
   facet_grid(name~model, switch = "y") +
   scale_color_viridis_c(option = "magma") +
   theme_void()
-```
 
+
+ggplot(results) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = AR), cex = 1) + 
+  facet_grid(name~model, switch = "y") +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+
+
+unique(results$nsnps)
+```
 
 # Splits
 ```{r}
