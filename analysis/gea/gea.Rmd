@@ -20,6 +20,7 @@ devtools::load_all()
 source(here("analysis", "gea", "gea.R"))
 source(here("general_functions.R"))
 source(here("analysis", "gea", "divloss.R"))
+source(here("analysis", "gea", "rda.R"))
 # Set global options for caching
 knitr::opts_chunk$set(
   cache = TRUE,
@@ -375,3 +376,77 @@ ggplot(error_min_max) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
 ```
+
+
+# Adaptive Index
+
+From: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/RDA_landscape_genomics.Rmd
+The scores of the environmental variables along the RDA axes can be used to calculate a genetic-based index of adaptation for each environmental pixel of the landscape. This index is estimated independently for each RDA axis of interest using the formula:
+$$
+\sum_{i = 1}^{n}{a_ib_i}
+$$
+Where _a_ is the climatic variable score (loading) along the RDA axis, _b_ is the standardized value for this particular variable at the focal pixel, and _i_ refers to one of the _n_ different variables used in the RDA model.   
+
+```{r, message=FALSE, results='hide', eval=TRUE}
+cor_df <- 
+  read.csv(here("analysis", "gea", "outputs", "default_cor_df.csv"))
+
+rda_gen <- 
+  read.csv(here("analysis", "gea", "outputs", "default_rda_gen.csv")) %>%
+  data.frame() %>%
+  rename(SampleID = X)
+
+envstack <- rast(here("data", "env", "envstack.tif"))
+#envstack_scaled <- scale(envstack, center = TRUE, scale = TRUE)
+envstack_agg <- aggregate(envstack, fact = 100, fun = mean)
+e2 <- aggregate(envstack_agg,fact = 10)
+
+Env <- extract(envstack, coords, df = TRUE, ID = FALSE)
+
+## Standardization of the variables
+Env <- scale(Env, center=TRUE, scale=TRUE) # center=TRUE, scale=TRUE are the defaults for scale()
+
+## Recovering scaling coefficients
+scale_env <- attr(Env, 'scaled:scale')
+center_env <- attr(Env, 'scaled:center')
+
+## Running the function for all the climatic pixels of lodgepole pine distribution range
+res_RDA_proj_current <- 
+  adaptive_index(
+    RDA = rda_gen[,2:10], 
+    K = 2, 
+    env_pres = e2, 
+    range = NULL, 
+    method = "loadings", 
+    scale_env = scale_env, 
+    center_env = center_env)
+```
+
+The adaptive index thus provides an estimate of adaptive genetic similarity or difference of all pixels on the landscape as a function of the values of the environmental predictors at that location. When projected on a map it allows visualizing the different adaptive gradients across a species range.
+
+```{r, message=FALSE, warning=FALSE, results='hide', eval=TRUE, fig.align='center', fig.width=10}
+## Vectorization of the climatic rasters for ggplot
+RDA_proj <- list(res_RDA_proj_current$RDA1, res_RDA_proj_current$RDA2)
+RDA_proj <- lapply(RDA_proj, function(x) rasterToPoints(x))
+for(i in 1:length(RDA_proj)){
+  RDA_proj[[i]][,3] <- (RDA_proj[[i]][,3]-min(RDA_proj[[i]][,3]))/(max(RDA_proj[[i]][,3])-min(RDA_proj[[i]][,3]))
+}
+
+## Adaptive genetic turnover projected across lodgepole pine range for RDA1 and RDA2 indexes
+TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:2]))
+colnames(TAB_RDA)[3] <- "value"
+TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1","RDA2"))
+ggplot(data = TAB_RDA) + 
+  geom_sf(data = admin, fill=gray(.9), size=0) +
+  geom_raster(aes(x = x, y = y, fill = cut(value, breaks=seq(0, 1, length.out=10), include.lowest = T))) + 
+  scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
+  geom_sf(data = admin, fill=NA, size=0.1) +
+  coord_sf(xlim = c(-148, -98), ylim = c(35, 64), expand = FALSE) +
+  xlab("Longitude") + ylab("Latitude") +
+  guides(fill=guide_legend(title="Adaptive index")) +
+  facet_grid(~ variable) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size=11))
+```
+
+**Notes on interpretation and best practices:** We remind users that any prediction procedure such as this relies on the extrapolation of correlative relationships and carries potential pitfalls. Predicting any genetic-based adaptive index in unsampled areas could be strongly biased if the value or combination of the environmental predictors in those projected areas exceed those used to train the model. Similarly, any projection could be inaccurate if the genetic ~ environment relationship is not well characterized, either because the scale of the analyses (e.g., size of the pixel) does not capture the complexity of the association, or because the distribution of the identified genetic variation is not optimal across the current and/or future environmental landscape (e.g., due to recent demographic history, barriers to gene flow, genetic drift in small populations, fluctuating trait heritability, varying selection pressures, or genetic architecture). It is critical to avoid overinterpretation of adaptive index projections, especially when validation data are not available. 
