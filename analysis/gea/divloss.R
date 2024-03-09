@@ -101,7 +101,7 @@ rare_pstk <- function(x){
 }
 
 
-distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
+distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE, weight = TRUE){
   # Convert to frequencies
   if (inherits(x, "vcfR") | is.character(x)) x <- wingen::vcf_to_dosage(x)/2
   if (any(x > 1)) stop("Values greater than 1 found; make sure your input is allele frequencies")
@@ -119,8 +119,12 @@ distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
   # Calculate distinctness for each individual
   # the weight is 1/w where w is the sum of all the individual frequencies
   #if (biallelic) x <- cbind(x, (1 - x)) 
-  w <- apply(x, 2, "sum", na.rm = TRUE)
-  dind <- sweep(x, 2, 1/w, "*")
+  if (weight){
+    w <- apply(x, 2, "sum", na.rm = TRUE)
+    dind <- sweep(x, 2, 1/w, "*")
+  } else {
+    dind <- x
+  }
 
   # if data is biallelic and you have provided just the reference (or just the alternate allele)
   # for example, in a dosage matrix or if you gave a vcf
@@ -130,9 +134,14 @@ distinct_ind <- function(x, rare_allele = FALSE, biallelic = FALSE){
     # note: it is nrow(x) - w since the second set of weights would be the sum of 1 - x, which is the same as the number of rows(number of individuals) minus w
     #dind2 <- sweep((1 - x), 2, 1/(nrow(x) - w), "*")
     x2 <- 1 - x
-    w2 <- apply(x2, 2, "sum", na.rm = TRUE)
-    dind2 <- sweep(x2, 2, 1/w2, "*")
 
+    if (weight) {
+      w2 <- apply(x2, 2, "sum", na.rm = TRUE)
+      dind2 <- sweep(x2, 2, 1/w2, "*")
+    } else {
+      dind2 <- x2
+    }
+    
     if (!is.null(colnames(dind))){
       colnames(dind2) <- paste0(colnames(dind2), "_2")
       colnames(dind) <- paste0(colnames(dind), "_1")

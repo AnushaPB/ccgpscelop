@@ -159,7 +159,7 @@ ggplot(rda_df) +
 ```
 
 # Distinctness
-```{r, fig.width = 13, fig.height = 13}
+```{r, fig.width = 10, fig.height = 10}
 results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     
   cor_df <- 
@@ -181,6 +181,9 @@ results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     by_var %>%
     map(~pull(.x, snp))
 
+  snp_count <- map_dbl(snps_by_var, ~length(.x)) 
+  snp_count <- data.frame(name = names(snp_count), nsnps = snp_count)
+
   rda_coords <- coords %>% filter(coords$SampleID %in% rda_gen$SampleID)
 
   var_di <- 
@@ -188,36 +191,63 @@ results <- map(c("default", "geo", "pc", "pc_geo"), ~{
     map(~{
       rda_gen_sub <- rda_gen[, .x]/2
       di <- distinct_ind(rda_gen_sub, biallelic = TRUE)$DistinctMean
-    })
+    }) %>%
+    bind_cols() %>%
+    mutate(across(everything(), scale)) %>%
+    mutate(SampleID = rda_coords$SampleID) %>%
+    pivot_longer(-SampleID, names_to = "name", values_to = "DI")
+
+  # GO OVER THIS: when biallelic = TRUE than you get all 0.5 (which i would expect, but make sure it is clear what DI is doing instead)
+  var_ar <- 
+    snps_by_var %>%
+    map(~{
+      rda_gen_sub <- rda_gen[, .x]/2
+      di <- distinct_ind(rda_gen_sub, rare_allele = TRUE, weight = FALSE)$DistinctMean
+    }) %>%
+    bind_cols() %>%
+    mutate(across(everything(), scale)) %>%
+    mutate(SampleID = rda_coords$SampleID) %>%
+    pivot_longer(-SampleID, names_to = "name", values_to = "AR") 
 
   di_df <- 
     rda_coords %>% 
-    select(SampleID, geometry) %>%
-    bind_cols(var_di) %>%
-    mutate(across(-c(SampleID, geometry), scale)) %>%
-    pivot_longer(-c(SampleID, geometry)) %>%
-    mutate(model = .x)
+    dplyr::select(SampleID, geometry) %>%
+    left_join(var_di) %>%
+    left_join(var_ar) %>%
+    mutate(model = .x) %>%
+    left_join(snp_count) 
 
   return(di_df)
 }) %>% bind_rows()
 
 ggplot(results) +
   geom_sf(data = ca) +
-  geom_sf(aes(col = value), cex = 1) + 
-  facet_grid(model~name, switch = "y") +
+  geom_sf(aes(col = DI), cex = 1) + 
+  facet_grid(name~model, switch = "y") +
   scale_color_viridis_c(option = "magma") +
   theme_void()
-```
 
+
+ggplot(results) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = AR), cex = 1) + 
+  facet_grid(name~model, switch = "y") +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+
+
+unique(results$nsnps)
+```
 
 # Splits
 ```{r}
 library(MASS)
 
+snp_name <- names(rda_top5)[2]
 df <- 
   left_join(st_drop_geometry(coords), rda_top5) %>%
   bind_cols(st_coordinates(coords)) %>%
-  mutate(class = (JALMGF010000001.1_120374359 != 0))
+  mutate(class = (!!rlang::sym(snp_name)) != 0)
 
 model <- lda(class ~ X + Y, data = df)
 predictions <- predict(model, df)$class
@@ -233,7 +263,7 @@ klaR::partimat(class_factor ~ X + Y, data = df, method = "lda")
 df <- 
   left_join(st_drop_geometry(coords), rda_gen) %>%
   bind_cols(st_coordinates(coords)) %>%
-  mutate(across(starts_with("JALMGF010000001"), ~(.x != 0)))
+  mutate(across(starts_with("JALMGF010000001"), ~ .x != 0))
 
 snps <- colnames(dplyr::select(df, starts_with("JALMGF010000001")))
 errors <- 
@@ -249,9 +279,8 @@ errors <-
 errors_df <- 
   data.frame(error = errors, snp = snps) %>%
   left_join(cor_df) %>%
-  filter(var == "y")
-
-plot(abs(errors_df$r), errors_df$error)
+  # doesn't matter which var
+  filter(var == "CA_rPCA1")
 
 high_snps <- errors_df %>% arrange(desc(error)) %>% head(9) %>% pull(snp)
 low_snps <- errors_df %>% arrange(error) %>% head(9) %>% pull(snp)
@@ -273,7 +302,6 @@ ggplot(rda_top_df) +
   facet_wrap(~name) +
   scale_color_viridis_c(option = "viridis", end = 0.9) +
   theme_void()
-
 
 ggplot(rda_bottom_df) +
   geom_sf(data = ca) +
@@ -327,10 +355,8 @@ errors_2split <-
 error_df <- 
   data.frame(error1 = errors_1split, error2 = errors_2split, snp = snps) %>%
   left_join(cor_df) %>%
-  filter(var == "y")
-
-plot(error_df$error1, abs(error_df$r))
-plot(error_df$error2, abs(error_df$r))
+  # doesn't matter which var
+  filter(var == "CA_rPCA1")
 
 snp_df <-
   left_join(coords, rda_gen) %>%
