@@ -147,6 +147,10 @@ mvz$data <-
          y = as.numeric(decimallatitude),
          hasSpecimen = TRUE, 
          SampleID = gsub(":Herp:", "", catalognumber)) 
+
+
+all_museum <- bind_rows(mvz$data, lacm$data, cas$data) %>% select(SampleID, decimallongitude, decimallatitude)
+write_csv(all_museum, "all_museum.csv")
 ```
 
 # P1: CCGP scanned (All MVZ)
@@ -397,7 +401,74 @@ ggplot() +
   geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
 
+
+write_csv(tracker_final, here("data", "tracker_final.csv"))
 ```
+
+# Requests
+```{r}
+# get CCGP specimens to request
+ccgp_requests <- 
+  tracker_final %>% 
+  # p2 are CCGP specimens from Cal Acad and LACM
+  filter(!is.na(p2)) %>% 
+  select(SampleID, instid)
+
+# get replacement specimens to request
+replacement_requests <- 
+  tracker_final %>%
+  # p3 are replacements from Cal Acad and LACM
+  # note: this filter is necessary because I calculated the nearest replacement for ALL samples (including P2 samples) 
+  # so we just want the samples where a replacement is needed (P3)
+  filter(!is.na(p3)) %>%
+  # select SampleID and the Specimen cols (replacement cols)
+  select(SampleID, starts_with("Specimen")) %>%
+  # pivot longer so that the replacements are now rows
+  pivot_longer(starts_with("Specimen"), names_to = "Replacement_rank", values_to = "Replacement_SampleID") %>%
+  # drop any rows where there is no replacement
+  drop_na(Replacement_SampleID) %>%
+  # make new instid column 
+  mutate(Replacement_instid = str_extract(Replacement_SampleID, "^[A-Z]+")) %>%
+  # rename SampleID for clarity 
+  rename(CCGP_SampleID = SampleID) %>%
+  select(-CCGP_SampleID, everything(), CCGP_SampleID) 
+
+# make simplified replacement request with just Specimen 1
+replacement_requests_simple <-
+  replacement_requests %>%
+  # keep only Specimen 1 (Ask Erin about this!)
+  filter(Replacement_rank == "Specimen1") %>%
+  # rename to match CCGP
+  rename(SampleID = Replacement_SampleID, instid = Replacement_instid) %>%
+  # specify that these are replacements
+  mutate(type = "replacement") %>%
+  # keep simple columns
+  select(SampleID, instid, type) 
+  
+# make combined df
+combined_requests <- 
+  mutate(ccgp_requests, type = "original") %>%
+  bind_rows(replacement_requests_simple)
+
+write_csv(combined_requests, here("data", "requests.csv"))
+
+# split by inst
+LACM_requests <-
+  combined_requests %>% 
+  filter(instid == "LACM")
+
+CAS_requests <- 
+  combined_requests %>%
+  filter(instid == "CAS")
+
+# compare to Erin's request
+epw_lacm <- read_csv(here("data", "LACM_request.xlsx - Sheet1.csv")) %>% pull(Specimen_number)
+apb_lacm <- LACM_requests %>% mutate(SampleID = gsub("LACM", "", SampleID)) %>% pull(SampleID)
+# check match
+all(epw_lacm %in% apb_lacm) #TRUE
+all(apb_lacm %in% epw_lacm) #TRUE
+```
+
 
 # Digging more into specimen requests
 
@@ -626,6 +697,12 @@ tracker_feb_update <-
 ggplot(tracker_feb_update) +
   geom_sf(data = california) +
   geom_point(aes(x = x, y = y, col = updated_note))
+
+write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("tracker_feb_update.csv"))
+
+tracker_feb_update %>% filter(updated_note =="request nearby CAS")
+
+
 ```
 
 ```{r}
