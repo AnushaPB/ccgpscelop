@@ -20,6 +20,7 @@ library(tidyverse)
 library(sf)
 library(tigris)
 library(ggpubr)
+library(here)
 ```
 
 ```{r, include = FALSE}
@@ -37,11 +38,7 @@ P2 - LACNHM/CalAcad CCGP specimen →  check age class/ sex and that there is a 
 
 *Everything remaining will not have CCGP genomic data*
 
-P3 - find museum specimens that are close to the CCGP specimens (5 - 10km) - that have tissues (that will give us specimens to quantify phenotypic diversity nearby and then also potentially get more genomic data) - INCLUDE ones with and without specimens so that we know what we have for sites, MAKE SURE THE SUGGESTED ONES ARE NOT OTHER CCGP SPECIMENS
-
-P3A ADULT/MALE/5km
-
-P3B NO AGE CLASS DATA OR ADULT/ANY SEX/10km 
+P3 - find museum specimens that are close to the CCGP specimens (5 - 10km) - that have tissues (that will give us specimens to quantify phenotypic diversity nearby and then also potentially get more genomic data) - INCLUDE ones with and without specimens so that we know what we have for sites, MAKE SURE THE SUGGESTED ONES ARE NOT OTHER CCGP SPECIMENS 
 
 P4 - look for any uncaptured environmental diversity across the state (unlikely) for which we would get specimens
 
@@ -209,7 +206,7 @@ tracker2 <-
 #
 # samples - samples data frame
 # museums - museum specimens data frame
-close_museum <- function(samples, museums){
+close_museum <- function(samples, museums, buffer){
   
   # Convert samples and museums to spatial objects with a common projected CRS
   # (this is necessary for calculating distances)
@@ -229,7 +226,7 @@ close_museum <- function(samples, museums){
 
   # Get close specimens and make into df
   get_samples <- 
-    map(1:nrow(samples_sf), ~close_specimens(.x, samples_sf, museums_sf)) %>%
+    map(1:nrow(samples_sf), ~close_specimens(.x, samples_sf, museums_sf, buffer = buffer)) %>%
     bind_rows() 
   
   # Merge close samples with original samples data frame
@@ -268,8 +265,8 @@ close_museum <- function(samples, museums){
 # i - sample index (used in a loop)
 # samples_sf - sf object of CCGP samples (tracker df)
 # museums_sf - sf onject of museum specimens (musem df)
-# buffer - furthest distance from which to take a sample (defaults to 10000m = 10km)
-close_specimens <- function(i, samples_sf, museums_sf, buffer = 10000){
+# buffer - furthest distance from which to take a sample (in meters)
+close_specimens <- function(i, samples_sf, museums_sf, buffer){
   # get single sample
   sample <- samples_sf[i,]
   
@@ -283,7 +280,6 @@ close_specimens <- function(i, samples_sf, museums_sf, buffer = 10000){
   # check if there are nearby ccgp samples with specimens
   ccgp_dist <- as.numeric(st_distance(sample,
                                       samples_sf[!is.na(samples_sf$p1) | !is.na(samples_sf$p2),]))
-  
   # get second closest dist (first is the same sample)
   nearest_dist <- ccgp_dist[order(ccgp_dist)][2]
   
@@ -299,20 +295,40 @@ close_specimens <- function(i, samples_sf, museums_sf, buffer = 10000){
   
   # remove any museum specimens that are already CCGP samples
   sid <- sid[!(sid %in% samples_sf$SampleID)]
+  dists <- dists[!(names(dists) %in% samples_sf$SampleID)]
   
   # if there are no samples that are not CCGP samples, return a df with just the ID/near dist
   if (length(sid) == 0) return(data.frame(SampleID = sample$SampleID, nearest_dist = nearest_dist))
   
+  # prioritize samples within buffer
+  # P3A: male/adult
+  # P3B: female/adult
+  # P3C: male/undetermined
+  # P3D: female/undetermined
+  options <-
+   museums_sf %>%
+   filter(SampleID %in% sid) %>%
+   # get dists
+   mutate(dist = dists) %>%
+   # reorder based on categories
+   # note: for sex keeping the levels as male/female and adult (everything else is NA)
+   mutate(sex = factor(sex, levels = c("male", "female")), 
+          lifestage = factor(lifestage, levels = c("adult", NA))) %>%
+   # order to prioritize (first by lifestage, then by sex, then by dist)
+   arrange(lifestage, sex, dist) %>%
+   # pull out samples
+   pull(SampleID)
+
   # transpose so that specimen options are columns
-  sid <- t(sid)
-  colnames(sid) <- paste0("Specimen", 1:ncol(sid))
+  options <- t(options)
+  colnames(options) <- paste0("Specimen", 1:ncol(options))
   
-  return(data.frame(SampleID = sample$SampleID, sid, nearest_dist = nearest_dist))
+  return(data.frame(SampleID = sample$SampleID, options, nearest_dist = nearest_dist))
 }
+
 ```
 
 ```{r}
-
 museums <- 
   # combine museum data
   bind_rows(dplyr::select(mvz$data, x, y, SampleID, lifestage, sex),
@@ -325,7 +341,7 @@ museums <-
   distinct()
 
 # get museum specimens that are close to ccgp samples
-close_museum_specimens <- close_museum(tracker2, museums)
+close_museum_specimens <- close_museum(tracker2, museums, buffer = 10000)
 
 # update tracker to with close specimens data
 tracker3 <- 
@@ -357,6 +373,7 @@ tracker_final <-
     genome_and_specimenORnearby = !is.na(note),
     # determine samples that could potentially be dropped from scanning because 
     # there is another CCGP sample with a specimen nearby
+    # use a cutoff of 50km
     potential_drop = case_when(nearest_dist < 50000 & (!is.na(p3) | is.na(note)) ~ TRUE, TRUE ~ FALSE)
   ) 
 ```
@@ -406,12 +423,15 @@ write_csv(tracker_final, here("data", "tracker_final.csv"))
 ```
 
 # Requests
+Make simple dfs for export
+
 ```{r}
 # get CCGP specimens to request
 ccgp_requests <- 
   tracker_final %>% 
+  # p1 are CCGP specimesn from MVZ
   # p2 are CCGP specimens from Cal Acad and LACM
-  filter(!is.na(p2)) %>% 
+  filter(!is.na(p1) | !is.na(p2)) %>% 
   select(SampleID, instid)
 
 # get replacement specimens to request
@@ -433,22 +453,54 @@ replacement_requests <-
   rename(CCGP_SampleID = SampleID) %>%
   select(-CCGP_SampleID, everything(), CCGP_SampleID) 
 
-# make simplified replacement request with just Specimen 1
+# make simplified replacement request with just Specimen 1 or 2
 replacement_requests_simple <-
   replacement_requests %>%
-  # keep only Specimen 1 (Ask Erin about this!)
-  filter(Replacement_rank == "Specimen1") %>%
-  # rename to match CCGP
+  # keep only Specimen 1 and 2
+  filter(Replacement_rank %in% c("Specimen1", "Specimen2")) %>%
+  # rename to match CCGP df
   rename(SampleID = Replacement_SampleID, instid = Replacement_instid) %>%
   # specify that these are replacements
   mutate(type = "replacement") %>%
   # keep simple columns
-  select(SampleID, instid, type) 
-  
+  select(SampleID, instid, type) %>%
+  # keep distinct
+  distinct()
+
+
+# note specimen IDs that were Specimen 2 (doing this so I can see what we added that was Specimen 2)
+# excluding any that are also in Specimen 1 (since a specimen could be ranked 1 for one sample and 2 for another)
+Specimen1 <- 
+  replacement_requests %>% 
+  filter(Replacement_rank == "Specimen1") %>%
+  pull(Replacement_SampleID)
+Specimen2 <- 
+  replacement_requests %>% 
+  filter(Replacement_rank == "Specimen2") %>%
+  pull(Replacement_SampleID)
+Specimen2unique <- Specimen2[!(Specimen2 %in% Specimen1)]
+
+replacement_requests_simple_addons <-
+  replacement_requests_simple %>%
+  mutate(Specimen2_addon = SampleID %in% Specimen2unique) %>%
+  # join with museums to get x/y coords
+  left_join(museums)
+
+# plot what including specimen 2 adds
+ggplot(replacement_requests_simple_addons) +
+  geom_sf(data = california) +
+  geom_point(aes(x = x, y = y, col = Specimen2_addon), alpha = 0.7, cex = 3) +
+  theme_void()
+
 # make combined df
 combined_requests <- 
   mutate(ccgp_requests, type = "original") %>%
   bind_rows(replacement_requests_simple)
+
+# determine which samples have an original specimen
+table(combined_requests$type)
+# make a two way count table of type and scanned
+table(combined_requests$type, combined_requests$scanned)
 
 write_csv(combined_requests, here("data", "requests.csv"))
 
@@ -469,12 +521,203 @@ all(epw_lacm %in% apb_lacm) #TRUE
 all(apb_lacm %in% epw_lacm) #TRUE
 ```
 
+# Identifying gaps
+
+Big gaps:
+
+- Southern CA
+
+- Coastal region just below Bay Area
+
+```{r}
+# color coded by priority
+# P1 = scanned
+# P2 = need to request CCGP specimen
+# P3 = need to request nearby specimen
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = priority)) +
+  theme_void()
+
+# color coded by museum for nearest specimen request
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = near_museum)) +
+  theme_void()
+```
+```{r}
+# Counts for each P
+tracker_final %>% group_by(note) %>% summarize(n = n())
+
+# TRUE = samples we should have if we can get all the Ps
+tracker_final %>% group_by(!is.na(note)) %>% summarize(n = n())
+```
+
+# Check which samples have been covered by new CT scanning (Feb 2024)
+```{r}
+# Erin's CT specimens
+ct_scanned <- 
+  read_csv("data/CT_scanning.csv") %>%
+  mutate(SampleID = paste0(museum_ID, specimen_no))
+
+# Look at new scans (tracker has coords)
+# NOTE: by accident only CCGP specimens and not replacements were requested from CAS (so there are no replacement scanned specimens)
+tracker_feb_update <- 
+  tracker_final %>%
+  mutate(updated_note = 
+          case_when(
+            SampleID %in% ct_scanned$SampleID ~ "scanned", 
+            Specimen1 %in% ct_scanned$SampleID ~ "replacement scanned",
+            .default = note
+            )
+          )
+
+ggplot(tracker_feb_update) +
+  geom_sf(data = california) +
+  geom_point(aes(x = x, y = y, col = updated_note))
+
+write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("tracker_feb_update.csv"))
+
+# update simple combined requests doc
+combined_requests <-
+  combined_requests %>%
+  mutate(scanned = SampleID %in% ct_scanned$SampleID)
+
+write_csv(combined_requests, here("data", "scanning_update_feb2024.csv"))
+
+# count scanned by inst
+combined_requests %>%
+  group_by(instid, scanned) %>%
+  count() %>%
+  pivot_wider(names_from = scanned, values_from = n)
+```
+
+# Gap specimens
+
+Identify specimens that are not within the 10km buffer used to find replacements, but are able to fill gaps in sampling
+```{r}
+# make combined requests into sf object
+specimens <- 
+  combined_requests %>%
+  # left join to get coords
+  left_join(museums) %>%
+  left_join(ccgp_seq) %>%
+  # convert to sf
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310) 
+
+# Demonstrate different buffers
+specimens_buffered_50k <- st_buffer(specimens, 50000)
+specimens_buffered_20k <- st_buffer(specimens, 20000)
+specimens_buffered_10k <- st_buffer(specimens, 10000)
+
+# The buffer used before was 10km
+specimens_buffered <- specimens_buffered_10k
+
+# Example plot of different buffers
+ggplot() +
+  geom_sf(data = california) +
+  geom_sf(data = specimens_buffered_50k, aes(fill = "50 km"), alpha = 0.4, col = NA) +
+  geom_sf(data = specimens_buffered_20k, aes(fill = "20 km"), alpha = 0.4, col = NA) +
+  geom_sf(data = specimens_buffered_10k, aes(fill = "10 km"), alpha = 0.4, col = NA) +
+  theme_void()
+
+# Make museum sf object
+museums_sf <-
+  museums %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310) %>%
+  st_crop(st_transform(california, 3310)) 
+
+# Get points that DON'T overlap with the buffered specimens
+museum_gaps <- 
+  museums_sf %>%
+  filter(!lengths(st_intersects(., specimens_buffered)))
+
+# Make sf of CCGP samples
+ccgp_sf <- 
+  ccgp_seq %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310)
+
+# Create buffer to see what samples fell outside of the 10km buffer
+ccgp_buffered <-
+  ccgp_sf %>% st_buffer(10000)
+
+
+# Plot of all specimens, CCGP samples, and museum gaps
+# note: overlaps betewen museum gaps and ccgp specimens are mvz specimens that we couldn't find, I think (Check this)
+ggplot() +
+  geom_sf(data = california) +
+  #geom_sf(data = specimens_buffered, alpha = 0.1, col = "coral", linetype = "dotted", fill = "coral") +
+  geom_sf(data = ccgp_buffered, alpha = 0.1, col = "green", linetype = "dotted", fill = "green") +
+  geom_sf(data = ccgp_sf, aes(col = "CCGP points"), pch = 1) +
+  geom_sf(data = specimens, aes(col = "All specimen points")) +
+  geom_sf(data = museum_gaps, aes(col = "Gap points"), alpha = 1) +
+  theme_void()
+
+# Find specimens that fill study gaps AND those that are near CCGP samples but greater than 10km
+# Filter for 50km from other points for which we have specimens, but are within 20km of existing CCGP samples
+# (the second qualifier is so that you don't get samples that are super far away from everything)
+ccgp_buffered_20k <-
+  ccgp_sf %>% st_buffer(20000)
+museum_gaps2 <- 
+  museums_sf %>%
+  filter(!lengths(st_intersects(., specimens_buffered_50k)) & lengths(st_intersects(., ccgp_buffered_20k)))
+
+# Redo plot with new filters
+ggplot() +
+  geom_sf(data = california) +
+  geom_sf(data = ccgp_buffered, alpha = 0.1, col = "green", linetype = "dotted", fill = "green") +
+  geom_sf(data = ccgp_sf, aes(col = "CCGP points"), pch = 1) +
+  geom_sf(data = specimens, aes(col = "All specimen points")) +
+  geom_sf(data = museum_gaps2, aes(col = "Gap points"), alpha = 1) +
+  theme_void() 
+
+```
+
+# LACM REQUEST (3/11/2024)
+```{r}
+# Pull out just LACM samples for request
+museum_gaps_lacm <- 
+  museum_gaps2 %>%
+  filter(grepl("LACM", SampleID))
+
+# Replot: All samples seem to be in Southern CA
+ggplot() +
+  geom_sf(data = california) +
+  #geom_sf(data = specimens_buffered, alpha = 0.1, col = "coral", linetype = "dotted", fill = "coral") +
+  geom_sf(data = ccgp_buffered, alpha = 0.1, col = "green", linetype = "dotted", fill = "green") +
+  geom_sf(data = ccgp_sf, aes(col = "CCGP points"), pch = 1) +
+  geom_sf(data = specimens, aes(col = "All specimen points")) +
+  geom_sf(data =  museum_gaps_lacm, aes(col = "Gap points"), alpha = 1) +
+  theme_void() +
+  ggtitle("Gap filling LACM samples")
+
+# Pick representive samples from close samples
+# Samples 1 and 2 are ~60 meters from each other
+# Samples 3 and 4 are ~200 meters from each other
+# Everything else is greater than 5 km
+st_distance(museum_gaps_lacm)
+# picking sample 2 (LACM189941) over sample 1 (LACM189940) because it is a male and the other is female
+# picking sample 4 (LACM189942) over sample 3 (LACM189943) because it is a female and the other is a undetermined
+museum_gaps_lacm_selected <- 
+  museum_gaps_lacm %>% filter(!(SampleID %in% c("LACM189940", "LACM189943")))
+
+# Combine with existing request
+LACM_requests <- 
+  combined_requests %>%
+  filter(instid == "LACM") %>%
+  bind_rows(data.frame(SampleID = museum_gaps_lacm_selected$SampleID, instid = "LACM", type = "gap filler"))
+
+write_csv(LACM_requests, here("data", "LACM_requests.csv"))
+```
 
 # Digging more into specimen requests
 
+This code is old, but I am keeping it here in case I need to go back and dig into stuff
 
 ```{r}
-
 requests <-
   tracker_final %>%
   # keep only P3
@@ -520,7 +763,7 @@ stopifnot(!any(ct_requests$scanned, na.rm = TRUE))
 ```
 
 
-It seems like including some females and unknown lifestages is potentially unavoidable because they fill important gaps, however we could probably exclude the adult/juveniles.  
+It seems like including some females and unknown lifestages is potentially unavoidable because they fill important gaps, however we could probably exclude the "adult/juveniles".  
 ```{r}
 # lifestage and sex of nearby specimens to request
 ggplot() + 
@@ -547,8 +790,7 @@ ggplot() +
   scale_color_manual(values = c("orange2", "limegreen", "black", "gray"))
 ```
 
-
-Looking at each point individually, it looks like Specimen 1 (the closest specimen; outlined in black in the plot below) is a good pick in all cases (i.e., there aren't cases where another close specimen is better because it is a male or has a classified life stage)
+Looking at each point individually:
 ```{r, fig.width = 10, fig.height = 10}
 # yes I know this is disgusting figure code...but it works
 # Create a list of ggplot objects
@@ -649,105 +891,3 @@ plts <- map(1:length(unique(requests$SampleID)), ~ {
 })
 suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = TRUE, legend = "top")))
 ```
-
-# P4: Identifying gaps
-
-Big gaps:
-
-- Southern CA
-
-- Coastal region just below Bay Area
-
-```{r}
-# color coded by priority
-# P1 = scanned
-# P2 = need to request CCGP specimen
-# P3 = need to request nearby specimen
-ggplot() + 
-  geom_sf(data = california) +
-  geom_point(data = tracker_final, aes(x = x, y = y, col = priority)) +
-  theme_void()
-
-# color coded by museum for nearest specimen request
-ggplot() + 
-  geom_sf(data = california) +
-  geom_point(data = tracker_final, aes(x = x, y = y, col = near_museum)) +
-  theme_void()
-```
-```{r}
-# Counts for each P
-tracker_final %>% group_by(note) %>% summarize(n = n())
-
-# TRUE = samples we should have if we can get all the Ps
-tracker_final %>% group_by(!is.na(note)) %>% summarize(n = n())
-```
-
-# Check which samples have been covered by new CT scanning (Feb 2024)
-```{r}
-# Erin's CT specimens
-ct_scanned <- 
-  read_csv("data/CT_scanning.csv") %>%
-  mutate(SampleID = paste0(museum_ID, specimen_no))
-
-# Look at new scans
-tracker_feb_update <- 
-  tracker_final %>%
-  mutate(updated_note = case_when(SampleID %in% ct_scanned$SampleID ~ "scanned", .default = note))
-
-ggplot(tracker_feb_update) +
-  geom_sf(data = california) +
-  geom_point(aes(x = x, y = y, col = updated_note))
-
-write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("tracker_feb_update.csv"))
-
-tracker_feb_update %>% filter(updated_note =="request nearby CAS")
-
-
-```
-
-```{r}
-tracker_long <- 
-  tracker_final %>% 
-  pivot_longer(starts_with("Specimen"), values_to = "replacement", names_to = "replacement_number") %>%
-  mutate(replacement_scanned = replacement %in% ct_scanned$SampleID,
-         original_scanned = SampleID %in% ct_scanned$SampleID)
-
-
-# Check what has been scanned of the replacements
-replacement_summary <-
-  tracker_long %>%
-  group_by(SampleID) %>%
-  summarize(number_of_replacements_scanned = sum(replacement_scanned, na.rm = TRUE))
-
-# For some reason none of the CAS samples scanned are in the original intended replacement list
-scanned_cas <- ct_scanned$SampleID[grepl("CAS", ct_scanned$SampleID)]
-replacement_cas <- tracker_long$replacement[grepl("CAS", tracker_long$replacement)]
-any(scanned_cas %in% replacement_cas)
-
-# double checking that intended replacements are in cas specimen list
-cas_specimens <- paste0("CAS", cas$data$catalognumber)
-any(scanned_cas %in% cas_specimens)
-any(replacement_cas %in% cas_specimens)
-
-# plot scanned CAS
-scanned_cas_df <-
-  cas$data %>% 
-  mutate(SampleID = paste0("CAS", cas$data$catalognumber)) %>%
-  mutate(test = case_when(SampleID %in% scanned_cas ~ "Scanned", SampleID %in% replacement_cas ~ "Intended")) %>%
-  drop_na(test)
-
-ggplot(scanned_cas_df) +
-  geom_sf(data = california) +
-  geom_point(aes(x = as.numeric(decimallongitude), y = as.numeric(decimallatitude), col = test))
-
-```
-
-
-#TODO: figure out why we didn't get the specimens for the bay area
-
-Next steps:
-1. Request from CAS
-2. Request from LACM
-3. Think about field work in the Spring (check for funding)
-
-Kinsey sampling - samples from San Diego (three samples from campus and from Misson Trails Open Space)
