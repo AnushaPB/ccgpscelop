@@ -418,7 +418,6 @@ ggplot() +
   geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
 
-
 write_csv(tracker_final, here("data", "tracker_final.csv"))
 ```
 
@@ -499,8 +498,6 @@ combined_requests <-
 
 # determine which samples have an original specimen
 table(combined_requests$type)
-# make a two way count table of type and scanned
-table(combined_requests$type, combined_requests$scanned)
 
 write_csv(combined_requests, here("data", "requests.csv"))
 
@@ -710,7 +707,7 @@ LACM_requests <-
   filter(instid == "LACM") %>%
   bind_rows(data.frame(SampleID = museum_gaps_lacm_selected$SampleID, instid = "LACM", type = "gap filler"))
 
-write_csv(LACM_requests, here("data", "LACM_requests.csv"))
+write_csv(LACM_requests %>% select(-scanned), here("data", "LACM_requests.csv"))
 ```
 
 # Digging more into specimen requests
