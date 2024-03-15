@@ -3,67 +3,454 @@
 library("rpaleoclim")
 library("here")
 library("tidyverse")
-library(terra)
-library(sf)
+library("ggpubr")
+library("terra")
+library("sf")
+library("gridExtra")
 source("general_functions.R")
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 ca <- get_ca()
+```
+```{r}yds	Pleistocene: Younger Dryas Stadial	12.9-11.7 ka	Fordham  et al. 2017
 
-# current
-paleoclim("cur", "2_5m", region = ext(ca), cache_path = here("data", "env"))
-# last glacial maximum
-paleoclim("lgm", "2_5m", region = ext(ca), cache_path = here("data", "env"))
-# late holocene
-paleoclim("lh", "2_5m", region = ext(ca), cache_path = here("data", "env"))
-# mid holocene
-paleoclim("mh", "2_5m", region = ext(ca), cache_path = here("data", "env"))
-# early holocene
-paleoclim("eh", "2_5m", region = ext(ca), cache_path = here("data", "env"))
+paleovars <- c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
+# download data
+walk(paleovars, ~ {
+  paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env"))
+})
 
-lgm <- load_paleoclim(here("data", "env", "chelsa_LGM_v1_2B_r2_5m.zip"))
-lgm <- crop(lgm, ca)
-lgm <- mask(lgm, ca)
+# Create a key with layer information
+paleokey <- data.frame(
+  id = c("cur", "lh", "mh", "eh", "yds", "ba", "hs1", "lgm", "lig", "mis19", "mpwp", "m2"),
+  period = c("Current", "Late Holocene: Meghalayan", "Mid Holocene: Northgrippian", "Early Holocene: Greenlandian", "Pleistocene: Younger Dryas Stadial", "Pleistocene: Bølling-Allerød", "Pleistocene: Heinrich Stadial 1", "Pleistocene: Last Glacial Maximum", "Pleistocene: Last Interglacial", "Pleistocene: MIS19", "Pliocene: Mid-Pliocene warm period", "Pliocene: M2"),
+  time = c("1979 – 2013", "4.2-0.3 ka", "8.326-4.2 ka", "11.7-8.326 ka", "12.9-11.7 ka", "14.7-12.9 ka", "17.0-14.7 ka", "ca. 21 ka", "ca. 130 ka", "ca. 787 ka", "3.205 Ma", "ca. 3.3 Ma"),
+  source = c("CHELSA", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "CHELSA", "Otto-Bliesner et al. 2006", "Brown et al. 2018", "Hill 2015", "Dolan et al. 2015")
+)
 
-cur <- load_paleoclim(here("data", "env", "CHELSA_cur_V1_2B_r2_5m.zip"))
-cur <- crop(cur, ca)
-cur <- mask(cur, ca)
+# Print the dataframe
+print(df) 
+# Define the file names and paths
+file_names <- c("LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
+file_paths <- file.path(here("data", "env"), file_names)
+
+# Load and process the data using purrr
+env_list <- purrr::map(file_paths, ~ {
+  data <- load_paleoclim(.x)
+  data <- crop(data, ca)
+  data <- mask(data, ca)
+  data
+})
+names(env_list) <- paleovars
+
+# Assign the loaded and processed data to individual variables
+lig <- env_list[[1]]
+lgm <- env_list[[2]]
+hs1 <- env_list[[3]]
+ba <- env_list[[4]]
+yds <- env_list[[5]]
+eh <- env_list[[6]]
+mh <- env_list[[7]]
+lh <- env_list[[8]]
+cur <- env_list[[9]]
+
+# export
+env_stack <- rast(env_list)
+writeRaster(env_stack, here("data", "env", "paleoclim.tif"), overwrite = TRUE)
+
+```
+
+```{r}
+cur_range <- cur$bio_5 - cur$bio_6 - 273.15
+lh_range <- lh$bio_5 - lh$bio_6- 273.15
+lh_dif_range <- cur_range - lh_range
+
+pdf("bio2_test_vars.pdf", fig.width = 10, fig.height = 30)
+par(mfrow = c(3,2))
+plot(cur_range, col = viridis::turbo(100), main = "Manual Bio 2 (current)")
+plot(cur$bio_2, col = viridis::turbo(100), main = "Bio 2 (current)")
+
+plot(lh_range, col = viridis::turbo(100), main = "Manual Bio 2 (lh)")
+plot(lh$bio_2, col = viridis::turbo(100), main = "Bio 2 (lh)")
+
+plot(cur_range - lh_range, col = viridis::turbo(100), main = "Manual change in Bio 2")
+plot(cur$bio_2 - lh$bio_2, col = viridis::turbo(100), main = "Change in Bio 2")
+dev.off()
+```
+
+# running linear models
+```{r}
+# get coordinates
+df <- get_coords()
+
+# get genetic diversity measures
+het <- get_het()
+roh <- get_roh()
+
+# combine together
+df <- left_join(df, het) %>% left_join(roh)
+
+# use data list to get vars
+env_df_vals <- map(env_list, ~ data.frame(df, extract(.x, df[,c("x", "y")], ID = FALSE)))
+diff_vars <- names(env_list) %>% setdiff("cur")
+diff_vals <- map(diff_vars, ~ {
+  diff <- cur - get(.x)
+  return(data.frame(df, extract(diff, df[,c("x", "y")], ID = FALSE)))
+})
+env_df_vals <- c(env_df_vals, diff_vals)
+names(env_df_vals) <- c(paleovars, paste0("dif_", diff_vars))
+
+# check for strong correlations
+# only strong correlation is with the late holocene/bio2
+map(env_df_vals, ~ {
+  cordf <- .x %>% select(Ho, contains("bio")) %>% drop_na(Ho)
+  strong <- cor(cordf, use = "complete.obs")["Ho", -1]
+  which(abs(strong) > 0.5)
+})
+
+cor_vals <- 
+  map(env_df_vals, ~ {
+    cordf <- .x %>% select(Ho, contains("bio")) %>% drop_na(Ho)
+    res <- cor(cordf, use = "complete.obs")["Ho", -1]
+  }) 
+
+map(cor_vals, ~ which(abs(.x) > 0.6))
+
+cor_df <- 
+  cor_vals %>% 
+  bind_rows(.id = "timeperiod") %>% 
+  pivot_longer(contains("bio")) %>%
+  mutate(timeperiod = factor(timeperiod, levels = names(cor_vals))) %>%
+  mutate(bioclim = gsub("bio_", "", name)) 
+
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = (value))) +
+  geom_tile() +
+  labs(col = "r") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "rocket", direction = -1) +
+  labs(fill = "|r|") +
+  theme_minimal()
+```
+
+```{r}
+# confirmed no correlation with ROH:
+map(env_df_vals, ~ {
+  r <- cor(.x %>% select(froh, contains("bio")) %>% drop_na(froh))["froh", -1]
+  which(abs(r) > 0.6)
+})
+```
+
+```{r}
+run_lm <- function(df, model_name){
+  safe_collinear <- possibly(spatialEco::collinear)
+  drop_vars <- safe_collinear(df %>% select(contains("bio")), p = 0.6)
+  uncorrelated <- names(df %>% select(contains("bio"))) %>% setdiff(drop_vars)
+  if (is.null(uncorrelated)) {
+    uncorrelated <- names(df %>% select(contains("bio")))
+    correlated <- data.frame(corvars = NA, var = uncorrelated, model = model_name)
+  } else {
+    cormat <- cor(df %>% select(contains("bio")))
+    correlated <- 
+      map(uncorrelated, ~ data.frame(corvars = names(which(abs(cormat[.x,]) > 0.5)), var = .x)) %>% 
+      bind_rows() %>%
+      mutate(model = model_name)
+  }
+
+  fHo <- formula(paste0("Ho ~", paste0(uncorrelated, collapse = " + ")))
+  mod <- summary(lm(fHo, data=df))
+
+  result <- 
+    data.frame(mod$coefficients) %>% 
+    mutate(model = model_name) %>%
+    mutate(adj_rsqr = mod$adj.r.squared) %>%
+    mutate(var = rownames(.)) %>% 
+    filter(var != "(Intercept)") %>%
+    left_join(correlated) 
+  return(result)
+}
+
+lm_result <- imap(env_df_vals, \(x, idx) run_lm(x, idx)) %>% bind_rows()
+
+sigvars <- lm_result %>% select(-corvars) %>% distinct() %>% filter(`Pr...t..` < 0.05) %>% arrange(desc(Estimate))
+```
+
+```{r}
+plts <-
+map(unique(lm_result$model), ~ {
+  sig_df <-
+   lm_result %>% 
+   filter(model == .x) %>%
+   filter(`Pr...t..` < 0.05)
+
+  sig_env_df <- 
+    env_df_vals[[.x]] %>% 
+    pivot_longer(contains("bio"), names_to = "var") %>% 
+    #include correlated vars
+    filter(var %in% unique(sig_df$corvars))
+
+  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+
+  if (nrow(sig_env_df) == 0) return(NULL)
+  plt <-
+  ggplot(sig_env_df, aes(value, Ho)) +
+    geom_point(alpha = 0.7) +
+    facet_wrap(~var, scales = "free", ncol = 5, nrow = 3) +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() +
+    ggtitle(title)
+
+  plt
+})
+
+pdf("env_sigvars_with_corvars.pdf", width = 20, height = 15)
+walk(plts, print)
+dev.off()
+
+
+plts <-
+map(unique(lm_result$model), ~ {
+  sig_df <- lm_result %>% filter(model == .x) %>% filter(`Pr...t..` < 0.05)
+  sig_env_df <- env_df_vals[[.x]] %>% pivot_longer(contains("bio"), names_to = "var") %>% filter(var %in% unique(sig_df$var))
+  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+
+  if (nrow(sig_env_df) == 0) return(NULL)
+  plt <-
+  ggplot(sig_env_df, aes(value, Ho)) +
+    geom_point(alpha = 0.7) +
+    facet_wrap(~var, scales = "free", nrow = 1) +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() +
+    ggtitle(title)
+
+  plt
+})
+
+```
+
+```{r}
+# showing off bio2
+mod_df <- env_df_vals[["dif_lh"]]
+
+plt2 <-
+ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
+  labs(color = "Change\nin mean\ndiurnal\nrange") +
+  scale_color_viridis_c(option = "magma", direction = -1) +
+  theme_void() 
+
+plt3 <-
+ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
+  theme_void() +
+  scale_color_viridis_c(option = "magma")
+  
+
+plt1 <- ggplot(mod_df, aes(bio_2, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  xlab("Change in mean diurnal range") +
+  stat_cor(label.y = 0) +
+  xlim(-7.5, NA) +
+  theme_classic()
+
+pdf(here("bio2.pdf"), width = 15, height = 5)
+grid.arrange(plt1, plt2, plt3, nrow = 1)
+dev.off()
+```
+
+### Evaluating other time periods
+```{r}
+mega_df <- bind_rows(env_df_vals, .id = "timeperiod") %>% mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+mega_df2 <- 
+  mega_df %>% 
+  filter(grepl("dif", timeperiod)) %>%
+  mutate(id = gsub("dif_", "", timeperiod)) %>%
+  left_join(paleokey) %>%
+  mutate(dif = paste0("Current to ", period, "\n(", time, ")")) %>%
+  mutate(dif = factor(dif, levels = unique(dif)))
+
+ggplot(mega_df2, aes(bio_2, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~dif, scales = "free", nrow = 2) +
+  xlab("Change in mean diurnal range") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+```
+
+### Evaluating variables correlated with bio2
+```{r}
+bio2_cors <- cor(mod_df %>% select(starts_with("bio")))[,"bio_2"]
+bio2_cors <- names(bio2_cors[abs(bio2_cors) > 0.5])
+#bio6 - min temperature of coldest month (bio6)
+#bio5 - max temperature of warmest month (bio5)
+#bio7 - temperature annual range (bio5-bio6)
+#bio2 - mean diurnal range (mean of monthly (max temp - min temp)
+#bio12 - annual precipitation
+#bio13 - precipitation of wettest month
+
+gg_df <- 
+  mod_df %>% 
+  pivot_longer(all_of(bio2_cors)) %>%
+  # replace bio_2/bio_5/bio_7 with the actual variable name
+  mutate(name = case_when(
+    name == "bio_2" ~ "A. Change in mean diurnal range\n(BIO2)",
+    name == "bio_5" ~ "B. Change in max temperature of warmest month\n(BIO5)",
+    name == "bio_7" ~ "D. Change in temperature annual range\n(BIO7; BIO5 - BIO6)",
+    name == "bio_6" ~ "C. Change in min temperature of coldest month\n(BIO6)",
+    name == "bio_1" ~ "E. Change in mean annual temperature\n(BIO1)",
+    name == "bio_12" ~ "F. Change in annual precipitation\n(BIO12)",
+    name == "bio_13" ~ "G. Change in precipitation of wettest month\n(BIO13)",
+    TRUE ~ name
+  )) 
+
+plt1 <- ggplot(gg_df, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free", nrow = 1) +
+  stat_cor(label.y = 0) +
+  theme_classic() +
+  xlab("value")
+
+plt_list <- gg_df %>%
+  split(.$name) %>%
+  map(~ {
+    limit <- max(abs(.x[["value"]])) * c(-1, 1)
+    ggplot(.x) +
+        geom_sf(data = ca, fill = "darkgray") +
+        labs(color = "value") +
+        geom_point(aes(x = x, y = y, color = value), cex = 2) +
+        scale_color_distiller(type = "div", limit = limit) +
+        facet_wrap(~name) +
+        theme_void()}
+        )
+
+plt3 <-
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = Ho)) +
+  ggtitle("E. Genetic diversity") +
+  theme_void() +
+  scale_color_viridis_c(option = "magma")  
+
+ga1 <- do.call(grid.arrange, c(c(plt_list), nrow = 1))
+
+pdf("correlated_vars.pdf", width = 25, height = 8)
+grid.arrange(plt1, ga1, nrow =2)
+dev.off()
+```
+
+### Testing for effects of population structure
+```{r}
+source(here("analysis", "admixture", "admixture.R"))
+admix <- get_Q(K = 5)
+head(admix)
+coords <- get_coords()
+mod_df <- left_join(mod_df, admix)
+
+# bio2 is still significant after controling for clusters
+summary(lm(Ho ~ cluster + bio_2, data = mod_df))
+# nothing is significant once an interaction term is added but I think that is due to low power
+summary(lm(Ho ~ cluster + bio_2, data = mod_df))
+
+# look at heterozygosity by cluster and remove largest cluster
+mod_df %>% group_by(cluster) %>% summarise(mean = mean(Ho, na.rm = TRUE)) %>% arrange(desc(mean))
+# when you remove the southern pop with really high genetic diversity (cluster 3), the pattern still exists (albeit weaker)
+plt1 <- ggplot(mod_df[mod_df$cluster != 3, ], aes(bio_2, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+plt2 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
+  labs(color = "bio_2") +
+  theme_void() +
+  scale_color_viridis_c(option = "magma", direction = -1)
+
+plt3 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
+  theme_void() +
+  scale_color_viridis_c(option = "magma")
+
+grid.arrange(plt1, plt2, plt3, nrow = 1)
+```
+
+### Checking with bouzid data
+```{r}
+vcf <- vcfR::read.vcfR("../wingen/paperex/empex/data/populations_r20.haplotypes.filtered_m70_randomSNP.vcf")
+coords <- read_table("../wingen/paperex/empex/data/Scelop.coord", col_names =FALSE) %>% rename(x = X1, y = X2)
+dos <- algatr::vcf_to_dosage(vcf)
+dos_to_het <- function(dos){
+  dos[dos == 1] <- 1
+  dos[dos != 1] <- 0
+  het <- rowMeans(dos, na.rm = TRUE)
+  return(het)
+}
+df <- data.frame(coords, Ho = dos_to_het(dos))
+
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, color = Ho)) +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
 
 lh <- load_paleoclim(here("data", "env", "LH_v1_2_5m.zip"))
-lh <- crop(lh, ca)
-lh <- mask(lh, ca)
+cur <- load_paleoclim(here("data", "env", "CHELSA_cur_V1_2B_r2_5m.zip"))
+dif <- cur - lh
+lh_vals <- extract(dif, df[,c("x", "y")], ID = FALSE)
 
-mh <- load_paleoclim(here("data", "env", "MH_v1_2_5m.zip"))
-mh <- crop(mh, ca)
-mh <- mask(mh, ca)
+mod_df <- data.frame(df, lh_vals)
 
-eh <- load_paleoclim(here("data", "env", "EH_v1_2_5m.zip"))
-eh <- crop(eh, ca)
-eh <- mask(eh, ca)
+ggplot(mod_df, aes(bio_2, Ho)) +
+    geom_point(alpha = 0.7) +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() 
 
+#bio5 (max temperature of warmest month)
+#bio6 (min temperature of coldest month)
+```
 
-par(mfrow = c(2,3))
-library("RColorBrewer")
-
-# Create a divergent color palette using the RdBu color scheme
-palette <- rev(brewer.pal(11, "RdBu"))
-
-plot(lgm[[1]])
-plot(cur[[1]])
-plot(cur[[1]] - lgm[[1]], col = palette)
-
-plot(lh[[1]])
-plot(cur[[1]])
-plot(cur[[1]] - lh[[1]], col = palette)
-
-par(mfrow = c(1,2))
-plot(cur[["bio_1"]] - lh[["bio_1"]], col = palette)
-plot(cur[["bio_1"]] - lgm[["bio_1"]], col = palette)
-
-par(mfrow = c(1,2))
-plot(cur - lh, col = palette)
-plot(cur[["bio_5"]] - lgm[["bio_5"]], col = palette)
-
-coords <- get_coords()
-env <- terra::extract(cur, coords[,c("x", "y")], ID = FALSE)
+# SDM (IGNORE IMCOMPLETE)
+```{r}
 
 # # Load required libraries
 library(biomod2)
@@ -142,345 +529,4 @@ ggplot(gg_df) +
   geom_smooth(aes(x = value, y = Ho), method = "lm") +
   facet_wrap(~name, scales = "free")
 #sdm <- sdm(coordinates =  coords[,c("x", "y")], envlayers = stack(lgm), models = "RF", nbkg = 1000, tune = TRUE)
-```
-
-```{r}
-# Calculate the difference between cur and lh
-dif_lh <- cur - lh
-dif_vals <- extract(dif_lh, coords[,c("x", "y")], ID = FALSE)
-mod_df <- data.frame(Ho = coords$Ho, dif_vals)
-pc <- prcomp(mod_df[,-1], scale = TRUE)
-
-# Perform linear regression and identify significant variables
-res <- summary(lm(Ho ~ ., data = mod_df))
-sigvars <- names(which(res$coefficients[,"Pr(>|t|)"] < 0.05))[-1]
-
-# Create a long format dataframe for plotting
-gg_df <- mod_df %>% pivot_longer(all_of(sigvars))
-
-# Plot scatterplot with regression line and correlation coefficient
-ggscatter(
-  gg_df, x = "value", y = "Ho",
-  add = "reg.line"
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 800000) 
-
-# Check for correlations between variables
-cmat <- cor(mod_df)
-which(abs(cmat[,"bio_2"]) > 0.5)
-
-# Create a long format dataframe for plotting
-gg_df <- mod_df %>% pivot_longer(all_of(c("bio_2", "bio_5", "bio_7", "bio_6", "bio_12", "bio_13")))
-
-# Plot scatterplot with regression line and correlation coefficient
-ggscatter(
-  gg_df, x = "value", y = "Ho",
-  add = "reg.line"
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 800000) 
-
-plot(dif_lgm[["bio_2"]])
-
-# Extract loadings for PC1
-loadings <- pc$rotation[, 1]
-sorted_loadings <- sort(abs(loadings), decreasing = TRUE)
-high_contrib_vars <- names(sorted_loadings)
-
-# Print or explore high_contrib_vars
-print(high_contrib_vars)
-
-# Create a long format dataframe for plotting
-gg_df <- pcmod_df %>% pivot_longer(all_of(sigvars))
-
-# Plot scatterplot with regression line
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
-
-# Create a long format dataframe for plotting
-gg_df <- mod_df %>% pivot_longer(all_of(high_contrib_vars))
-
-# Plot scatterplot with regression line
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
-
-# Create a long format dataframe for plotting
-gg_df <- mod_df %>% pivot_longer(all_of("bio_2"))
-
-# Plot scatterplot with regression line
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
-
-plot(dif_lh[["bio_2"]])
-
-# Create a dataframe for plotting
-bio_2 <- data.frame(cur = extract(cur[["bio_2"]], coords[,c("x", "y")], ID = FALSE),
-                    lh = extract(lh[["bio_2"]], coords[,c("x", "y")], ID = FALSE),
-                    dif = extract(dif_lh[["bio_2"]], coords[,c("x", "y")], ID = FALSE),
-                    Ho = coords$Ho)
-names(bio_2) <- c("cur", "lh", "dif", "Ho")
-bio_2 <- bio_2 %>% pivot_longer(all_of(c("cur", "lh", "dif"))) %>% mutate(name = factor(name, levels = c("cur", "lh", "dif")))
-
-# Plot scatterplot with regression line for each variable
-ggplot(bio_2) + 
-  geom_point(aes(x = value, y = Ho, color = name)) + 
-  geom_smooth(aes(x = value, y = Ho, color = name), method = "lm") +
-  facet_wrap(~name, scales = "free") +
-  theme_classic()
-
-par(mfrow = c(1,3))
-plot(lh[["bio_2"]], col = magma(100), range = c(0, 150))
-plot(cur[["bio_2"]], col = magma(100), range = c(0, 150))
-plot(dif_lh[["bio_2"]], col = magma(100))
-```
-
-```{r}
-roh <- get_roh()
-coords <- left_join(coords, roh)
-cur_vals <- extract(cur, coords[,c("x", "y")], ID = FALSE)
-roh_mod_df <- data.frame(froh = coords$froh, cur_vals)
-
-ggdf <- roh_mod_df %>% pivot_longer("bio_2")
-ggplot(ggdf) + 
-  geom_point(aes(x = value, y = froh, color = name)) + 
-  geom_smooth(aes(x = value, y = froh, color = name), method = "lm") +
-  facet_wrap(~name, scales = "free") +
-  theme_classic()
-```
-
-```{r}
-# showing off bio2
-het <- get_het()
-coords <- left_join(coords, het)
-dif_lh <- cur - lh
-dif_vals <- extract(dif_lh, coords[,c("x", "y")], ID = FALSE)
-mod_df <- data.frame(coords, dif_vals)
-
-gg_df <- mod_df
-
-plt2 <-
-ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
-  labs(color = "Change\nin mean\ndiurnal\nrange") +
-  scale_color_viridis_c(option = "magma", direction = -1) +
-  theme_void() 
-
-plt3 <-
-ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")
-  
-
-plt1 <- ggplot(gg_df, aes(bio_2, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  xlab("Change in mean diurnal range") +
-  stat_cor(label.y = 800000) +
-  xlim(-7.5, NA) +
-  theme_classic()
-
-pdf(here("bio2.pdf"), width = 15, height = 5)
-grid.arrange(plt1, plt2, plt3, nrow = 1)
-dev.off()
-```
-
-### Evaluating variables correlated with bio2
-```{r}
-bio2_cors <- cor(mod_df %>% select(starts_with("bio")))[,"bio_2"]
-bio2_cors <- names(bio2_cors[abs(bio2_cors) > 0.5])
-
-#bio6 - min temperature of coldest month (bio6)
-#bio5 - max temperature of warmest month (bio5)
-#bio7 - temperature annual range (bio5-bio6)
-#bio2 - mean diurnal range (mean of monthly (max temp - min temp)
-#bio12 - annual precipitation
-#bio13 - precipitation of wettest month
-
-gg_df <- 
-  mod_df %>% 
-  pivot_longer(all_of(bio2_cors)) %>%
-  # replace bio_2/bio_5/bio_7 with the actual variable name
-  mutate(name = case_when(
-    name == "bio_2" ~ "A. Change in mean diurnal range\n(BIO2)",
-    name == "bio_5" ~ "B. Change in max temperature of warmest month\n(BIO5)",
-    name == "bio_7" ~ "D. Change in temperature annual range\n(BIO7; BIO5 - BIO6)",
-    name == "bio_6" ~ "C. Change in min temperature of coldest month\n(BIO6)",
-    name == "bio_1" ~ "E. Change in mean annual temperature\n(BIO1)",
-    name == "bio_12" ~ "F. Change in annual precipitation\n(BIO12)",
-    name == "bio_13" ~ "G. Change in precipitation of wettest month\n(BIO13)",
-    TRUE ~ name
-  )) 
-
-plt1 <- ggplot(gg_df, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free", nrow = 1) +
-  stat_cor(label.y = 800000) +
-  theme_classic() +
-  xlab("value")
-
-plt_list <- gg_df %>%
-  split(.$name) %>%
-  map(~ {
-    limit <- max(abs(.x[["value"]])) * c(-1, 1)
-    ggplot(.x) +
-        geom_sf(data = ca, fill = "darkgray") +
-        labs(color = "value") +
-        geom_point(aes(x = x, y = y, color = value), cex = 2) +
-        scale_color_distiller(type = "div", limit = limit) +
-        facet_wrap(~name) +
-        theme_void()}
-        )
-
-plt3 <-
-ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho)) +
-  ggtitle("E. Genetic diversity") +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")
-  
-
-ga1 <- do.call(grid.arrange, c(c(plt_list), nrow = 1))
-
-grid.arrange(plt1, ga1, nrow =2)
-
-summary(lm(Ho ~ bio_5 + bio_6, mod_df))
-summary(lm(Ho ~ bio_2, mod_df))
-```
-
-### Testing for effects of population structure
-
-```{r}
-source(here("analysis", "admixture", "admixture.R"))
-admix <- get_Q(K = 5)
-head(admix)
-coords <- left_join(coords, admix)
-mod_df <- data.frame(coords, dif_vals)
-# bio2 is still significant after controling for clusters
-summary(lm(Ho ~ cluster + bio_2, data = mod_df))
-# nothing is significant once an interaction term is added but I think that is due to low power
-summary(lm(Ho ~ cluster + bio_2, data = mod_df))
-mod_df %>% group_by(cluster) %>% summarise(mean = mean(Ho, na.rm = TRUE)) %>% arrange(desc(mean))
-
-# when you remove the southern pop with really high genetic diversity (cluster 3), the pattern still exists (albeit weaker)
-plt1 <- ggplot(mod_df[mod_df$cluster != 3, ], aes(bio_2, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 800000) +
-  theme_classic()
-
-plt2 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
-  labs(color = "bio_2") +
-  theme_void() +
-  scale_color_viridis_c(option = "magma", direction = -1)
-
-plt3 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")
-
-grid.arrange(plt1, plt2, plt3, nrow = 1)
-```
-
-
-# exploring further
-```{r}
-range_df <- 
-  data.frame(
-    bio_5_cur = extract(cur[["bio_5"]], coords[,c("x", "y")], ID = FALSE),
-    bio_6_cur = extract(cur[["bio_6"]], coords[,c("x", "y")], ID = FALSE),
-    bio_5_lh = extract(lh[["bio_5"]], coords[,c("x", "y")], ID = FALSE),
-    bio_6_lh = extract(lh[["bio_6"]], coords[,c("x", "y")], ID = FALSE),
-    Ho = coords$Ho
-  )
-names(range_df) <- c("bio_5_cur", "bio_6_cur", "bio_5_lh", "bio_6_lh", "Ho")
-
-range_df <- 
-  range_df %>% 
-  pivot_longer(all_of(c("bio_5_cur", "bio_6_cur", "bio_5_lh", "bio_6_lh"))) %>%
-  mutate(name = factor(name, levels = c("bio_5_cur", "bio_6_cur", "bio_5_lh", "bio_6_lh")))
-
-ggplot(range_df) +
-  geom_boxplot(aes(x = name, y = value))
-
-```
-
-```{r}
-df <- coords
-het <- get_het()
-roh <- get_roh()
-df <- left_join(df, het) %>% left_join(roh)
-cur_vals <- extract(cur, df[,c("x", "y")], ID = FALSE)
-lh_vals <- extract(lh, df[,c("x", "y")], ID = FALSE)
-lgm_vals <- extract(lgm, df[,c("x", "y")], ID = FALSE)
-mh_vals <- extract(mh, df[,c("x", "y")], ID = FALSE)
-eh_vals <- extract(eh, df[,c("x", "y")], ID = FALSE)
-dif_lh <- cur - lh
-dif_lh_vals <- extract(dif_lh, df[,c("x", "y")], ID = FALSE)
-dif_lgm <- cur - lgm
-dif_lgm_vals <- extract(dif_lgm, df[,c("x", "y")], ID = FALSE)
-dif_mh <- cur - mh
-dif_mh_vals <- extract(dif_mh, df[,c("x", "y")], ID = FALSE)
-dif_eh <- cur - eh
-dif_eh_vals <- extract(dif_eh, df[,c("x", "y")], ID = FALSE)
-
-cur_df <- data.frame(df, cur_vals)
-lh_df <- data.frame(df, lh_vals)
-lgm_df <- data.frame(df, lgm_vals)
-mh_df <- data.frame(df, mh_vals)
-eh_df <- data.frame(df, eh_vals)
-dif_lh_df <- data.frame(df, dif_lh_vals)
-dif_lgm_df <- data.frame(df, dif_lgm_vals)
-dif_mh_df <- data.frame(df, dif_mh_vals)
-dif_eh_df <- data.frame(df, dif_eh_vals)
-#fHo <- formula(paste0("Ho ~", paste0(names(cur_vals), collapse = " + ")))
-#summary(cor(fHo, cur_df))
-
-# check for strong correlations
-
-# only strong correlation is with the late holocene/bio2
-map(list(cur_df, eh_df, mh_df, lh_df, lgm_df, dif_eh_df, dif_mh_df, dif_lh_df, dif_lgm_df), ~ {
-  strong <- cor(.x %>% select(Ho, contains("bio")) %>% drop_na(Ho))["Ho", -1]
-  which(abs(strong) > 0.4)
-})
-
-# confirmed no correlation with ROH:
-map(list(cur_df, eh_df, mh_df, lh_df, lgm_df, dif_eh_df, dif_mh_df, dif_lh_df, dif_lgm_df), ~ {
-  strong <- cor(.x %>% select(froh, contains("bio")) %>% drop_na(froh))["froh", -1]
-  which(abs(strong) > 0.4)
-})
-
-summary(lm(froh ~ bio_9, dif_lh_df))
-
-plot(dif_lh_df[["bio_9"]], dif_lh_df[["Ho"]])
-```
-
-```{r}
-
 ```

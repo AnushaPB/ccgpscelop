@@ -2,7 +2,7 @@
 adaptive_index <- function(RDA, K, env_pres, range = NULL, method = "loadings", scale_env, center_env){
   
   # Formatting environmental rasters for projection
-  var_env_proj_pres <- as.data.frame(rasterToPoints(env_pres[[row.names(RDA$CCA$biplot)]]))
+  var_env_proj_pres <- as.data.frame(env_pres[[row.names(RDA$CCA$biplot)]], xy = TRUE, ID = FALSE)
   
   # Standardization of the environmental variables
   var_env_proj_RDA <- as.data.frame(scale(var_env_proj_pres[,-c(1,2)], center_env[row.names(RDA$CCA$biplot)], scale_env[row.names(RDA$CCA$biplot)]))

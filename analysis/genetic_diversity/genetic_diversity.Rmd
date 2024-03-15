@@ -107,28 +107,43 @@ ggplot(roh_df) +
 envdata <- get_env()
 mod_df <- 
   left_join(roh_df, envdata) %>%
-  st_drop_geometry() 
+  left_join(het) %>%
+  st_drop_geometry() %>%
+  mutate(froh0_log = log(froh0 + 1)) %>%
+  drop_na(froh0, Ho, elevation)
+
+mod_div <- lm(froh0_log ~ Ho + elevation, data = mod_df)
+summary(mod_div)
+plot(mod_div)
+
+mod_df$fitted <- mod_div$fitted.values
+ggplot(mod_df) +
+  geom_point(aes(x = Ho, y = froh0_log, col = pop)) +
+  theme_classic()
+ggplot(mod_df) +
+  geom_point(aes(x = fitted, y = froh0_log, col = pop)) +
+  theme_classic()
 
 # Climate model:
-mod_clim <- lm(froh0 ~ CA_rPCA1 + CA_rPCA2 + CA_rPCA3, data = mod_df)
+mod_clim <- lm(froh0_log ~ CA_rPCA1 + CA_rPCA2 + CA_rPCA3, data = mod_df)
 summary(mod_clim)
-mod_clim2 <- lm(froh0 ~ CA_rPCA2 , data = mod_df)
+mod_clim2 <- lm(froh0_log ~ CA_rPCA2 , data = mod_df)
 summary(mod_clim2)
 
 # Elevation model:
-mod_elev <- lm(froh0 ~ elevation, data = mod_df)
+mod_elev <- lm(froh0_log ~ elevation, data = mod_df)
 summary(mod_elev)
 
 # Elevation and CA_rPCA2 are correlated
 mat <- as.matrix(drop_na(mod_df[,c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3", "elevation")]))
-mod_clim_elev <- lm(froh0 ~ CA_rPCA1 + elevation + CA_rPCA3, data = mod_df)
+mod_clim_elev <- lm(froh0_log ~ CA_rPCA1 + elevation + CA_rPCA3, data = mod_df)
 summary(mod_clim_elev)
 
 # Development and imperviousness model
-mod_imperv <- lm(froh0 ~ nlcd_imperviousness, data = mod_df)
+mod_imperv <- lm(froh0_log ~ nlcd_imperviousness + elevation, data = mod_df)
 summary(mod_imperv)
 
-mod_devel <- lm(froh0 ~ LF_evh_developed_bin, data = mod_df)
+mod_devel <- lm(froh0_log ~ developed + elevation, data = mod_df)
 summary(mod_devel)
 
 # Comparison of AIC suggests that elevation alone is the best model
@@ -140,10 +155,18 @@ AIC(mod_clim2)
 # plot of elevation vs roh
 # doesn't seem suggestive of a strong relationship
 ggplot(mod_df) +
-  geom_point(aes(x = elevation, y = froh0, col = pop)) +
+  geom_point(aes(x = elevation, y = froh0_log, col = pop)) +
   theme_classic()
 
 ggplot(mod_df) +
-  geom_point(aes(x = CA_rPCA2, y = froh0, col = pop)) +
+  geom_point(aes(x = CA_rPCA2, y = froh0_log, col = pop)) +
+  theme_classic()
+
+ggplot(mod_df) +
+  geom_point(aes(x = CA_rPCA1, y = froh0_log, col = pop)) +
+  theme_classic()
+
+ggplot(mod_df) +
+  geom_point(aes(x = CA_rPCA3, y = froh0_log, col = pop)) +
   theme_classic()
 ```

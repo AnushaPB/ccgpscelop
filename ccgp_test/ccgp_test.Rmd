@@ -1,0 +1,281 @@
+---
+title: "CCGP"
+output:
+  github_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r}
+library("rpaleoclim")
+library("here")
+library("tidyverse")
+library("ggpubr")
+library("terra")
+library("sf")
+library("gridExtra")
+source("general_functions.R")
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+ca <- get_ca()
+```
+
+# Get heterozygosity Data
+```{r}
+# Get a list of all .het files in the current directory
+het_files <- list.files(here("ccgp_test", "data"), pattern = "\\.het$")
+
+# Extract the species names from the file names
+projects <- gsub("\\..*", "", het_files)
+
+# Construct the file paths for the .coords and .het files
+coords_files <- paste0(projects, ".coords.txt")
+het_files <- paste0(projects, ".het")
+
+df <-
+  map(projects, ~{
+    het <- read_table(here("ccgp_test", "data", paste0(.x, ".het")))
+    het <- het %>% mutate(Ho = `O(HOM)`/N_SITES) %>% rename(SampleID = INDV)
+    coords <- read_table(here("ccgp_test", "data", paste0(.x, ".coords.txt")), col_names = FALSE)
+    df <- 
+      coords %>% 
+      rename(SampleID = X1, x = X2, y = X3) %>% 
+      left_join(het, by = "SampleID") %>%
+      mutate(project = .x)
+    return(df)
+  }) %>% bind_rows()
+
+
+```
+
+# Get paleoclim data
+```{r}
+paleovars <- c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
+# download data
+walk(paleovars, ~ {
+  paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env"))
+})
+
+# Create a key with layer information
+paleokey <- data.frame(
+  id = c("cur", "lh", "mh", "eh", "yds", "ba", "hs1", "lgm", "lig", "mis19", "mpwp", "m2"),
+  period = c("Current", "Late Holocene: Meghalayan", "Mid Holocene: Northgrippian", "Early Holocene: Greenlandian", "Pleistocene: Younger Dryas Stadial", "Pleistocene: Bølling-Allerød", "Pleistocene: Heinrich Stadial 1", "Pleistocene: Last Glacial Maximum", "Pleistocene: Last Interglacial", "Pleistocene: MIS19", "Pliocene: Mid-Pliocene warm period", "Pliocene: M2"),
+  time = c("1979 – 2013", "4.2-0.3 ka", "8.326-4.2 ka", "11.7-8.326 ka", "12.9-11.7 ka", "14.7-12.9 ka", "17.0-14.7 ka", "ca. 21 ka", "ca. 130 ka", "ca. 787 ka", "3.205 Ma", "ca. 3.3 Ma"),
+  source = c("CHELSA", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "CHELSA", "Otto-Bliesner et al. 2006", "Brown et al. 2018", "Hill 2015", "Dolan et al. 2015")
+)
+
+# Print the dataframe
+print(df) 
+# Define the file names and paths
+file_names <- c("LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
+file_paths <- file.path(here("data", "env"), file_names)
+
+# Load and process the data using purrr
+env_list <- purrr::map(file_paths, ~ {
+  data <- load_paleoclim(.x)
+  data <- crop(data, ca)
+  data <- mask(data, ca)
+  data
+})
+names(env_list) <- paleovars
+env_stack <- rast(env_list)
+cur <- env_list[["cur"]]
+
+env_stack_vals <- extract(env_stack, df[,c("x", "y")], ID = FALSE)
+env_stack_vals <- bind_cols(df, env_stack_vals)
+
+ggplot(env_stack_vals) +
+  geom_point(aes(x = lgm_16, y = Ho, col = project))
+```
+
+# running linear models
+```{r}
+# use data list to get vars 
+env_df_vals <- map(env_list, ~ data.frame(df, extract(.x, df[,c("x", "y")], ID = FALSE)))
+diff_vars <- names(env_list) %>% setdiff("cur")
+diff_vals <- map(diff_vars, ~ {
+  diff <- env_list[["cur"]] - env_list[[.x]]
+  return(data.frame(df, extract(diff, df[,c("x", "y")], ID = FALSE)))
+})
+env_df_vals <- c(env_df_vals, diff_vals)
+names(env_df_vals) <- c(paleovars, paste0("dif_", diff_vars))
+
+# check for strong correlations
+cor_result <- imap(env_df_vals, \(x, idx){
+  possibly_cor <- possibly(cor, NA)
+  result <- 
+    x %>%
+    group_by(project) %>%
+    summarise(across(starts_with("bio"), ~possibly_cor(Ho, ., use = "complete.obs"))) %>% 
+    pivot_longer(contains("bio"), names_to = "var", values_to = "r") %>%
+    mutate(timeperiod = !!idx)
+}) %>% 
+bind_rows() %>%
+mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+
+cor_result %>% filter(abs(r) > 0.6) %>% group_by(var, timeperiod) %>% count() %>% arrange(desc(n))
+cor_result %>% filter(abs(r) > 0.6) %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
+
+bio7 <- cor_result %>% filter(var == "bio_7")
+ggplot(bio7, aes(x = timeperiod, y = project, fill = r)) +
+  geom_tile() +
+  labs(col = "r") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+ggplot(bio7, aes(x = timeperiod, y = project, fill = abs(r))) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "rocket", direction = -1) +
+  labs(fill = "|r|") +
+  theme_minimal()
+```
+
+```{r}
+
+keep_strongest_correlation <- function(x, threshold) {
+  # Calculate the correlation matrix
+  cor_matrix <- cor(x, use = "complete.obs")
+  
+  # Identify sets of correlated variables
+  correlated_sets <- caret::findCorrelation(cor_matrix, cutoff = threshold, names = TRUE, verbose = FALSE)
+
+  # For each set of correlated variables, keep only the variable with the strongest correlation with Ho
+  x <- map(correlated_sets, function(set) {
+    correlations_with_Ho <- sapply(set, function(var) cor(x$Ho, x[[var]], use = "complete.obs"))
+    strongest_correlation <- which.max(abs(correlations_with_Ho))
+    set <- set[-strongest_correlation]
+    x <- x[, !names(x) %in% set]
+    return(x)
+  }) %>% reduce(intersect)
+
+  return(x)
+}
+
+run_lm <- function(project, timeperiod, env_df_vals){
+  # subset df
+  env_df <- env_df_vals[[timeperiod]] %>% filter(project == !!project)
+
+  # test for collinearity and drop correlated vars as suggested
+  bio <- env_df %>% select(contains("bio")) %>% drop_na()
+  cormat <- cor(bio)
+  safe_cor <- possibly(caret::findCorrelation)
+  drop_vars <- safe_cor(cormat, cutoff = 0.6, names = TRUE, verbose = FALSE)
+  if (is.null(drop_vars)) return(NULL)
+  uncorrelated <- names(bio) %>% setdiff(drop_vars)
+
+  if (length(drop_vars) == 0) {
+    uncorrelated <- names(bio)
+    correlated <- data.frame(corvars = NA, var = uncorrelated, timeperiod = timeperiod, project = project)
+  } else {
+    cormat <- cor(bio)
+    correlated <- 
+      map(uncorrelated, ~ data.frame(corvars = names(which(abs(cormat[.x,]) > 0.5)), var = .x)) %>% 
+      bind_rows() %>%
+      mutate(timeperiod = timeperiod, project = project)
+  }
+
+  if (all(is.na(select(env_df, contains("bio"))))) {
+    return(NULL)
+  }
+  
+  fHo <- formula(paste0("Ho ~", paste0(uncorrelated, collapse = " + ")))
+  mod <- summary(lm(fHo, data=env_df))
+
+  result <- 
+    data.frame(mod$coefficients) %>% 
+    mutate(adj_rsqr = mod$adj.r.squared) %>%
+    mutate(var = rownames(.)) %>% 
+    filter(var != "(Intercept)") %>%
+    left_join(correlated, by = "var") 
+  return(result)
+}
+
+combos <- expand.grid(project = unique(df$project), timeperiod = names(env_df_vals))
+lm_result <- pmap(combos, ~run_lm(project = .x, timeperiod = .y, env_df_vals = env_df_vals), .progress = TRUE) 
+lm_df <- 
+  lm_result %>%# come back to figure out why some have 0 rows
+  compact() %>%
+  map(~ {
+    if (nrow(.x) == 0)
+      return(NULL)
+    else
+      return(.x)
+  }) %>%
+  compact() %>% 
+  bind_rows()
+
+lm_df <- left_join(lm_df, cor_result)
+sigvars <- 
+  lm_df %>% 
+  select(-corvars) %>% 
+  distinct() %>% 
+  filter(`Pr...t..` < 0.05) %>% 
+  arrange(desc(adj_rsqr)) %>%
+  filter(adj_rsqr > 0.3 & r > 0.6) 
+
+sigvars %>% group_by(timeperiod, var) %>% count() %>% arrange(desc(n)) %>% head()
+sigvars %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
+
+```
+
+```{r}
+plts <-
+map(unique(sigvars$timeperiod), ~ {
+  sig_df <-
+   lm_df %>% 
+   filter(timeperiod == .x) %>%
+   filter(`Pr...t..` < 0.05, r > 0.6, adj_rsqr > 0.3)
+
+  sig_env_df <- 
+    env_df_vals[[.x]] %>% 
+    pivot_longer(contains("bio"), names_to = "var") %>%
+    filter(project %in% sig_df$project)
+
+  title <- paste0(.x, " (adj R^2 = ", round(mean(sig_df$adj_rsqr, na.rm = TRUE), 2), ")" )
+
+  if (nrow(sig_env_df) == 0) return(NULL)
+  plt <-
+  ggplot(sig_env_df, aes(value, Ho)) +
+    geom_point(alpha = 0.7, aes(col = project)) +
+    facet_wrap(~var, scales = "free") +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() +
+    ggtitle(title)
+
+  plt
+})
+
+pdf("env_sigvars_with_corvars.pdf", width = 20, height = 15)
+walk(plts, print)
+dev.off()
+
+
+plts <-
+map(unique(lm_result$model), ~ {
+  sig_df <- lm_result %>% filter(model == .x) %>% filter(`Pr...t..` < 0.05)
+  sig_env_df <- env_df_vals[[.x]] %>% pivot_longer(contains("bio"), names_to = "var") %>% filter(var %in% unique(sig_df$var))
+  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+
+  if (nrow(sig_env_df) == 0) return(NULL)
+  plt <-
+  ggplot(sig_env_df, aes(value, Ho)) +
+    geom_point(alpha = 0.7) +
+    facet_wrap(~var, scales = "free", nrow = 1) +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() +
+    ggtitle(title)
+
+  plt
+})
+
+```

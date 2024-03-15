@@ -47,7 +47,6 @@ dos <- vcf_to_dosage(vcf)
 
 # get pcs
 pcs <- read_table(here("58-Sceloporus", "QC", "58-Sceloporus.eigenvec")) %>% rename(SampleID = `#IID`)
-
 ```
 
 ```{r, eval = FALSE}
@@ -60,16 +59,19 @@ coords <-
 stopifnot(all(coords$SampleID == colnames(vcf@gt)[-1]))
 ```
 ```{r, eval = FALSE}
-dem <- rast(here("data", "env", "dem_z10.tif"))
-```
-```{r, eval = FALSE}
 # deal with NA values (for now just removing SNPs with NA values)
 #dos <- simple_impute(dos)
 na <- apply(dos, 2, function(x) mean(is.na(x)))
 doscc <- dos[,(na == 0)]
 
 # extract env data and only retain complete cases
-env <- cbind(data.frame(dem = extract(dem, coords, ID = FALSE)), extract(CA_env, coords))
+envdata <- read_csv(here("data", "env", "envdata.csv"))
+env <- 
+  left_join(coords, envdata) %>% 
+  select(CA_rPCA1, CA_rPCA2, CA_rPCA3, elevation) %>% 
+  st_drop_geometry() %>%
+  data.frame()
+
 cci <- complete.cases(env)
 env_cci <- env[cci,]
 
@@ -94,7 +96,7 @@ f_pc_geo <- as.formula(paste0("gen ~ ", paste(colnames(env_cci), collapse = "+")
 f_ls <- list(default = f, geo = f_geo, pc = f_pc, pc_geo = f_pc_geo)
 
 run_and_export <- imap(f_ls, \(f, idx){
-  mod <- vegan::rda(f, data = moddf)
+  mod <- vegan::rda(f, data = moddf, scale = TRUE)
 
   # get outliers
   # note: plotting will cause a crash because there are so many snps
@@ -116,6 +118,7 @@ run_and_export <- imap(f_ls, \(f, idx){
   cor_df %>% group_by(var) %>% summarize(count = n())
   cor_df %>% arrange(desc(abs(r)))
 
+  save(mod, file = here("analysis", "gea", "outputs", paste0(idx, "_rda_mod.rda")))
   write.csv(rda_gen, here("analysis", "gea", "outputs", paste0(idx, "_rda_gen.csv")), row.names = TRUE)
   write.csv(rda_snps, here("analysis", "gea", "outputs", paste0(idx, "_rda_snps.csv")), row.names = FALSE)
   write.csv(cor_df, here("analysis", "gea", "outputs", paste0(idx, "_cor_df.csv")), row.names = FALSE)
@@ -388,65 +391,87 @@ $$
 Where _a_ is the climatic variable score (loading) along the RDA axis, _b_ is the standardized value for this particular variable at the focal pixel, and _i_ refers to one of the _n_ different variables used in the RDA model.   
 
 ```{r, message=FALSE, results='hide', eval=TRUE}
-cor_df <- 
-  read.csv(here("analysis", "gea", "outputs", "default_cor_df.csv"))
-
-rda_gen <- 
-  read.csv(here("analysis", "gea", "outputs", "default_rda_gen.csv")) %>%
-  data.frame() %>%
-  rename(SampleID = X)
-
+# envdata
 envstack <- rast(here("data", "env", "envstack.tif"))
-#envstack_scaled <- scale(envstack, center = TRUE, scale = TRUE)
-envstack_agg <- aggregate(envstack, fact = 100, fun = mean)
-e2 <- aggregate(envstack_agg,fact = 10)
+names(envstack) <-  c("CA_rPCA1",  "CA_rPCA2",  "CA_rPCA3",  "elevation")
 
-Env <- extract(envstack, coords, df = TRUE, ID = FALSE)
+# make x y envstacks
+env_agg <- aggregate(envstack, 100)
+coords_rast <- as.data.frame(env_agg[[1]], xy = TRUE, ID = FALSE)
+x <- env_agg[[1]]
+y <- env_agg[[2]]
+x[] <- coords_rast$x
+y[] <- coords_rast$y
+names(x) <- "x"
+names(y) <- "y"
+env_agg_x_y <- c(env_agg, x, y)
 
-## Standardization of the variables
-Env <- scale(Env, center=TRUE, scale=TRUE) # center=TRUE, scale=TRUE are the defaults for scale()
+coords_proj <- coords %>% st_transform(crs = st_crs(envstack))
+env <- extract(env_agg_x_y, coords_proj, df = TRUE, ID = FALSE)
+#env <- extract(env_agg, coords_proj, df = TRUE, ID = FALSE)
+env_cci <- which(complete.cases(env))
+env_scale <- scale(env, center = TRUE, scale = TRUE)
+scale_env <- attr(env_scale, 'scaled:scale')
+center_env <- attr(env_scale, 'scaled:center')
 
-## Recovering scaling coefficients
-scale_env <- attr(Env, 'scaled:scale')
-center_env <- attr(Env, 'scaled:center')
+# coords
+coords_cci <- which(cci)
+combo_cci <- intersect(coords_cci, env_cci)
+coords_mat <- st_coordinates(coords)
+colnames(coords_mat) <- c("x", "y")
+gen <- doscc[combo_cci,]
+moddf <- data.frame(env[combo_cci,], coords_mat[combo_cci,])
+
+# model
+f <- as.formula(paste0("gen ~ ", paste(colnames(env), collapse = "+")))
+mod <- vegan::rda(f, data = moddf)
+
+env_pres <- stack(env_agg_x_y)
 
 ## Running the function for all the climatic pixels of lodgepole pine distribution range
 res_RDA_proj_current <- 
   adaptive_index(
-    RDA = rda_gen[,2:10], 
-    K = 2, 
-    env_pres = e2, 
+    RDA = mod, 
+    K = 3, 
+    env_pres = env_pres, 
     range = NULL, 
     method = "loadings", 
     scale_env = scale_env, 
     center_env = center_env)
+
+rda_map <- rast(map(res_RDA_proj_current, rast))
+plot(rda_map, col = magma(100))
+
+stack_to_rgb <- function(s) {
+  stack_list <- as.list(s)
+  new_stack <- terra::rast(purrr::map(stack_list, raster_to_rgb))
+  return(new_stack)
+}
+
+raster_to_rgb <- function(r) {
+  rmax <- terra::minmax(r)["max", ]
+  rmin <- terra::minmax(r)["min", ]
+  if ((rmax - rmin) == 0) {
+    r[] <- 255
+  } else {
+    r <- (r - rmin) / (rmax - rmin) * 255
+  }
+  return(r)
+}
+
+rgb <- stack_to_rgb(rda_map)
+plotRGB(rgb)
+points(coords_proj, col = "black", pch = 1, cex = 1)
+
+ggmaps <- as.data.frame(rgb, xy = TRUE) %>% pivot_longer(cols = -c(x, y), names_to = "variable", values_to = "value")
+ggplot(ggmaps) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_wrap(~variable, nrow = 1) +
+  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  theme_void()
 ```
 
 The adaptive index thus provides an estimate of adaptive genetic similarity or difference of all pixels on the landscape as a function of the values of the environmental predictors at that location. When projected on a map it allows visualizing the different adaptive gradients across a species range.
-
-```{r, message=FALSE, warning=FALSE, results='hide', eval=TRUE, fig.align='center', fig.width=10}
-## Vectorization of the climatic rasters for ggplot
-RDA_proj <- list(res_RDA_proj_current$RDA1, res_RDA_proj_current$RDA2)
-RDA_proj <- lapply(RDA_proj, function(x) rasterToPoints(x))
-for(i in 1:length(RDA_proj)){
-  RDA_proj[[i]][,3] <- (RDA_proj[[i]][,3]-min(RDA_proj[[i]][,3]))/(max(RDA_proj[[i]][,3])-min(RDA_proj[[i]][,3]))
-}
-
-## Adaptive genetic turnover projected across lodgepole pine range for RDA1 and RDA2 indexes
-TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:2]))
-colnames(TAB_RDA)[3] <- "value"
-TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1","RDA2"))
-ggplot(data = TAB_RDA) + 
-  geom_sf(data = admin, fill=gray(.9), size=0) +
-  geom_raster(aes(x = x, y = y, fill = cut(value, breaks=seq(0, 1, length.out=10), include.lowest = T))) + 
-  scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
-  geom_sf(data = admin, fill=NA, size=0.1) +
-  coord_sf(xlim = c(-148, -98), ylim = c(35, 64), expand = FALSE) +
-  xlab("Longitude") + ylab("Latitude") +
-  guides(fill=guide_legend(title="Adaptive index")) +
-  facet_grid(~ variable) +
-  theme_bw(base_size = 11, base_family = "Times") +
-  theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size=11))
-```
 
 **Notes on interpretation and best practices:** We remind users that any prediction procedure such as this relies on the extrapolation of correlative relationships and carries potential pitfalls. Predicting any genetic-based adaptive index in unsampled areas could be strongly biased if the value or combination of the environmental predictors in those projected areas exceed those used to train the model. Similarly, any projection could be inaccurate if the genetic ~ environment relationship is not well characterized, either because the scale of the analyses (e.g., size of the pixel) does not capture the complexity of the association, or because the distribution of the identified genetic variation is not optimal across the current and/or future environmental landscape (e.g., due to recent demographic history, barriers to gene flow, genetic drift in small populations, fluctuating trait heritability, varying selection pressures, or genetic architecture). It is critical to avoid overinterpretation of adaptive index projections, especially when validation data are not available. 
