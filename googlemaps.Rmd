@@ -1,0 +1,16 @@
+---
+title: "googlemaps"
+output: html_document
+date: "2024-02-18"
+---
+```{r}
+library(dismo)
+
+coords <- read.table(here("data", "Scelop.coord"))
+coords_longlat <- st_as_sf(coords, coords = c("V1", "V2"), crs = "+proj=longlat") 
+coords_proj <- st_transform(coords_longlat, crs = 3085)
+plot(coords_proj)
+
+m <- gmap()
+```
+
