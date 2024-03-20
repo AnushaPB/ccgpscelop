@@ -14,10 +14,10 @@ het <- get_het()
 # Combine coords and het data
 coords <- left_join(coords, het, by = "SampleID") 
 
-ggplot() + 
+ggplot(coords) + 
   geom_sf(data = ca) +
-  geom_sf(data = coords, aes(col = Ho), cex = 3) +
-  scale_color_viridis_c(option = "mako") +
+  geom_sf(aes(fill = Ho), col = "black", pch = 21, cex = 2.5) +
+  scale_color_viridis_c(option = "inferno") +
   theme_void()
 ```
 
@@ -28,8 +28,8 @@ ggplot(coords) +
  geom_sf() +
  geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
  geom_sf(aes(geometry = geometry, col = Ho), pch = 16, cex = 2.5) +
- scale_color_viridis_c(option = "mako", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
- scale_fill_gradient(low = "black", high = "white", na.value = NA) +
+ scale_color_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
  theme_void()
 ```
 
@@ -86,7 +86,7 @@ ggplot(roh_df) +
  geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
  geom_sf(aes(geometry = geometry, col = froh), pch = 16, cex = 2.5) +
  scale_color_viridis_c(option = "inferno", trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
- scale_fill_gradient(low = "black", high = "white", na.value = NA) +
+ scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
  theme_void()
 ```
 
