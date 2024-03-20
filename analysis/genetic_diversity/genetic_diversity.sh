@@ -24,6 +24,10 @@ mv *.bed outputs
 mv *.bim outputs 
 mv *.fam outputs
 
+# note: calculated the same as https://www.cell.com/current-biology/pdfExtended/S0960-9822(21)00548-0: 
+# "we define heterozygosity as the fraction of heterozygous genotypes out of all
+# called genotypes (including invariant sites) within an individual"
+
 # ROH -----------------------------
 
 # Define an array with your population identifiers

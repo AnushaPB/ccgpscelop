@@ -13,7 +13,6 @@ library(terra)
 library(ggpubr)
 library(algatr)
 library(viridis)
-library(vcfR)
 library(tigris)
 library(raster)
 library(igraph)
@@ -38,7 +37,7 @@ source(here("general_functions.R"))
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
 # Load the U.S. state boundaries data
 ca <- get_ca()
-
+dem <- get_dem()
 coords <- get_coords(sf = TRUE)
 ```
 
@@ -56,6 +55,15 @@ ggplot() +
   geom_sf(data = coords, aes(col = Ho), cex = 3) +
   scale_color_viridis_c(option = "mako") +
   theme_void()
+
+ggplot(coords) +
+ geom_sf() +
+ geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
+ geom_sf(aes(geometry = geometry, col = Ho), pch = 16, cex = 2.5) +
+ scale_color_viridis_c(option = "mako", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ scale_fill_gradient(low = "black", high = "white", na.value = NA) +
+ theme_void()
+
 ```
 
 ```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
@@ -72,7 +80,6 @@ ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
 # ROH
 ```{r ROH, fig.width = 7, fig.height = 7}
 roh_df <- get_roh()
-dem <- get_dem()
 
 ggplot(roh_df) +
  geom_sf(data = ca) +
