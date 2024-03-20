@@ -17,7 +17,7 @@ coords <- left_join(coords, het, by = "SampleID")
 ggplot(coords) + 
   geom_sf(data = ca) +
   geom_sf(aes(fill = Ho), col = "black", pch = 21, cex = 2.5) +
-  scale_color_viridis_c(option = "inferno") +
+  scale_fill_viridis_c(option = "inferno") +
   theme_void()
 ```
 
