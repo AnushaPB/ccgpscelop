@@ -4,10 +4,11 @@ library("sf")
 library("terra")
 library("tidyverse")
 source(here("general_functions.R"))
-feems <- st_read(here("analysis", "feems", "feems.shp"))
+feems <- st_read(here("analysis", "feems", "feems_edges.shp"))
+nodes <- st_read(here("analysis", "feems", "feems_nodes.shp"))
 ca <- get_ca()
 #coords <- get_coords(sf = TRUE)
-st_crs(feems) <- st_crs(4326)
+st_crs(feems) <- st_crs(nodes) <- st_crs(4326)
 feems <- st_intersection(feems, ca)
 feems$log_weight <- log10(feems$weight)
 d <- max(c(abs(min(feems$log_weight, na.rm = TRUE)), abs(max(feems$log_weight, na.rm = TRUE))))
@@ -16,8 +17,9 @@ ggplot() +
   geom_sf(data = ca, fill = "#f0f0f0", color="black")   +
   geom_sf(data = feems, aes(col = log_weight), lwd = 1) +
   geom_sf(data = ca, fill = NA, color="black")   +
+  geom_sf(data = nodes, aes(cex = size), fill = NA, col = "black", pch = 21) + 
   #geom_sf(data = coords) +
-  labs(col = "log10(w)") +
+  labs(col = "log10(w)", cex = "Sample size") +
   scale_color_gradientn(colors = color_palette, limits = c(-d, d)) +
   theme_void()
 

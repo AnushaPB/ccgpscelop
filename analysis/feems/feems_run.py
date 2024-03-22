@@ -117,13 +117,14 @@ plt.savefig('feems.png')
 # If you want to show the plot as well, uncomment the next line
 # plt.show()
 
-# export
+# EXPORT
+
+# Export edges
 weights = sp_graph.w
 edges = sp_graph.edges
 
 # Create a LineString for each edge
 from shapely.geometry import LineString
-
 geometry = [LineString([sp_graph.node_pos[edge[0]], sp_graph.node_pos[edge[1]]]) for edge in edges]
 
 # Create a DataFrame with the weights
@@ -132,26 +133,26 @@ df = pd.DataFrame(weights, columns=['weight'])
 # Create a GeoDataFrame with the edges and weights
 gdf = gpd.GeoDataFrame(df, geometry=geometry)
 
-gdf.to_file("feems.shp", layer = "weight")
+# Write out shp file
+gdf.to_file("feems_edges.shp", layer = "weight")
 
-# Extract the node sizes
-from .spatial_graph import query_node_attributes
-permuted_idx = query_node_attributes(self.sp_graph, "permuted_idx")
+# Extract sample size for each node
+from feems.spatial_graph import query_node_attributes
+permuted_idx = query_node_attributes(sp_graph, "permuted_idx") 
 obs_perm_ids = permuted_idx[: sp_graph.n_observed_nodes]
-bs_grid = self.grid[obs_perm_ids, :]
+node_positions = grid[obs_perm_ids, :]
 node_sizes = sp_graph.n_samples_per_obs_node_permuted
-
-# Extract the node positions
-node_positions = sp_graph.node_pos
 
 # Create a Point for each node
 from shapely.geometry import Point
 geometry = [Point(pos) for pos in node_positions]
 
 # Create a DataFrame with the node sizes
-import pandas as pd
 df = pd.DataFrame({'size': node_sizes})
 
 # Create a GeoDataFrame with the nodes and sizes
-import geopandas as gpd
 gdf = gpd.GeoDataFrame(df, geometry=geometry)
+
+# Write out shapefile
+gdf.to_file("feems_nodes.shp", layer = "weight")
+
