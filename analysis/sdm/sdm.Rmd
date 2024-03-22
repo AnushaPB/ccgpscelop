@@ -120,7 +120,7 @@ cor_df <-
   bind_rows(.id = "timeperiod") %>% 
   pivot_longer(contains("bio")) %>%
   mutate(timeperiod = factor(timeperiod, levels = names(cor_vals))) %>%
-  mutate(bioclim = gsub("bio_", "", name)) 
+  mutate(bioclim = as.numeric(gsub("bio_", "", name))) 
 
 ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = (value))) +
   geom_tile() +
@@ -302,13 +302,6 @@ ggplot(mega_df2, aes(bio_2, Ho)) +
 ```
 
 
-### Checking BIO1 / variables correlated with bio2 back in time
-```{r}
-
-# check correlation between bio1 and bio2 from the different time periods
-cor(mod_df2[,c("bio_1_dif_lig", "bio_2_dif_lig")], mod_df2[,c("bio_1_dif_lh", "bio_2_dif_lh")])
-```
-
 ### Evaluating variables correlated with bio2
 ```{r}
 wide_df <- 
@@ -459,17 +452,6 @@ ggplot(df, aes(x = observed, y = predicted)) +
   theme_classic()
 ```
 
-```{r}
-```
-
-```{r}
-```
-
-```{r}
-```
-
-```{r}
-```
 ### Testing for effects of population structure
 ```{r}
 source(here("analysis", "admixture", "admixture.R"))
