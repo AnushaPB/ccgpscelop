@@ -11,9 +11,8 @@ source("general_functions.R")
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 ca <- get_ca()
 ```
-```{r}yds	Pleistocene: Younger Dryas Stadial	12.9-11.7 ka	Fordham  et al. 2017
-
-paleovars <- c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
+```{r}
+paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
 # download data
 walk(paleovars, ~ {
   paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env", "paleoclim"))
@@ -30,7 +29,7 @@ paleokey <- data.frame(
 # Print the dataframe
 print(df) 
 # Define the file names and paths
-file_names <- c("LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
+file_names <- c("MIS19_v1_r2_5m.zip", "LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
 file_paths <- file.path(here("data", "env", "paleoclim"), file_names)
 
 # Load and process the data using purrr
@@ -43,15 +42,16 @@ env_list <- purrr::map(file_paths, ~ {
 names(env_list) <- paleovars
 
 # Assign the loaded and processed data to individual variables
-lig <- env_list[[1]]
-lgm <- env_list[[2]]
-hs1 <- env_list[[3]]
-ba <- env_list[[4]]
-yds <- env_list[[5]]
-eh <- env_list[[6]]
-mh <- env_list[[7]]
-lh <- env_list[[8]]
-cur <- env_list[[9]]
+mis19 <- env_list[["mis19"]]
+lig <- env_list[["lig"]]
+lgm <- env_list[["lgm"]]
+hs1 <- env_list[["hs1"]]
+ba <- env_list[["ba"]]
+yds <- env_list[["yds"]]
+eh <- env_list[["eh"]]
+mh <- env_list[["mh"]]
+lh <- env_list[["lh"]]
+cur <- env_list[["cur"]]
 
 # export
 env_stack <- rast(env_list)
@@ -96,6 +96,7 @@ diff_vals <- map(diff_vars, ~ {
   diff <- cur - get(.x)
   return(data.frame(df, extract(diff, df[,c("x", "y")], ID = FALSE)))
 })
+
 env_df_vals <- c(env_df_vals, diff_vals)
 names(env_df_vals) <- c(paleovars, paste0("dif_", diff_vars))
 
@@ -120,19 +121,21 @@ cor_df <-
   bind_rows(.id = "timeperiod") %>% 
   pivot_longer(contains("bio")) %>%
   mutate(timeperiod = factor(timeperiod, levels = names(cor_vals))) %>%
-  mutate(bioclim = gsub("bio_", "", name)) 
+  mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
 
-ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = (value))) +
+pdf("correlation_heatmap.pdf", width = 5, height = 3.75)
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
   geom_tile() +
-  labs(col = "r") +
+  labs(fill = expression(r[Ho])) +
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
   theme_minimal()
 
 ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
   geom_tile() +
   scale_fill_viridis_c(option = "rocket", direction = -1) +
-  labs(fill = "|r|") +
+  labs(fill = expression(r[Ho])) +
   theme_minimal()
+dev.off()
 ```
 
 ```{r}
@@ -213,7 +216,6 @@ map(unique(lm_result$model), ~ {
 pdf("env_sigvars_with_corvars.pdf", width = 20, height = 15)
 walk(plts, print)
 dev.off()
-
 
 plts <-
 map(unique(lm_result$model), ~ {
@@ -302,23 +304,18 @@ ggplot(mega_df2, aes(bio_2, Ho)) +
 ```
 
 
-### Checking BIO1 / variables correlated with bio2 back in time
-```{r}
-
-# check correlation between bio1 and bio2 from the different time periods
-cor(mod_df2[,c("bio_1_dif_lig", "bio_2_dif_lig")], mod_df2[,c("bio_1_dif_lh", "bio_2_dif_lh")])
-```
-
 ### Evaluating variables correlated with bio2
 ```{r}
 wide_df <- 
   mega_df %>% 
+  # drop MI19 because of missing values
+  filter(!grepl("mis19", timeperiod)) %>%
   # note: pivot wider requires rows be uniquely identified (so sampleID is included here)
   select(timeperiod, Ho, SampleID, contains("bio")) %>%
   pivot_wider(names_from = "timeperiod", values_from = contains("bio"))
 
 bio2_cors <- cor(wide_df %>% select(contains("bio")), use = "complete.obs")[,"bio_2_dif_lh"]
-bio2_cors <- names(bio2_cors[abs(bio2_cors) > 0.6])
+bio2_cors_names <- names(bio2_cors[abs(bio2_cors) > 0.6])
 #bio1 - mean annual temperature
 #bio6 - min temperature of coldest month (bio6)
 #bio5 - max temperature of warmest month (bio5)
@@ -329,7 +326,7 @@ bio2_cors <- names(bio2_cors[abs(bio2_cors) > 0.6])
 
 gg_df <- 
   wide_df %>% 
-  pivot_longer(all_of(bio2_cors)) %>%
+  pivot_longer(all_of(bio2_cors_names)) %>%
   left_join(get_coords())
 
 plt1 <- ggplot(gg_df, aes(value, Ho)) +
@@ -372,6 +369,72 @@ print(plt3)
 dev.off()
 ```
 
+### evaluation all diff_vals
+```{r}
+# Calculate the difference between all unique combinations of env_list
+coords <- get_coords()
+combos <- data.frame(t(combn(names(env_list), 2)))
+dif_vals <- map2(combos[,1], combos[,2], ~{
+  diff <- env_list[[.x]] - env_list[[.y]]
+  names(diff) <- unique(c(names(env_list[[.x]]), names(env_list[[.y]])))
+  vals <- extract(diff, coords[,c("x", "y")], ID = FALSE)
+  df <- data.frame(vals, comparison = paste0(.x, "_", .y), SampleID = coords$SampleID)
+  return(df)
+}) %>% bind_rows()
+
+dif_ls <- left_join(dif_vals, get_het()) %>% group_by(comparison) %>% group_split()
+dif_vals <- left_join(dif_vals, get_het()) %>% pivot_longer(contains("bio"), names_to = "bioclim")
+cor_vals <- 
+  map(dif_ls, ~ {
+    cordf <- .x %>% select(Ho, contains("bio")) %>% drop_na(Ho)
+    res <- cor(cordf, use = "complete.obs")["Ho", -1]
+  }) 
+names(cor_vals) <- unique(dif_vals$comparison)
+
+cor_df <- 
+  cor_vals %>% 
+  bind_rows(.id = "timeperiod") %>% 
+  pivot_longer(contains("bio")) %>%
+  mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
+
+# WARNING I THINK LABELS OF TIMEPERIODS/BIOCLIMS ARE OFF FIX THIS
+pdf("all_comparisons.pdf", width = 13, height = 10)
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
+  geom_tile() +
+  labs(fill = expression(r[Ho])) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "rocket", direction = -1) +
+  labs(fill = expression(r[Ho])) +
+  theme_minimal()
+dev.off()
+```
+
+### evaluation variance
+```{r}
+var_df <- 
+  mega_df %>%
+  group_by(SampleID) %>%
+  mutate(across(contains("bio"), ~ var(., na.rm =TRUE))) %>%
+  pivot_longer(contains("bio"))
+
+pdf("var.pdf", width = 13, height = 10)
+ggplot(var_df, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
+  stat_cor(label.y = 0) +
+  theme_classic() +
+  xlab("value")
+dev.off()
+```
 ### big lazy model
 ```{r}
 no_na_df <- wide_df %>% drop_na(contains("bio"), Ho)
@@ -389,42 +452,23 @@ all_cors <- cor(no_na_df %>% select(contains("bio")))
 ```
 
 ```{r}
+# get all cors and get absolute value (has to be absolute for clustering!)
 all_cors <- abs(cor(select(no_na_df, contains("bio"))))
 
-groups <- map(1:ncol(all_cors), ~{
-  strong_cor <- all_cors[, .x] > 0.6
-  names(which(strong_cor))
-  })
+# Convert the correlation matrix to a distance matrix (1 - |correlation|)
+dist_matrix <- as.dist(1 - all_cors)
 
-# Function to recursively combine groups with common elements
-combine_groups <- function(groups) {
-  has_intersection <- function(lst, i) {
-    sapply(lst, function(x) length(intersect(x, lst[[i]])) > 0)
-  }
-  
-  for (i in seq_along(groups)) {
-    # Find groups that intersect with the current group
-    intersecting_indices <- which(has_intersection(groups, i))
-    
-    if (length(intersecting_indices) > 1) {
-      # Combine intersecting groups
-      combined_group <- unique(unlist(groups[intersecting_indices]))
-      
-      # Remove the intersecting groups and add the combined group
-      groups <- groups[-intersecting_indices]
-      groups <- c(groups, list(combined_group))
-      
-      # Recurse, as the list structure has changed
-      return(combine_groups(groups))
-    }
-  }
-  
-  return(groups)
-}
+# Perform hierarchical clustering using the distance matrix
+hc <- hclust(dist_matrix)
 
-# Combine the groups based on intersections
-combined_groups <- combine_groups(groups)
+# Cut the dendrogram to create clusters, using a height that corresponds to the correlation threshold
+# The height for cutting is 1 - threshold because the distance is 1 - correlation
+clusters <- cutree(hc, h = 1 - 0.6)
 
+# Group the variable names based on the clustering result
+grouped_vars <- split(names(clusters), clusters)
+
+# Get the var from each group with the strongest correlation with Ho
 selected_vars <- 
 map_chr(combined_groups, ~ {
   if (length(.x) == 1) return(.x)
@@ -435,18 +479,19 @@ map_chr(combined_groups, ~ {
   return(var)
 }) %>% as.vector()
 
+
+# check that all cors are below 0.6
 check_df <- select(no_na_df, all_of(selected_vars))
 check_cor <- cor(check_df, use = "complete.obs")
 diag(check_cor) <- 0
 all(abs(check_cor) < 0.6)
 
+# run model
 mod_df_no_cor <- no_na_df %>% select(all_of(selected_vars), Ho)
 mod <- lm(Ho ~ ., data = mod_df_no_cor)
 summary(mod)
 
-
 df <- data.frame(predicted = mod$fitted.values, observed = mod_df_no_cor$Ho)
-names(mod)
 
 ggplot(df, aes(x = observed, y = predicted)) +
   geom_point() +
@@ -457,19 +502,9 @@ ggplot(df, aes(x = observed, y = predicted)) +
   ) +
   stat_cor(label.y = 0) +
   theme_classic()
-```
 
-```{r}
-```
 
-```{r}
-```
 
-```{r}
-```
-
-```{r}
-```
 ### Testing for effects of population structure
 ```{r}
 source(here("analysis", "admixture", "admixture.R"))
@@ -550,6 +585,24 @@ ggplot(mod_df, aes(bio_2, Ho)) +
 
 #bio5 (max temperature of warmest month)
 #bio6 (min temperature of coldest month)
+```
+
+### Testing for current environment effects
+```{r}
+
+df <-
+ mega_df %>% 
+ filter(timeperiod %in% c("dif_lh", "cur"))%>% 
+ select("Ho", "bio_2", "timeperiod", "SampleID") %>% 
+ pivot_wider(names_from = timeperiod, values_from = bio_2) %>% 
+ drop_na()
+
+summary(lm(Ho ~ cur + dif_lh, data = df))
+```
+
+### Looking at change over time
+```{r}
+ggplot()
 ```
 
 # SDM (IGNORE IMCOMPLETE)
