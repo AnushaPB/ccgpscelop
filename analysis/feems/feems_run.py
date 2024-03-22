@@ -12,7 +12,7 @@ import cartopy.crs as ccrs
 
 # feems
 from feems.utils import prepare_graph_inputs
-#from analysis.feems.feems_run import SpatialGraph, Viz
+from feems import SpatialGraph, Viz
 import pandas as pd
 
 # grid
@@ -40,19 +40,24 @@ print("n_samples={}, n_snps={}".format(genotypes.shape[0], genotypes.shape[1]))
 
 # setup graph
 # Read the coordinates from the CSV file
-# Read the coordinates from the CSV file
 coords_df = pd.read_csv("../../data/58-Sceloporus.coords.txt", delimiter="\t", header=None)
 # Filter coords_df by SampleID using ids from the plink file
 sample_ids = fam.iid.tolist()
 filtered_coords_df = coords_df[coords_df[0].isin(sample_ids)]
 # Extract the x and y columns from the filtered coords_df
 coord = filtered_coords_df.iloc[:, [1, 2]]
+# convert to numpy array
+coord = coord.values
+
+# setup graph
+coordd = np.loadtxt("{}/wolvesadmix.coord".format(data_path))  # sample coordinates
+outerd = np.loadtxt("{}/wolvesadmix.outer".format(data_path)) 
 
 # Calculate the outer coordinates by getting the minimum and maximum values from coord
-min_x = np.min(coord.values[:, 0])
-max_x = np.max(coord.values[:, 0])
-min_y = np.min(coord.values[:, 1])
-max_y = np.max(coord.values[:, 1])
+min_x = np.min(coord[:, 0])
+max_x = np.max(coord[:, 0])
+min_y = np.min(coord[:, 1])
+max_y = np.max(coord[:, 1])
 
 # Add a small buffer to the outer coordinates
 buffer = 0.01  # Adjust the buffer size as needed
@@ -61,37 +66,12 @@ outer = np.array([[min_x - buffer, min_y - buffer],
           [max_x + buffer, max_y + buffer],
           [max_x + buffer, min_y - buffer]])
 
-# function to create a triangular grid
-def create_triangular_grid(minx, miny, maxx, maxy, triangle_height):
-    grid = []
-    triangle_width = triangle_height * np.sqrt(3) / 2
-
-    # Generate coordinates for the triangular grid
-    y_start = miny
-    row_count = 0
-    while y_start < maxy:
-        x_start = minx if row_count % 2 == 0 else minx + triangle_width / 2
-        while x_start < maxx:
-            triangle = Polygon([
-                (x_start, y_start),
-                (x_start + triangle_width, y_start),
-                (x_start + triangle_width / 2, y_start + triangle_height if row_count % 2 == 0 else y_start - triangle_height),
-            ])
-            grid.append(triangle)
-            x_start += triangle_width
-        y_start += triangle_height * 0.5
-        row_count += 1
-
-    return gpd.GeoDataFrame(geometry=grid)
-
-# Create the grid and plot it
-triangle_height = 1  # The height of each triangle
-tri_grid = create_triangular_grid(min_x, min_y, max_x, max_y, triangle_height)
-tri_grid.plot()
-plt.show()
-
 # Continue with the rest of the code
-grid_path = "{}/grid_100.shp".format(data_path)  # path to discrete global grid
+grid_pathd = "{}/grid_100.shp".format(data_path)  # path to discrete global grid
+grid_path = "triangle_res8.shp"
+
+# Load the shapefile
+#gdf = gpd.read_file(grid_path)
 
 # graph input files
 outer, edges, grid, _ = prepare_graph_inputs(coord=coord, 
@@ -115,3 +95,63 @@ v.draw_map()
 v.draw_samples()
 v.draw_edges(use_weights=False)
 v.draw_obs_nodes(use_ids=False)
+
+# fit
+sp_graph.fit(lamb = 20.0)
+
+
+fig = plt.figure(dpi=300)
+ax = fig.add_subplot(1, 1, 1, projection=projection)  
+v = Viz(ax, sp_graph, projection=projection, edge_width=.5, 
+  edge_alpha=1, edge_zorder=100, sample_pt_size=20, 
+  obs_node_size=7.5, sample_pt_color="black", 
+  cbar_font_size=10)
+v.draw_map()
+v.draw_edges(use_weights=True)
+v.draw_obs_nodes(use_ids=False) 
+v.draw_edge_colorbar()
+
+# Save the figure
+plt.savefig('feems.png')
+
+# If you want to show the plot as well, uncomment the next line
+# plt.show()
+
+# export
+weights = sp_graph.w
+edges = sp_graph.edges
+
+# Create a LineString for each edge
+from shapely.geometry import LineString
+
+geometry = [LineString([sp_graph.node_pos[edge[0]], sp_graph.node_pos[edge[1]]]) for edge in edges]
+
+# Create a DataFrame with the weights
+df = pd.DataFrame(weights, columns=['weight'])
+
+# Create a GeoDataFrame with the edges and weights
+gdf = gpd.GeoDataFrame(df, geometry=geometry)
+
+gdf.to_file("feems.shp", layer = "weight")
+
+# Extract the node sizes
+from .spatial_graph import query_node_attributes
+permuted_idx = query_node_attributes(self.sp_graph, "permuted_idx")
+obs_perm_ids = permuted_idx[: sp_graph.n_observed_nodes]
+bs_grid = self.grid[obs_perm_ids, :]
+node_sizes = sp_graph.n_samples_per_obs_node_permuted
+
+# Extract the node positions
+node_positions = sp_graph.node_pos
+
+# Create a Point for each node
+from shapely.geometry import Point
+geometry = [Point(pos) for pos in node_positions]
+
+# Create a DataFrame with the node sizes
+import pandas as pd
+df = pd.DataFrame({'size': node_sizes})
+
+# Create a GeoDataFrame with the nodes and sizes
+import geopandas as gpd
+gdf = gpd.GeoDataFrame(df, geometry=geometry)
