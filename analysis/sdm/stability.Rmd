@@ -1,0 +1,55 @@
+
+```{r}
+library("rpaleoclim")
+library("here")
+library("tidyverse")
+library("ggpubr")
+library("terra")
+library("sf")
+library("gridExtra")
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+ca <- get_ca()
+```
+
+Original paper: 
+Herrando-Moraira, S., Nualart, N., Galbany-Casals, M. et al. Climate Stability Index maps, a global high resolution cartography of climate stability from Pliocene to 2100. Sci Data 9, 48 (2022). https://doi.org/10.1038/s41597-022-01144-5
+
+Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do contain other variables correlated with those variables
+
+```{r}
+files <- list.files(here("data", "env", "stability", "Layers", "future"), full.names = TRUE, pattern = "csi*")
+csi_future <- rast(map(files, rast))
+csi_future <- crop(csi_future, ca)
+csi_future <- mask(csi_future, ca)
+plot(csi_future)
+
+het <- get_het()
+coords <- get_coords(sf = TRUE) %>% left_join(het)
+csi_vals <- extract(csi_future, coords, ID = FALSE)
+df <- 
+  data.frame(csi_vals, coords) %>% 
+  pivot_longer(starts_with("csi"), names_to = "future_model", values_to = "csi") %>%
+  mutate(model_name = case_when(
+    future_model == "csi_future_ssp126" ~ "SSP 1-2.6",
+    future_model == "csi_future_ssp245" ~ "SSP 2-4.5",
+    future_model == "csi_future_ssp370" ~ "SSP 3-7.0",
+    future_model == "csi_future_ssp585" ~ "SSP 5-8.5"
+  ))
+
+ggplot(df, aes(x = csi, y = Ho)) +
+  geom_point() +
+  facet_wrap(~model_name, scales = "free", nrow = 1) +
+  stat_regline_equation(
+    aes(label = paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  xlab("Climate Stability Index (Degree of future fluctuations)")
+```
+
+Climate scenarios:
+![Figure](https://media.springernature.com/lw685/springer-static/image/art%3A10.1038%2Fs41597-022-01144-5/MediaObjects/41597_2022_1144_Fig1_HTML.png?as=webp)
