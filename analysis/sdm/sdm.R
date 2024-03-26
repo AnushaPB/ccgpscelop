@@ -1,3 +1,4 @@
+
 #' Create an SDM using BIOMOD
 #'
 #' @param coordinates coordinates of species occurrence
