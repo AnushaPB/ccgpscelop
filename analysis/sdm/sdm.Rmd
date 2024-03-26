@@ -42,16 +42,7 @@ env_list <- purrr::map(file_paths, ~ {
 names(env_list) <- paleovars
 
 # Assign the loaded and processed data to individual variables
-mis19 <- env_list[["mis19"]]
-lig <- env_list[["lig"]]
-lgm <- env_list[["lgm"]]
-hs1 <- env_list[["hs1"]]
-ba <- env_list[["ba"]]
-yds <- env_list[["yds"]]
-eh <- env_list[["eh"]]
-mh <- env_list[["mh"]]
-lh <- env_list[["lh"]]
-cur <- env_list[["cur"]]
+list2env(env_list, envir = .GlobalEnv)
 
 # export
 env_stack <- rast(env_list)
@@ -369,7 +360,7 @@ print(plt3)
 dev.off()
 ```
 
-### evaluation all diff_vals
+### Evaluationg all diff_vals
 ```{r}
 # Calculate the difference between all unique combinations of env_list
 coords <- get_coords()
@@ -413,7 +404,7 @@ ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
 dev.off()
 ```
 
-### evaluation variance
+### Evaluating variance
 ```{r}
 var_df <- 
   mega_df %>%
@@ -502,8 +493,7 @@ ggplot(df, aes(x = observed, y = predicted)) +
   ) +
   stat_cor(label.y = 0) +
   theme_classic()
-
-
+```
 
 ### Testing for effects of population structure
 ```{r}
@@ -600,9 +590,41 @@ df <-
 summary(lm(Ho ~ cur + dif_lh, data = df))
 ```
 
+
 ### Looking at change over time
 ```{r}
-ggplot()
+names(mega_df)
+paleokey_split <- 
+  paleokey %>%
+  mutate(time = 
+    case_when(
+      period == "Current" ~ "1.979-2.013 ka", 
+      .default = time
+      )
+    ) %>%
+  separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
+  mutate(across(c(start_time, end_time), ~ case_when(
+    str_detect(.x, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
+    str_detect(.x, "Ma") ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
+    TRUE ~ as.numeric(.x)
+  )))
+
+change_df <- 
+  mega_df %>%
+  left_join(paleokey_split, by = c("timeperiod" ="id")) %>%
+  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") 
+
+mean_change <-
+  change_df %>%
+  group_by(time) %>% summarize(bio_2 = mean(bio_2, na.rm =TRUE))
+
+ggplot() +
+  geom_line(data = change_df, aes(x = time, y = bio_2, group = SampleID, col = "Samples"), alpha = 0.3) +
+  geom_line(data = mean_change, aes(x = time, y = bio_2, col = "Mean"), lwd = 2) +
+  scale_color_manual(values = c("#007c8f", "darkgray")) + 
+  labs(col = "") +
+  scale_x_log10()  +
+  theme_classic()
 ```
 
 # SDM (IGNORE IMCOMPLETE)
