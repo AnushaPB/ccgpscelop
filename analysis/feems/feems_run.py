@@ -117,8 +117,7 @@ plt.savefig('feems.png')
 # If you want to show the plot as well, uncomment the next line
 # plt.show()
 
-# EXPORT
-
+#--------------------------------
 # Export edges
 weights = sp_graph.w
 edges = sp_graph.edges
@@ -145,6 +144,7 @@ node_sizes = sp_graph.n_samples_per_obs_node_permuted
 
 # Create a Point for each node
 from shapely.geometry import Point
+import networkx as nx
 geometry = [Point(pos) for pos in node_positions]
 
 # Create a DataFrame with the node sizes
