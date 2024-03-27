@@ -1,4 +1,9 @@
-
+---
+title: "SDM"
+output:
+  github_document:
+    toc: TRUE
+---
 ```{r}
 library("rpaleoclim")
 library("here")

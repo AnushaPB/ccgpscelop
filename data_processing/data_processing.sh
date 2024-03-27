@@ -1,3 +1,4 @@
+# run in 58-Sceloporus directory
 #conda env create -f ccgpscelop.yml
 source activate ccgpscelop
 
@@ -40,7 +41,6 @@ bgzip -c 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf > 58-Scel
 # count number of SNPs 
 zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz #16,287,843
 
-
 # LINKAGE PRUNING -------------------------------------------------------------------------
 # Run linkage pruning
 # window size = 50
@@ -57,6 +57,9 @@ bcftools view -i 'ID=@58-Sceloporus_r60.prune.in' -O z -o 58-Sceloporus_maf05_mi
 
 # check number of variants
 zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz  #7,874,541/16,287,843 variants removed = 8,413,302 remaining
+
+# create plink files (used for FEEMS)
+plink2 --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz --make-bed --out 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60 --allow-extra-chr --autosome-num 95 --const-fid
 
 # CALCULATE GENETIC DISTANCE -------------------------------------------------------------------------
 # using plink 1.9
@@ -78,3 +81,17 @@ tabix -p vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.g
 
 # filter out that contig
 bcftools view -r JALMGF010000001.1 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz > 58-Sceloporus_JALMGF010000001.1.vcf.gz
+
+
+# COUNT NUMBER OF SITES ------------------------------------
+#download callable sites
+#rsync -avP hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus/58-Sceloporus_callable_sites.bed 58-Sceloporus
+
+# count snps
+zgrep -vc "^#" 58-Sceloporus_clean_snps.vcf.gz > 58-Sceloporus_allsnps_nsites.txt
+
+# count snps postfilters
+zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz > 58-Sceloporus_postfiltersnps_nsites.txt
+
+# count number of callable sites 
+python ../data_processing/count_callable.py

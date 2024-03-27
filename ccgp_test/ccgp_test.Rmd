@@ -48,7 +48,8 @@ df <-
 
 ```
 
-# Get paleoclim data
+# Paleoclim
+## Get paleoclim data
 ```{r}
 paleovars <- c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
 # download data
@@ -88,7 +89,7 @@ ggplot(env_stack_vals) +
   geom_point(aes(x = lgm_16, y = Ho, col = project))
 ```
 
-# running linear models
+## running linear models
 ```{r}
 # use data list to get vars 
 env_df_vals <- map(env_list, ~ data.frame(df, extract(.x, df[,c("x", "y")], ID = FALSE)))
@@ -131,25 +132,6 @@ ggplot(bio7, aes(x = timeperiod, y = project, fill = abs(r))) +
 ```
 
 ```{r}
-
-keep_strongest_correlation <- function(x, threshold) {
-  # Calculate the correlation matrix
-  cor_matrix <- cor(x, use = "complete.obs")
-  
-  # Identify sets of correlated variables
-  correlated_sets <- caret::findCorrelation(cor_matrix, cutoff = threshold, names = TRUE, verbose = FALSE)
-
-  # For each set of correlated variables, keep only the variable with the strongest correlation with Ho
-  x <- map(correlated_sets, function(set) {
-    correlations_with_Ho <- sapply(set, function(var) cor(x$Ho, x[[var]], use = "complete.obs"))
-    strongest_correlation <- which.max(abs(correlations_with_Ho))
-    set <- set[-strongest_correlation]
-    x <- x[, !names(x) %in% set]
-    return(x)
-  }) %>% reduce(intersect)
-
-  return(x)
-}
 
 run_lm <- function(project, timeperiod, env_df_vals){
   # subset df
@@ -211,7 +193,7 @@ sigvars <-
   distinct() %>% 
   filter(`Pr...t..` < 0.05) %>% 
   arrange(desc(adj_rsqr)) %>%
-  filter(adj_rsqr > 0.3 & r > 0.6) 
+  filter(adj_rsqr > 0.3 & abs(r) > 0.5) 
 
 sigvars %>% group_by(timeperiod, var) %>% count() %>% arrange(desc(n)) %>% head()
 sigvars %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
@@ -219,63 +201,143 @@ sigvars %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
 ```
 
 ```{r}
+
+combos <- sigvars %>% select(var, project, timeperiod) %>% distinct()
 plts <-
-map(unique(sigvars$timeperiod), ~ {
-  sig_df <-
-   lm_df %>% 
-   filter(timeperiod == .x) %>%
-   filter(`Pr...t..` < 0.05, r > 0.6, adj_rsqr > 0.3)
+map(1:nrow(combos), ~ {
+  sig_df <- left_join(combos[.x,], sigvars)
 
   sig_env_df <- 
-    env_df_vals[[.x]] %>% 
+    env_df_vals[[sig_df$timeperiod]] %>% 
     pivot_longer(contains("bio"), names_to = "var") %>%
-    filter(project %in% sig_df$project)
+    filter(project %in% sig_df$project) %>%
+    filter(var == sig_df$var)
 
-  title <- paste0(.x, " (adj R^2 = ", round(mean(sig_df$adj_rsqr, na.rm = TRUE), 2), ")" )
+  title <- paste(sig_df$project, "|", sig_df$timeperiod)
 
   if (nrow(sig_env_df) == 0) return(NULL)
+
   plt <-
-  ggplot(sig_env_df, aes(value, Ho)) +
-    geom_point(alpha = 0.7, aes(col = project)) +
-    facet_wrap(~var, scales = "free") +
-    stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-    geom_smooth(method = "lm") +
-    stat_cor(label.y = 0) +
-    theme_classic() +
-    ggtitle(title)
+    ggplot(sig_env_df, aes(value, Ho)) +
+      geom_point(alpha = 0.7) +
+      facet_wrap(~var, scales = "free") +
+      stat_regline_equation(
+        aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+        formula = y ~ x
+      ) +
+      geom_smooth(method = "lm") +
+      stat_cor(label.y = min(sig_env_df$Ho, na.rm = TRUE)) +
+      theme_classic() +
+      ggtitle(title)
 
   plt
 })
 
-pdf("env_sigvars_with_corvars.pdf", width = 20, height = 15)
+pdf(here("ccgp_test", "ccgp_test.pdf"), width = 5, height = 5)
 walk(plts, print)
 dev.off()
 
 
-plts <-
-map(unique(lm_result$model), ~ {
-  sig_df <- lm_result %>% filter(model == .x) %>% filter(`Pr...t..` < 0.05)
-  sig_env_df <- env_df_vals[[.x]] %>% pivot_longer(contains("bio"), names_to = "var") %>% filter(var %in% unique(sig_df$var))
-  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+dif_lh <- env_df_vals[["dif_lh"]]
 
-  if (nrow(sig_env_df) == 0) return(NULL)
-  plt <-
-  ggplot(sig_env_df, aes(value, Ho)) +
-    geom_point(alpha = 0.7) +
-    facet_wrap(~var, scales = "free", nrow = 1) +
+pdf(here("ccgp_test", "bio2_test.pdf"), width = 20, height = 20)
+ggplot(dif_lh, aes(bio_2, Ho)) +
+      geom_point(alpha = 0.7) +
+      facet_wrap(~project, scales = "free") +
+      #stat_regline_equation(
+      #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      #  formula = y ~ x
+      #) +
+      geom_smooth(method = "lm") +
+      stat_cor() +
+      theme_classic() +
+      ggtitle(title)
+dev.off()
+
+
+dif <- env_df_vals %>% bind_rows(.id = "timeperiod") %>% filter(project %in% filter(sigvars, adj_rsqr > 0.4 & `Pr...t..` < 0.05 & abs(r) > 0.5)$project)
+
+pdf(here("ccgp_test", "bio2_test.pdf"), width = 40, height = 40)
+ggplot(dif, aes(bio_2, Ho)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~project+timeperiod, scales = "free") +
+      #stat_regline_equation(
+      #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      #  formula = y ~ x
+      #) +
+      geom_smooth(method = "lm") +
+      stat_cor() +
+      theme_classic() 
+dev.off()
+```
+
+# Stability
+```{r}
+csi <- rast(here("data", "env", "stability", "csi.tif"))
+
+csi_vals <- extract(csi, df[,c("x", "y")], ID = FALSE)
+
+csi_df <- data.frame(csi_vals, df)
+
+names(csi_df)
+```
+
+
+```{r}
+# check for strong correlations
+possibly_cor <- possibly(cor, NA)
+result <- 
+  csi_df %>%
+  group_by(project) %>%
+  summarise(across(c("Past", starts_with("SSP")), ~possibly_cor(Ho, ., use = "complete.obs"))) %>% 
+  pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "r") 
+
+ggplot(result, aes(x = model, y = project, fill = r)) +
+  geom_tile() +
+    labs(col = "r") +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+ggplot(result, aes(x = model, y = project, fill = abs(r))) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "rocket", direction = -1) +
+  labs(fill = "|r|") +
+  theme_minimal()
+```
+
+```{r}
+csi_long <- csi_df %>% pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "csi")
+csi_ls <- csi_long %>% group_by(project) %>% group_split()
+
+plts <- map(csi_ls, ~{
+  if (all(is.na(.x$csi))) return(NULL)
+  ggplot(.x, aes(x = csi, y = Ho)) +
+    geom_point() +
+    facet_wrap(~model, scales = "free", nrow = 1) +
     stat_regline_equation(
       aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
       formula = y ~ x
     ) +
     geom_smooth(method = "lm") +
-    stat_cor(label.y = 0) +
+    stat_cor(label.y = min(.x$Ho, na.rm = TRUE)) +
     theme_classic() +
-    ggtitle(title)
+    xlab("Climate Stability Index (Degree of Past Climate Fluctuations)") +
+    ggtitle(unique(.x$project))
+}) %>% compact()
 
-  plt
-})
+pdf(here("ccgp_test", "csi_test.pdf"), width = 20, height = 5)
+walk(plts, print)
+dev.off()
 
+ggplot(csi_long, aes(x = csi, y = Ho)) +
+  geom_point(alpha = 0.5, cex = 0.5, col = "gray") +
+  stat_regline_equation(
+    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~model, scales = "free", nrow = 1) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = min(csi_long$Ho, na.rm = TRUE)) +
+  theme_classic() +
+  xlab("Climate Stability Index (Degree of Past Climate Fluctuations)")
 ```

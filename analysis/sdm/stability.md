@@ -1,47 +1,22 @@
----
-title: "Climate Stability"
-output:
-  github_document:
-    toc: TRUE
----
-```{r, include = FALSE}
-# Set global options for caching
-knitr::opts_chunk$set(
-  cache = FALSE,
-  echo = TRUE,
-  message = FALSE,
-  warning = FALSE,
-  result = FALSE
-)
+Climate Stability
+================
 
-library("rpaleoclim")
-library("here")
-library("tidyverse")
-library("ggpubr")
-library("terra")
-library("sf")
-library("gridExtra")
-library("tmap")
+Original paper: Herrando-Moraira, S., Nualart, N., Galbany-Casals, M. et
+al. Climate Stability Index maps, a global high resolution cartography
+of climate stability from Pliocene to 2100. Sci Data 9, 48 (2022).
+<https://doi.org/10.1038/s41597-022-01144-5>
 
-source(here("general_functions.R"))
-source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do
+contain other variables correlated with those variables
 
-ca <- get_ca()
-```
-
-Original paper: 
-Herrando-Moraira, S., Nualart, N., Galbany-Casals, M. et al. Climate Stability Index maps, a global high resolution cartography of climate stability from Pliocene to 2100. Sci Data 9, 48 (2022). https://doi.org/10.1038/s41597-022-01144-5
-
-Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do contain other variables correlated with those variables
-
-
-```{r}
+``` r
 # get coords and genetic diversity data
 het <- get_het()
 roh <- get_roh()
 coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
 ```
-```{r, fig.width = 10, fig.height = 2.5}
+
+``` r
 csi_past <- rast(here("data", "env", "stability", "Layers", "past", "csi_past.tif"))
 csi_past <- crop(csi_past, ca)
 csi_past <- mask(csi_past, ca)
@@ -53,7 +28,6 @@ csi_future <- mask(csi_future, ca)
 
 csi_stack <- c(csi_past, csi_future)
 names(csi_stack) <- c("Past",  "SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
-writeRaster(csi_stack, here("data", "env", "stability", "csi.tif"))
 csi_df <- terra::as.data.frame(csi_stack, xy = TRUE) %>% pivot_longer(-c(x, y), names_to = "model", values_to = "CSI")
 
 ggplot(csi_df) +
@@ -62,7 +36,11 @@ ggplot(csi_df) +
   scale_fill_viridis_c(option = "magma", na.value = NA) + 
   facet_wrap(~model, nrow = 1) +
   theme_void() 
+```
 
+![](stability_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
+
+``` r
 value_range <- range(csi_df$CSI, na.rm = TRUE)
 breaks <- seq(from = value_range[1], to = value_range[2], length.out = 11) # 10 breaks create 11 points
 ggplot(csi_df) +
@@ -73,7 +51,9 @@ ggplot(csi_df) +
   theme_void() 
 ```
 
-```{r, fig.height = 4, fig.width = 4.5}
+![](stability_files/figure-gfm/unnamed-chunk-3-2.png)<!-- -->
+
+``` r
 csi_vals <- extract(csi_past, coords, ID = FALSE)
 df_past <- data.frame(csi_past = csi_vals[,1], coords)
 
@@ -89,7 +69,9 @@ ggplot(df_past, aes(x = csi_past, y = Ho)) +
   xlab("Climate Stability Index (Degree of Past Climate Fluctuations)")
 ```
 
-```{r, fig.height = 4, fig.width = 16}
+![](stability_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
+
+``` r
 csi_vals <- extract(csi_future, coords, ID = FALSE)
 df_future <- 
   data.frame(csi_vals, coords) %>% 
@@ -113,7 +95,11 @@ ggplot(df_future, aes(x = csi, y = Ho)) +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
   xlab("Climate Stability Index (Degree of future fluctuations)")
+```
 
+![](stability_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
+
+``` r
 ggplot(df_future, aes(x = csi, y = log(froh0 + 1))) +
   geom_point() +
   facet_wrap(~model_name, scales = "free", nrow = 1) +
@@ -126,7 +112,6 @@ ggplot(df_future, aes(x = csi, y = log(froh0 + 1))) +
   theme_bw() +
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
   xlab("Climate Stability Index (Degree of future fluctuations)")
-
 ```
 
-
+![](stability_files/figure-gfm/unnamed-chunk-5-2.png)<!-- -->
