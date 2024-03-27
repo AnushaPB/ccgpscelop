@@ -1,6 +1,7 @@
 
 
-genome download:
+### genome download
+
 ```bash
 # download genome from ncbi
 curl -L -o genome.zip "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_023333645.1/download?include_annotation_type=GENOME_FASTA"
@@ -10,3 +11,13 @@ rm genome.zip
 # index genome
 samtools faidx ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna 
 ```
+
+### paper dump
+- Glaciation/Artemisiospiza: https://academic.oup.com/biolinnean/article/107/2/332/2701497 
+- Glaciation/Microtus: https://onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-294x.2000.00846.x 
+  - "Previously glaciated regions of North America are occupied by organisms that have colonized since the Pleistocene. These populations characteristically have reduced levels of genetic variation when compared with southerly conspecific populations ( Sage & Wolff 1986; Hayes & Harrison 1992; Meriläet al. 1997 ; Soltis et al. 1997 )."
+  - From references
+    - **Sage RD & Wolff JO (1986) Pleistocene glaciations, fluctuating ranges, and low genetic variability in a large mammal (Ovis dalli) . Evolution, 40, 1092 1095.**
+    - Hayes JP & Harrison RG (1992) Variation in mitochondrial DNA and the biogeographic history of woodrats (Neotoma) of the eastern United States . Systematic Biology, 41, 331 344.
+    - Merilä J, Björkland M, Baker AJ (1997) Historical demography and present day population structure of the greenfinch, Carduelis chloris — an analysis of mtDNA control-region sequences . Evolution, 51, 946 956.
+    - Soltis DE, Gitzendanner MA, Strenge DD, Soltis PS (1997) Chloroplast DNA intraspecific phylogeography of plants from the Pacific Northwest of North America. Plant Systematics and Evolution, 206, 353 373.
