@@ -10,6 +10,8 @@ output:
 library(tidyverse)
 library(here)
 library(algatr)
+library(terra)
+library(sf)
 source(here("general_functions.R"))
 source(here("analysis", "ibdibe", "gendist.R"))
 
@@ -122,7 +124,7 @@ print(gdm_lh$coeff_df)
 
 # MMRR
 ```{r}
-mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = CA_env, quiet = FALSE)
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = envstack, quiet = FALSE)
 
 print(mmrr$coeff_df)
 ```

@@ -21,3 +21,5 @@ samtools faidx ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_ge
     - Hayes JP & Harrison RG (1992) Variation in mitochondrial DNA and the biogeographic history of woodrats (Neotoma) of the eastern United States . Systematic Biology, 41, 331 344.
     - Merilä J, Björkland M, Baker AJ (1997) Historical demography and present day population structure of the greenfinch, Carduelis chloris — an analysis of mtDNA control-region sequences . Evolution, 51, 946 956.
     - Soltis DE, Gitzendanner MA, Strenge DD, Soltis PS (1997) Chloroplast DNA intraspecific phylogeography of plants from the Pacific Northwest of North America. Plant Systematics and Evolution, 206, 353 373.
+    - https://academic.oup.com/mbe/article/41/3/msae027/7601512?login=true
+    - https://www.nature.com/articles/s41597-020-0552-1

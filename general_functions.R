@@ -1,4 +1,4 @@
-get_ca <- function(){
+get_ca <- function() {
   # Load the U.S. state boundaries data
   states <- tigris::states(cb = TRUE)
   # Extract the boundary of California (CA)
@@ -7,17 +7,17 @@ get_ca <- function(){
   return(ca)
 }
 
-get_coords <- function(sf = FALSE){
+get_coords <- function(sf = FALSE) {
   # sample coords
   coords <- read_table(here("data/58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
-  if (sf){
+  if (sf) {
     coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326)
   }
   return(coords)
 }
 
-get_dem <- function(r = FALSE){
+get_dem <- function(r = FALSE) {
   coords <- get_coords(sf = TRUE)
   ca <- get_ca()
   dem <- elevatr::get_elev_raster(coords, z = 5)
@@ -29,6 +29,6 @@ get_dem <- function(r = FALSE){
   return(dem)
 }
 
-get_env <- function(){
+get_env <- function() {
   read_csv(here("data", "env", "envdata.csv"))
 }
