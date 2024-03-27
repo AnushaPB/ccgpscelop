@@ -17,12 +17,13 @@ get_coords <- function(sf = FALSE){
   return(coords)
 }
 
-get_dem <- function(){
+get_dem <- function(r = FALSE){
   coords <- get_coords(sf = TRUE)
   ca <- get_ca()
   dem <- elevatr::get_elev_raster(coords, z = 5)
   dem <- mask(dem, ca)
   dem <- crop(dem, ca)
+  if (r) return(dem)
   dem <- as.data.frame(dem, xy = TRUE)
   colnames(dem) <- c("x", "y", "elev")
   return(dem)
