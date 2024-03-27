@@ -7,47 +7,17 @@ library("ggpubr")
 library("terra")
 library("sf")
 library("gridExtra")
+library("rpaleoclim")
 source("general_functions.R")
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 ca <- get_ca()
 ```
 ```{r}
-paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
-# download data
-walk(paleovars, ~ {
-  paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env", "paleoclim"))
-})
-
-# Create a key with layer information
-paleokey <- data.frame(
-  id = c("cur", "lh", "mh", "eh", "yds", "ba", "hs1", "lgm", "lig", "mis19", "mpwp", "m2"),
-  period = c("Current", "Late Holocene: Meghalayan", "Mid Holocene: Northgrippian", "Early Holocene: Greenlandian", "Pleistocene: Younger Dryas Stadial", "Pleistocene: Bølling-Allerød", "Pleistocene: Heinrich Stadial 1", "Pleistocene: Last Glacial Maximum", "Pleistocene: Last Interglacial", "Pleistocene: MIS19", "Pliocene: Mid-Pliocene warm period", "Pliocene: M2"),
-  time = c("1979 – 2013", "4.2-0.3 ka", "8.326-4.2 ka", "11.7-8.326 ka", "12.9-11.7 ka", "14.7-12.9 ka", "17.0-14.7 ka", "ca. 21 ka", "ca. 130 ka", "ca. 787 ka", "3.205 Ma", "ca. 3.3 Ma"),
-  source = c("CHELSA", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "CHELSA", "Otto-Bliesner et al. 2006", "Brown et al. 2018", "Hill 2015", "Dolan et al. 2015")
-)
-
-# Print the dataframe
-print(df) 
-# Define the file names and paths
-file_names <- c("MIS19_v1_r2_5m.zip", "LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
-file_paths <- file.path(here("data", "env", "paleoclim"), file_names)
-
-# Load and process the data using purrr
-env_list <- purrr::map(file_paths, ~ {
-  data <- load_paleoclim(.x)
-  data <- crop(data, ca)
-  data <- mask(data, ca)
-  data
-})
-names(env_list) <- paleovars
+# get paleovars
+env_list <- get_paleovars()
 
 # Assign the loaded and processed data to individual variables
 list2env(env_list, envir = .GlobalEnv)
-
-# export
-env_stack <- rast(env_list)
-writeRaster(env_stack, here("data", "env", "paleoclim", "paleoclim.tif"), overwrite = TRUE)
-
 ```
 
 ```{r}
@@ -629,84 +599,73 @@ ggplot() +
 
 # SDM (IGNORE IMCOMPLETE)
 ```{r}
-
-# # Load required libraries
+library(countrycode)
+library(CoordinateCleaner)
+library(rgbif)
+library(sp)
+library(here)
+library(raster)
+library(dismo)
+library(tidyverse)
+library(viridis)
 library(biomod2)
+library(sf)
+library(terra)
+# devtools::install_github('adamlilith/enmSdm', dependencies=TRUE)
+library(enmSdm)
+library(RStoolbox)
+source(here("analysis", "sdm", "bias.R"))
+source(here("analysis", "sdm", "sdm.R"))
+source(here("analysis", "sdm", "get_coords.R"))
 
-# Load your environmental data
-env_data <- cur
-species_data <- data.frame(coords[,c("x", "y")], presence = 1)
-pseudo_absence <- spatSample(env_data, 100, xy = TRUE, na.rm = TRUE)
-pseudo_absence$presence <- 0
-species_data <- bind_rows(species_data, pseudo_absence) %>% select(x, y, presence) 
+# set maxent path
+# put maxent.jar in your working directory (what you get when you run getwd()) or set manually: https://rdrr.io/cran/biomod2/man/BIOMOD_ModelingOptions.html
+Sys.setenv(JAVA_HOME='/usr/lib/jvm/java-11-openjdk-amd64')
 
-plot(cur[[1]])
-points(species_data[,c("x", "y")], col = species_data$presence + 1)
-# Prepare the data for biomod2
-myBiomodData <- BIOMOD_FormatingData(resp.var = species_data$presence,
-                                     expl.var = env_data,
-                                     resp.xy = species_data[, c('x', 'y')],
-                                     resp.name = 'Sceloporus')
+# get env data
+env_list <- get_paleovars()
+env_list_agg <- map(env_list, ~aggregate(.x, 2))
+cur <- env_list[["cur"]]
+lh <- env_list[["lh"]]
 
-# Define the models you want to run
+# pca
+selected_vars <- pc_var_selection(cur)
 
-# Define the models you want to run
-myBiomodModelOut <- BIOMOD_Modeling(myBiomodData,
-                                    models = 'RF',
-                                    modeling.id = 'test',
-                                    CV.perc = 0.9,
-                                    CV.nb.rep = 10)
+# get gbif coordinates
+occ_coords <- get_occ_coords("Sceloporus occidentalis", )
+occ_coords <- get_coords()[,c("x", "y")]
 
-myProjection <- BIOMOD_Projection(bm.mod = myBiomodModelOut,
-                                  new.env = env_data,
-                                  proj.name = 'MyProjection',
-                                  selected.models = 'all')    
+# create bias background layer
+bias_class <- make_biasbkg(key = "Sceloporus occidentalis", rank = "class", lyr = get_lyr(), limit = 1000, n = 10000)
 
-LH <- BIOMOD_Projection(bm.mod = myBiomodModelOut,
-                                  new.env = lgm,
-                                  proj.name = 'LH',
-                                  selected.models = 'all')                                    
+# run SDM
+s <- sample(1:nrow(bias_class), size = 1000)
+sdm_mod <- sdm(occ_coords, cur[[selected_vars]], biasdat = bias_class[s,], models = "RF", nbkg = 10000, output = FALSE, file.name = "", tune = TRUE)
 
-cur_sdm <- mean(get_predictions(myProjection))/1000
-lh_sdm <- mean(get_predictions(LH))/1000
-plot(cur_sdm)
-plot(lh_sdm)
-plot(cur_sdm - lh_sdm, col = palette)
+# hindcast
+lh_sdm <- hindcast(sdm_mod$myBiomodModelOut, new_env = lh[[selected_vars]])
 
-source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
-het <- get_het()
-coords <- left_join(coords, het)
-dif_lgm <- cur - lgm
-dif_vals <- extract(dif_lgm, coords[,c("x", "y")], ID = FALSE)
-mod_df <- data.frame(Ho = coords$Ho, dif_vals)
-pc <- prcomp(mod_df[,-1], scale = TRUE)
+hindcast_sdms <- map(env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")], ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]]))
+hindcast_sdms <- rast(hindcast_sdms)
 
-res <- summary(lm(Ho ~ ., data = mod_df))
-sigvars <- names(which(res$coefficients[,"Pr(>|t|)"] < 0.05))[-1]
+cur_sdm <- sdm_mod$raster 
+dif_sdm <- cur_sdm - lh_sdm
+stability <- sum(hindcast_sdms)
+plot(stability)
+ het <- get_het()
+roh <- get_roh()
+coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
+change_vals <- extract(dif_sdm, coords, ID = FALSE)
+stability_vals <- extract(stability, coords, ID = FALSE)
+df <- data.frame(change = vals[,1], stability = stability_vals[,1],  coords)
+ggplot(df) +
+  geom_point(aes(x = change, y = Ho))
 
-gg_df <- mod_df %>% pivot_longer(all_of(sigvars))
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
+ggplot(df) +
+  geom_point(aes(x = stability, y = Ho))
 
-gg_df <- mod_df %>% pivot_longer(all_of("bio_9"))
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
-plot(dif_lgm[["bio_9"]])
-
-pcs <- data.frame(pc$x[,1:3])
-pcmod_df <- data.frame(Ho = coords$Ho, pcs)
-res <- summary(lm(Ho ~ ., data = pcmod_df))
-sigvars <- names(which(res$coefficients[,"Pr(>|t|)"] < 0.05))[-1]
-gg_df <- pcmod_df %>% pivot_longer(all_of(sigvars))
-ggplot(gg_df) + 
-  geom_point(aes(x = value, y = Ho)) + 
-  geom_smooth(aes(x = value, y = Ho), method = "lm") +
-  facet_wrap(~name, scales = "free")
-#sdm <- sdm(coordinates =  coords[,c("x", "y")], envlayers = stack(lgm), models = "RF", nbkg = 1000, tune = TRUE)
+ggplot(df) +
+  geom_point(aes(x = stability, y = froh0))
 ```
 
 # Recent climate
@@ -769,7 +728,6 @@ summary(lm(froh0 ~ tmax_cur, data =tmax))
 ```
 
 ```{r}
-
 # Compute the long-term average from 1895 to 1925
 # Assuming you have all the annual averages from 1895 to 1925 stored in 'annual_averages'
 long_term_avg <- app(stack(annual_averages), mean)
