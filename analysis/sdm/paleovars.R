@@ -1,4 +1,5 @@
 get_paleovars <- function(){
+  ca <- get_ca()
   paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
   # download data
   walk(paleovars, ~ {

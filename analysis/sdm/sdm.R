@@ -17,7 +17,8 @@
 sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg = 10000, output = FALSE, file.name = "", tune = TRUE){
   
   # Create a name for BIOMOD files (using random string of numbers so that each is unique if running in parallel)
-  BIOMOD_name <- paste0("BIOMOD", paste(sample(0:100, 5, replace = TRUE), collapse = ""))
+  #BIOMOD_name <- paste0("BIOMOD", paste(sample(0:100, 5, replace = TRUE), collapse = ""))
+  BIOMOD_name <- "BIOMOD"
 
   # Create random background points or use bias data if provided
   if(is.null(biasdat)){
@@ -163,7 +164,7 @@ pc_var_selection <- function(envlayers, coords = NULL){
 
   for (var in top_vars_names) {
     # Skip if the variable isn't in the dataframe
-    if (!var %in% names(data)) next
+    if (!var %in% names(cur_vals)) next
     
     # If it's the first variable, just add it
     if (length(selected_vars) == 0) {

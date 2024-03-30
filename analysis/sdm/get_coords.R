@@ -4,9 +4,9 @@
 #' @return cleaned coordinates to use as a 'create_sdm' argument
 #' 
 # TODO: CHECK AND CLEAN THIS FUNCTION
-get_occ_coords <- function(spp, data_source = "both", occ_limit = 10000, envlayers = NULL, cache = TRUE, stateProvince = "California", grid_sample = TRUE, ncores = 3){
+get_occ_coords <- function(spp, data_source = "both", occ_limit = 10000, envlayers = NULL, cache = TRUE, stateProvince = "California", grid_sample = TRUE, ncores = NULL){
   
-  if (data_source == "ccgp" | data_source == "both") ccgp <- get_coords() %>% mutate()
+  if (data_source == "ccgp" | data_source == "both") ccgp <- get_coords() %>% mutate(decimalLatitude = x, decimalLongitude = y)
   
   #if not combining with gbif data, clean data is only ccgp data
   if (data_source == "ccgp") dat_cl <- ccgp
@@ -17,7 +17,7 @@ get_occ_coords <- function(spp, data_source = "both", occ_limit = 10000, envlaye
 
   coords <- dat_cl %>% dplyr::select(decimalLongitude, decimalLatitude) 
   
-  if (grid_sample & !is.null(envlayers)) coords <- dismo::gridSample(coords, r = envlayers[[1]], n = 1)
+  if (grid_sample & !is.null(envlayers)) coords <- dismo::gridSample(coords, r =envlayers, n = 1)
   
   return(coords)
 }
@@ -49,7 +49,7 @@ get_coords_ccgp <- function(spp, ID = NULL, keepID = FALSE, AddSppCol = FALSE){
   return(coords)
 }
 
-get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = 3, cache = TRUE){
+get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = NULL, cache = TRUE){
   
   spp <- gsub(" ", "_", spp)
   if (is.null(stateProvince)) {
@@ -62,14 +62,23 @@ get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = 3, c
     return(read.csv(path))
   }
   
-  future::plan(future::multisession, workers = ncores)
-  
-  dat <- 
-    furrr::future_map(seq(0, occ_limit, 1000), spp_search, spp = spp, stateProvince = stateProvince, 
-                      .options = furrr::furrr_options(seed = 20), .progress = TRUE) %>%
-    bind_rows() %>%
-    distinct()
-  
+  if (is.null(ncores)) {
+    dat <- 
+      purrr::map(seq(0, occ_limit, 1000), spp_search, spp = spp, stateProvince = stateProvince, .progress = TRUE) %>%
+      bind_rows() %>%
+      distinct()
+  } else {
+    future::plan(future::multisession, workers = ncores)
+    
+    dat <- 
+      furrr::future_map(seq(0, occ_limit, 1000), spp_search, spp = spp, stateProvince = stateProvince, 
+                        .options = furrr::furrr_options(seed = 20), .progress = TRUE) %>%
+      bind_rows() %>%
+      distinct()
+
+    future::plan("sequential")
+  }
+
   if (nrow(dat) == 0) warning("no occurrence records found, returning NULL"); return(NULL)
   
   dat_cl <- cleaner(dat)
@@ -81,7 +90,7 @@ get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = 3, c
 
 
 cleaner <- function(dat){
-  if (nrow(dat) == 0) warning("data has 0 rows, returning NULL"); return(NULL)
+  if (nrow(dat) == 0) {warning("data has 0 rows, returning NULL"); return(NULL)}
   
   dat$countryCode <- countrycode(dat$countryCode, origin =  'iso2c', destination = 'iso3c')
   
@@ -118,6 +127,7 @@ cleaner <- function(dat){
   dat_cl <- filter(dat_cl, basisOfRecord == "HUMAN_OBSERVATION" |
                      basisOfRecord == "OBSERVATION" |
                      basisOfRecord == "PRESERVED_SPECIMEN")
+  
   # remove records before 2000
   dat_cl <- dat_cl %>% filter(year > 2000)
   
@@ -125,9 +135,10 @@ cleaner <- function(dat){
 }
 
 spp_search <- function(start, spp, stateProvince){
-  occ_search(taxonKey = rgbif::name_backbone(spp)$usageKey, 
+  occ <- occ_search(taxonKey = rgbif::name_backbone(spp)$usageKey, 
              hasCoordinate = T, 
              start = start, 
              stateProvince = stateProvince,
              limit = 1000)$data
+  return(occ)
 }

@@ -5,12 +5,12 @@ get_bias <- function(spp, rank, n = 10000){
   
   if(rank == "phylum") {
     key <- bb$phylumKey
-    bias_bkg <- read.csv(here("outputs", "bias", paste0(key, "_", rank, "_", n, "_bias.csv")))
+    bias_bkg <- read.csv(here("outputs", paste0(key, "_", rank, "_", n, "_bias.csv")))
   }
   
   if(rank == "class") {
     key <- bb$classKey
-    bias_bkg <- read.csv(here("outputs", "bias", paste0(key, "_", rank, "_", n, "_bias.csv")))
+    bias_bkg <- read.csv(here("outputs", paste0(key, "_", rank, "_", n, "_bias.csv")))
   }
   
   return(bias_bkg)

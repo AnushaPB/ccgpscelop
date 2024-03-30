@@ -25,24 +25,6 @@ env_list <- get_paleovars()
 list2env(env_list, envir = .GlobalEnv)
 ```
 
-```{r}
-cur_range <- cur$bio_5 - cur$bio_6 - 273.15
-lh_range <- lh$bio_5 - lh$bio_6- 273.15
-lh_dif_range <- cur_range - lh_range
-
-pdf("bio2_test_vars.pdf", fig.width = 10, fig.height = 30)
-par(mfrow = c(3,2))
-plot(cur_range, col = viridis::turbo(100), main = "Manual Bio 2 (current)")
-plot(cur$bio_2, col = viridis::turbo(100), main = "Bio 2 (current)")
-
-plot(lh_range, col = viridis::turbo(100), main = "Manual Bio 2 (lh)")
-plot(lh$bio_2, col = viridis::turbo(100), main = "Bio 2 (lh)")
-
-plot(cur_range - lh_range, col = viridis::turbo(100), main = "Manual change in Bio 2")
-plot(cur$bio_2 - lh$bio_2, col = viridis::turbo(100), main = "Change in Bio 2")
-dev.off()
-```
-
 # running linear models
 ```{r}
 # get coordinates
@@ -602,7 +584,8 @@ ggplot() +
   theme_classic()
 ```
 
-# SDM (IGNORE IMCOMPLETE)
+
+# SDM
 ```{r}
 library(countrycode)
 library(CoordinateCleaner)
@@ -616,12 +599,15 @@ library(viridis)
 library(biomod2)
 library(sf)
 library(terra)
+library(ggpubr)
 # devtools::install_github('adamlilith/enmSdm', dependencies=TRUE)
 library(enmSdm)
 library(RStoolbox)
 source(here("analysis", "sdm", "bias.R"))
 source(here("analysis", "sdm", "sdm.R"))
 source(here("analysis", "sdm", "get_coords.R"))
+source(here("analysis", "sdm", "paleovars.R"))
+source(here("general_functions.R"))
 
 # set maxent path
 # put maxent.jar in your working directory (what you get when you run getwd()) or set manually: https://rdrr.io/cran/biomod2/man/BIOMOD_ModelingOptions.html
@@ -636,42 +622,100 @@ lh <- env_list[["lh"]]
 # pca
 selected_vars <- pc_var_selection(cur)
 
-# get gbif coordinates
-occ_coords <- get_occ_coords("Sceloporus occidentalis", )
-occ_coords <- get_coords()[,c("x", "y")]
+# get coordinates
+occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "both", occ_limit = 10000, cache = TRUE)
 
 # create bias background layer
 bias_class <- make_biasbkg(key = "Sceloporus occidentalis", rank = "class", lyr = get_lyr(), limit = 1000, n = 10000)
+bias_class <- get_bias("Sceloporus occidentalis", rank = "class")
 
 # run SDM
-s <- sample(1:nrow(bias_class), size = 1000)
-sdm_mod <- sdm(occ_coords, cur[[selected_vars]], biasdat = bias_class[s,], models = "RF", nbkg = 10000, output = FALSE, file.name = "", tune = TRUE)
+sdm_mod <- sdm(occ_coords, cur[[selected_vars]], biasdat = bias_class, models = "RF", nbkg = 10000, output = FALSE, file.name = "", tune = TRUE)
 
 # hindcast
 lh_sdm <- hindcast(sdm_mod$myBiomodModelOut, new_env = lh[[selected_vars]])
-
 hindcast_sdms <- map(env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")], ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]]))
 hindcast_sdms <- rast(hindcast_sdms)
 
+# calculate change and stability
+# TODO: PLAY AROUND WITH TIMEPERIOD USED TO CALCULATE DIF_SDM AND STABILITY
 cur_sdm <- sdm_mod$raster 
-dif_sdm <- cur_sdm - lh_sdm
-stability <- sum(hindcast_sdms)
+dif_sdm <- cur_sdm - hindcast_sdms[["lh"]]
+stability <- sum(subset(hindcast_sdms, c("eh", "mh", "lh", "cur")))
 plot(stability)
- het <- get_het()
+plot(dif_sdm)
+ 
+# compare to genetic diversity
+het <- get_het()
 roh <- get_roh()
 coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
 change_vals <- extract(dif_sdm, coords, ID = FALSE)
 stability_vals <- extract(stability, coords, ID = FALSE)
-df <- data.frame(change = vals[,1], stability = stability_vals[,1],  coords)
-ggplot(df) +
-  geom_point(aes(x = change, y = Ho))
+df <- data.frame(change = change_vals[,1], stability = stability_vals[,1],  coords)
+ggplot(df, aes(x = change, y = Ho)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
 
-ggplot(df) +
-  geom_point(aes(x = stability, y = Ho))
+ggplot(df, aes(x = stability, y = Ho)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
 
-ggplot(df) +
-  geom_point(aes(x = stability, y = froh0))
+ggplot(df, aes(x = change, y = froh0)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+# grouped
+df_group <- 
+  df %>% 
+  mutate(stability = stability > 3) %>%
+  drop_na(stability)
+
+# play around with this:
+ggplot(df_group) +
+  geom_boxplot(aes(x = stability, y = froh0))
 ```
+
+```{r}
+# is stability correlated with change in bio2
+dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
+dif_vals <- extract(dif_bio2, coords, ID = FALSE)
+df$change_bio2 <- dif_vals[,1]
+
+# confirm correlations with Ho
+cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
+cor(df$stability, df$Ho, use = "pairwise.complete.obs")
+
+# correlated, but not strongly
+cor(df$change_bio2, df$stability, use = "pairwise.complete.obs")
+
+# check for statistical suppression/whether both variables are significant when both are included
+mod1 <- lm(Ho ~ change_bio2, data = df)
+summary(mod1)
+mod2 <- lm(Ho ~ stability, data = df)
+summary(mod2)
+mod3 <- lm(Ho ~ stability + change_bio2, data = df)
+summary(mod3)
+# stability is no longer significant when bio2 is included
+```
+
 
 # Recent climate
 Download PRISM max temperature data from historical data: https://prism.oregonstate.edu/historical/
@@ -690,7 +734,7 @@ plot(dif)
 # Function to calculate yearly average from monthly files
 coords <- get_coords(sf = TRUE)
 year = 1895
-calculate_yearly_avg <- function(year  = 1895, type = "historical") {
+calculate_yearly_avg <- function(year  = 1895, type = "historical", output = "df") {
   if (type == "historical") directory_path <- here::here("data", "env", "prism", "PRISM_tmax_stable_4kmM3_189501_198012_bil")
   if (type == "current") directory_path <- here::here("data", "env", "prism", "PRISM_tmax_stable_4kmM3_198101_202308_bil")
   monthly_files <- list.files(directory_path, pattern = "*.bil.bil$", full.names = TRUE)
@@ -698,11 +742,18 @@ calculate_yearly_avg <- function(year  = 1895, type = "historical") {
   if (length(monthly_files) > 0) {
     rasters <- purrr::map(monthly_files, terra::rast)
     rasters <- terra::rast(rasters)
-    vals <- terra::extract(rasters, st_transform(coords, st_crs(rasters)))
-    annual_avg <- rowMeans(vals, na.rm = TRUE)
-    rm(rasters)
-    gc()
-    return(data.frame(year = year, tmax = annual_avg, SampleID = coords$SampleID))
+    if (output == "raster"){
+      rasters <- mean(rasters, na.rm = TRUE)
+      rm(rasters)
+      gc()
+    } else {
+      vals <- terra::extract(rasters, st_transform(coords, st_crs(rasters)))
+      annual_avg <- rowMeans(vals, na.rm = TRUE)
+      return(data.frame(year = year, tmax = annual_avg, SampleID = coords$SampleID))
+      rm(rasters)
+      gc()
+    }
+    
   } else {
     return(NULL)
   }
@@ -725,7 +776,6 @@ ggplot(tmax) +
   scale_color_viridis_c(option = "magma", direction = -1) +
   theme_void()
 
-froh <- get_roh()
 tmax <- left_join(tmax, froh)
 
 summary(lm(froh0 ~ dif, data =tmax))
@@ -734,6 +784,65 @@ summary(lm(froh0 ~ tmax_cur, data =tmax))
 
 ```{r}
 # Compute the long-term average from 1895 to 1925
-# Assuming you have all the annual averages from 1895 to 1925 stored in 'annual_averages'
 long_term_avg <- app(stack(annual_averages), mean)
+```
+
+```{r}
+tmax_his <- map(1895:1925, ~calculate_yearly_avg(.x, type = "historical", output = "raster"), .progress =TRUE) %>% rast()  
+tmax_cur <- map(1986:2016, ~calculate_yearly_avg(.x, type = "current"), .progress =TRUE) %>% bind_rows()  
+```
+
+# pastclimate
+
+This data is not high enough resolution but keeping it here in case I want it in the future
+
+```{r}
+library("pastclim")
+library("here")
+set_data_path(path_to_nc = here("data", "env", "pastclim"))
+
+# downloads all variables (annual) by default
+download_dataset(dataset = "Beyer2020", annual = TRUE)
+```
+
+It is possible to also load a time series of rasters with the function region_series. In this case, the function returns a SpatRasterDataset, with each variable as a sub-dataset:
+```{r}
+ca <- vect(get_ca())
+climate_region <- region_series(
+  time_bp = list(min = -15000, max = 0),
+  bio_variables = c("bio05", "biome"),
+  dataset = "Beyer2020",
+  crop = ca
+)
+climate_region
+```
+
+Note that terra stores dates in years as AD, not BP. You can inspect the times in years BP with:
+```{r}
+time_bp(climate_region)
+```
+
+We can then plot the time series of a given variable (we relabel the plots to use years bp):
+```{r}
+terra::plot(climate_region$bio05, main = time_bp(climate_region))
+```
+
+To plot all climate variables for a given time step, we can slice the time series:
+```{r}
+slice_10k <- slice_region_series(climate_region, time_bp = -10000)
+terra::plot(slice_10k)
+```
+
+Get ice sheets:
+```{r}
+terra::plot(climate_region$biome, main = time_bp(climate_region))
+ice_id <- get_biome_classes("Beyer2020") %>% filter(category == "Land ice") %>% pull(id)
+ice <- climate_region$biome*0
+
+# check if there is any ice
+global(any(climate_region$biome == ice_id), sum, na.rm = TRUE)
+ice[climate_region$biome == ice_id] <- 1
+plot(ice)
+
+# unfortunately the resolution is not high enough
 ```
