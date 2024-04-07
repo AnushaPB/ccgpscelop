@@ -573,7 +573,7 @@ ggplot(tracker_feb_update) +
   geom_sf(data = california) +
   geom_point(aes(x = x, y = y, col = updated_note))
 
-write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("tracker_feb_update.csv"))
+write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("data", "tracker.csv"))
 
 # update simple combined requests doc
 combined_requests <-
@@ -888,3 +888,38 @@ plts <- map(1:length(unique(requests$SampleID)), ~ {
 })
 suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = TRUE, legend = "top")))
 ```
+
+# MVZ project
+
+```{r, fig.width = 5, fig.height = 5}
+
+df <- 
+  read_csv(here("data", "tracker.csv")) %>%
+  # isolated southern specimens without existing specimens
+  mutate(Samples = 
+           case_when(
+             is.na(updated_note) & y < 34.1 & x > -119 ~ "Proposed", 
+             TRUE ~ "Existing"
+             )
+         ) %>%
+  # remove one channel island point
+  filter(!(x < -119 & y < 34.1))
+
+
+# get climate data (current, but from paleoclim package)
+rpaleoclim::paleoclim("cur", "2_5m", region = ext(california), cache_path = here("data", "env", "paleoclim"))
+data <- rpaleoclim::load_paleoclim(here("data", "env", "paleoclim", "CHELSA_cur_V1_2B_r2_5m.zip"))
+data <- crop(data, ca)
+data <- mask(data, ca)
+bio1 <- as.data.frame(data[[1]], xy = TRUE)
+
+
+ggplot(df) +
+  geom_sf(data = california) +
+  geom_raster(data = bio1, aes(x = x, y = y, fill = value)) +
+  geom_point(data = df, aes(x = x, y = y, pch = Samples))  +
+  scale_shape_manual(values = c(16, 1)) +
+  scale_fill_viridis_c(option = "magma") +
+  theme_void()
+```
+
