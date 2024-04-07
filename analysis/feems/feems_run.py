@@ -1,4 +1,5 @@
 # source activate feems_env
+# cd analysis/feems
 
 # base
 import numpy as np
@@ -117,42 +118,17 @@ plt.savefig('feems.png')
 # If you want to show the plot as well, uncomment the next line
 # plt.show()
 
-#--------------------------------
-# Export edges
-weights = sp_graph.w
-edges = sp_graph.edges
+# EXPORT --------------------------------
 
-# Create a LineString for each edge
-from shapely.geometry import LineString
-geometry = [LineString([sp_graph.node_pos[edge[0]], sp_graph.node_pos[edge[1]]]) for edge in edges]
+# Code from this issue: https://github.com/NovembreLab/feems/issues/34
+feems_nodes = sp_graph.nodes
+pd.DataFrame(feems_nodes).to_csv('feems_nodes.csv', header=False, index=False)
 
-# Create a DataFrame with the weights
-df = pd.DataFrame(weights, columns=['weight'])
+feems_node_pos = sp_graph.node_pos
+pd.DataFrame(feems_node_pos).to_csv('feems_node_pos.csv', header=False, index=False)
 
-# Create a GeoDataFrame with the edges and weights
-gdf = gpd.GeoDataFrame(df, geometry=geometry)
+feems_edges = sp_graph.edges
+pd.DataFrame(feems_edges).to_csv('feems_edges.csv', header=False, index=False)
 
-# Write out shp file
-gdf.to_file("feems_edges.shp", layer = "weight")
-
-# Extract sample size for each node
-from feems.spatial_graph import query_node_attributes
-permuted_idx = query_node_attributes(sp_graph, "permuted_idx") 
-obs_perm_ids = permuted_idx[: sp_graph.n_observed_nodes]
-node_positions = grid[obs_perm_ids, :]
-node_sizes = sp_graph.n_samples_per_obs_node_permuted
-
-# Create a Point for each node
-from shapely.geometry import Point
-import networkx as nx
-geometry = [Point(pos) for pos in node_positions]
-
-# Create a DataFrame with the node sizes
-df = pd.DataFrame({'size': node_sizes})
-
-# Create a GeoDataFrame with the nodes and sizes
-gdf = gpd.GeoDataFrame(df, geometry=geometry)
-
-# Write out shapefile
-gdf.to_file("feems_nodes.shp", layer = "weight")
-
+feems_w = sp_graph.w
+pd.DataFrame(feems_w).to_csv('feems_w.csv', header=False, index=False)
