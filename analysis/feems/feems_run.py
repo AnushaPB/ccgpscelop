@@ -124,7 +124,7 @@ plt.savefig('feems.png')
 feems_nodes = sp_graph.nodes
 pd.DataFrame(feems_nodes).to_csv('feems_nodes.csv', header=False, index=False)
 
-feems_node_pos = sp_graph.node_pos
+feems_node_pos = np.vstack((sp_graph.node_pos.T,[sp_graph.nodes[n]['n_samples'] for n in range(len(sp_graph.nodes))])).T
 pd.DataFrame(feems_node_pos).to_csv('feems_node_pos.csv', header=False, index=False)
 
 feems_edges = sp_graph.edges
@@ -132,3 +132,4 @@ pd.DataFrame(feems_edges).to_csv('feems_edges.csv', header=False, index=False)
 
 feems_w = sp_graph.w
 pd.DataFrame(feems_w).to_csv('feems_w.csv', header=False, index=False)
+
