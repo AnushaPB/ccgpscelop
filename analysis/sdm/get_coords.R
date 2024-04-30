@@ -49,7 +49,7 @@ get_coords_ccgp <- function(spp, ID = NULL, keepID = FALSE, AddSppCol = FALSE){
   return(coords)
 }
 
-get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = NULL, cache = TRUE){
+get_gbif <- function(spp, occ_limit = 10000, stateProvince = "California", ncores = NULL, cache = TRUE){
   
   spp <- gsub(" ", "_", spp)
   if (is.null(stateProvince)) {
@@ -79,15 +79,14 @@ get_gbif <- function(spp, occ_limit = 10000, stateProvince = NULL, ncores = NULL
     future::plan("sequential")
   }
 
-  if (nrow(dat) == 0) warning("no occurrence records found, returning NULL"); return(NULL)
+  if (nrow(dat) == 0) {warning("no occurrence records found, returning NULL"); return(NULL)}
   
   dat_cl <- cleaner(dat)
   
-  write.csv(dat_cl, path, row.names = TRUE)
-  
+  if (cache) write.csv(dat_cl, path, row.names = FALSE)
+
   return(dat_cl)
 }
-
 
 cleaner <- function(dat){
   if (nrow(dat) == 0) {warning("data has 0 rows, returning NULL"); return(NULL)}
@@ -120,8 +119,15 @@ cleaner <- function(dat){
   #Exclude problematic records
   dat_cl <- dat_cl[flags,]
   
-  dat_cl <- dat_cl %>%
-    filter(coordinateUncertaintyInMeters / 1000 <= 100 | is.na(coordinateUncertaintyInMeters))
+  #Remove records with large uncertainty
+  if ("coordinateUncertaintyInMeters" %in% colnames(dat_cl)) {
+    dat_cl <- 
+      dat_cl %>%
+      filter(coordinateUncertaintyInMeters / 1000 <= 100 | is.na(coordinateUncertaintyInMeters))
+  } else {
+    warning("coordinateUncertaintyInMeters not found for ", unique(dat_cl$species))
+  }
+  
   #Remove unsuitable data data_sources, especially fossils 
   table(dat$basisOfRecord)
   dat_cl <- filter(dat_cl, basisOfRecord == "HUMAN_OBSERVATION" |
