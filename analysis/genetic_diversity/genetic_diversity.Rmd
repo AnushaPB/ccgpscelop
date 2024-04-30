@@ -52,14 +52,14 @@ coords <- left_join(coords, het, by = "SampleID")
 
 ggplot(coords) + 
   geom_sf(data = ca) +
-  geom_sf(aes(fill = Ho), col = "black", pch = 21, cex = 2.5) +
+  geom_sf(aes(fill = Ho), col = "#00000087", pch = 21, cex = 3) +
   scale_fill_viridis_c(option = "inferno") +
   theme_void()
 
 ggplot(coords) +
  geom_sf() +
  geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
- geom_sf(aes(geometry = geometry, col = Ho), pch = 16, cex = 2.5) +
+ geom_sf(aes(geometry = geometry, col = Ho), pch = 16, cex = 3) +
  scale_color_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
  scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
  theme_void()
@@ -67,53 +67,90 @@ ggplot(coords) +
 ```
 
 ```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+# Project coordinates and boundary to equal area projection (California Albers)
 coords_proj <- st_transform(coords, 3310)
 ca_proj <- st_transform(ca, 3310)
-lyr <- coords_to_raster(coords_proj, buffer = 1, res = 10000)
+
+# Convert coordinates to a raster layer with 10km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+# Calculate windowed mean of Ho
 window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+
+# Plot windowed mean of Ho
 ggplot_gd(window_Ho, bkg = ca_proj, col = magma(100))
+
+# Perform kriging interpolation on windowed mean of Ho
 krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
-mask_Ho <- mask_gd(krig_Ho, ca_proj, minval = 2)
+
+# Apply a mask to the kriging result
+count_mask <- resample(window_Ho$sample_count, krig_Ho)
+mask_Ho <- mask_gd(krig_Ho, ca_proj)
+#mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 1)
+
+# Plot masked kriging result
 ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
 ```
 
 # ROH
 ```{r ROH, fig.width = 7, fig.height = 7}
-roh_df <- get_roh()
+roh <- get_roh()
 
-ggplot(roh_df) +
+ggplot(roh) +
  geom_sf(data = ca) +
- geom_sf(aes(geometry = geometry, fill = froh), col = "black", pch = 21, cex = 2.5) +
+ geom_sf(aes(geometry = geometry, fill = froh), col = "#00000087", pch = 21, cex = 2.5) +
  scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
  theme_void()
 
-ggplot(roh_df) +
+ggplot(roh) +
  geom_sf(data = ca) +
- geom_sf(aes(geometry = geometry, fill = froh), col = "black", pch = 21, cex = 2.5) +
- labs(fill = "froh\n(log color scale)") +
- scale_fill_viridis_c(option = "inferno",  trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ geom_sf(aes(geometry = geometry, fill = log(froh + 1e-6)), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
  theme_void()
 
-ggplot(roh_df) +
+ggplot(roh) +
  geom_sf(data = ca) +
  geom_sf(aes(geometry = geometry, col = pop), cex = 2.5) +
  theme_void()
 
-ggplot(roh_df) +
+ggplot(roh) +
  geom_sf(data = ca) +
  geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
- geom_sf(aes(geometry = geometry, col = froh), pch = 16, cex = 2.5) +
- scale_color_viridis_c(option = "inferno", trans = "log", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ geom_sf(aes(geometry = geometry, col = log(froh + 1e-6)), pch = 16, cex = 2.5) +
+ scale_color_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
  scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
  theme_void()
 
+```
+
+
+```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+# project roh 
+coords_proj <- roh %>% st_as_sf() %>% st_transform(3310)
+
+# Calculate windowed mean of froh
+window_froh <- window_general(coords_proj$froh0, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+
+# Plot windowed mean of froh
+ggplot_gd(window_froh, bkg = ca_proj, col = magma(100))
+
+# Perform kriging interpolation on windowed mean of froh
+krig_froh <- krig_gd(window_froh, grd = lyr, disagg_grd = 2)
+
+# Apply a mask to the kriging result
+count_mask <- resample(window_froh$sample_count, krig_froh)
+mask_froh <- mask_gd(krig_froh, ca_proj)
+#mask_froh <- mask_gd(mask_froh, count_mask, minval = 1)
+
+# Plot masked kriging result
+ggplot_gd(mask_froh, bkg = ca_proj, col = magma(100))
 ```
 
 # Models
 ```{r models, fig.width = 5, fig.height = 5, result = FALSE, message = FALSE, eval = TRUE}
 envdata <- get_env()
 mod_df <- 
-  left_join(roh_df, envdata) %>%
+  left_join(roh, envdata) %>%
   left_join(het) %>%
   st_drop_geometry() %>%
   mutate(froh0_log = log(froh0 + 1)) %>%
@@ -177,3 +214,28 @@ ggplot(mod_df) +
   geom_point(aes(x = CA_rPCA3, y = froh0_log, col = pop)) +
   theme_classic()
 ```
+
+# Comparison of ROH vs Ho
+```{r}
+mod_df <- mod_df %>% drop_na(Ho, froh0)
+
+# fit exponential decay
+mod_exp <- nls(froh0 ~ a * exp(-b * Ho), data = mod_df, start = list(a = 1, b = 1))
+summary(mod_exp)
+
+# Generate predicted values
+mod_df$predicted <- predict(mod_exp)
+
+# Get residuals
+mod_df$residuals <- as.numeric(residuals(mod_exp))
+
+# Plot the line
+ggplot(mod_df, aes(x = Ho, y = froh0)) +
+  geom_point() +
+  geom_line(aes(y = predicted), color = "red") +
+  labs(title = "Exponential Decay Fit", x = "Ho", y = "froh0")
+
+# Make sf
+mod_df <- st_as_sf(mod_df)
+
+rclone
