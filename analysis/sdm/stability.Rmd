@@ -34,12 +34,14 @@ Herrando-Moraira, S., Nualart, N., Galbany-Casals, M. et al. Climate Stability I
 
 Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do contain other variables correlated with those variables
 
-
 ```{r}
 # get coords and genetic diversity data
 het <- get_het()
 roh <- get_roh()
-coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
+coords <-
+ get_coords(sf = TRUE) %>%
+ left_join(het) %>%
+ left_join(roh)
 ```
 ```{r, fig.width = 10, fig.height = 2.5}
 csi_past <- rast(here("data", "env", "stability", "Layers", "past", "csi_past.tif"))
