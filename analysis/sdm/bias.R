@@ -1,16 +1,23 @@
 
 # functions to return and calculate bias layers
-get_bias <- function(spp, rank, n = 10000){
+get_bias <- function(spp, rank, n = 10000, lyr = NULL, limit = 1000, cache = TRUE, dir = "outputs"){
   bb <- rgbif::name_backbone(spp)
   
   if(rank == "phylum") {
     key <- bb$phylumKey
-    bias_bkg <- read.csv(here("outputs", paste0(key, "_", rank, "_", n, "_bias.csv")))
+    bias_path <- here(dir, paste0(key, "_", rank, "_", n, "_bias.csv"))
   }
   
   if(rank == "class") {
     key <- bb$classKey
-    bias_bkg <- read.csv(here("outputs", paste0(key, "_", rank, "_", n, "_bias.csv")))
+    bias_path <- here(dir, paste0(key, "_", rank, "_", n, "_bias.csv"))
+  }
+
+  if (file.exists(bias_path) & cache) {
+    bias_bkg <- read.csv(bias_path)
+  } else {
+    if (is.null(lyr)) "lyr must be provided"
+    bias_bkg <- make_biasbkg(key, rank, lyr, limit, n)
   }
   
   return(bias_bkg)
