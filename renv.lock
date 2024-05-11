@@ -1008,18 +1008,6 @@
       ],
       "Hash": "0f6d0e0c7193e62893a6070fe33b8099"
     },
-    "gdl": {
-      "Package": "gdl",
-      "Version": "0.0.0.9000",
-      "Source": "GitHub",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "gdl",
-      "RemoteUsername": "AnushaPB",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "570458a282e5724c16a5478e4a7332836ed69a08",
-      "Hash": "b1649591fe356bb9fef9e57aae59b90e"
-    },
     "generics": {
       "Package": "generics",
       "Version": "0.1.3",
