@@ -46,13 +46,13 @@ P4 - look for any uncaptured environmental diversity across the state (unlikely)
 # Read in CCGP sequencing data and CT specimens
 ```{r}
 # CCGP samples 
-ccgp_seq <- read_table("data/58-Sceloporus.coords.txt", col_names = FALSE) 
+ccgp_seq <- read_table(here("specimens", "58-Sceloporus.coords.txt", col_names = FALSE))
 names(ccgp_seq) <- c("SampleID", "x", "y")
 
 # Erin's CT specimens
 ct_scanned <- 
   #read_csv("data/CT_scanning.csv") %>%
-  read_csv("data/Copy of CT_scanning - Sheet1.csv") %>%
+  read_csv(here("specimens", "Copy of CT_scanning - Sheet1.csv")) %>%
   mutate(SampleID = paste0(museum_ID, specimen_no))
 
 # I am going to use this df called "tracker" to keep track of the specimens and what type they are)
@@ -147,7 +147,7 @@ mvz$data <-
 
 
 all_museum <- bind_rows(mvz$data, lacm$data, cas$data) %>% select(SampleID, decimallongitude, decimallatitude)
-write_csv(all_museum, "all_museum.csv")
+write_csv(all_museum, here("specimens", "all_museum.csv"))
 ```
 
 # P1: CCGP scanned (All MVZ)
@@ -418,7 +418,7 @@ ggplot() +
   geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
 
-write_csv(tracker_final, here("data", "tracker_final.csv"))
+write_csv(tracker_final, here("specimens", "tracker_final.csv"))
 ```
 
 # Requests
@@ -499,7 +499,7 @@ combined_requests <-
 # determine which samples have an original specimen
 table(combined_requests$type)
 
-write_csv(combined_requests, here("data", "requests.csv"))
+write_csv(combined_requests, here("specimens", "requests.csv"))
 
 # split by inst
 LACM_requests <-
@@ -573,14 +573,14 @@ ggplot(tracker_feb_update) +
   geom_sf(data = california) +
   geom_point(aes(x = x, y = y, col = updated_note))
 
-write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("data", "tracker.csv"))
+write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("specimens", "tracker.csv"))
 
 # update simple combined requests doc
 combined_requests <-
   combined_requests %>%
   mutate(scanned = SampleID %in% ct_scanned$SampleID)
 
-write_csv(combined_requests, here("data", "scanning_update_feb2024.csv"))
+write_csv(combined_requests, here("specimens", "scanning_update_feb2024.csv"))
 
 # count scanned by inst
 combined_requests %>%
@@ -707,7 +707,7 @@ LACM_requests <-
   filter(instid == "LACM") %>%
   bind_rows(data.frame(SampleID = museum_gaps_lacm_selected$SampleID, instid = "LACM", type = "gap filler"))
 
-write_csv(LACM_requests %>% select(-scanned), here("data", "LACM_requests.csv"))
+write_csv(LACM_requests %>% select(-scanned), here("specimens", "LACM_requests.csv"))
 ```
 
 # Digging more into specimen requests
