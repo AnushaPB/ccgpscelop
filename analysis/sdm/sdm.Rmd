@@ -545,8 +545,8 @@ grid.arrange(plt1, plt2, plt3, nrow = 1)
 
 ### Checking with bouzid data
 ```{r}
-vcf <- vcfR::read.vcfR("../wingen/paperex/empex/data/populations_r20.haplotypes.filtered_m70_randomSNP.vcf")
-coords <- read_table("../wingen/paperex/empex/data/Scelop.coord", col_names =FALSE) %>% rename(x = X1, y = X2)
+vcf <- vcfR::read.vcfR(here("data", "bouzid", "populations_r20.haplotypes.filtered_m70_randomSNP.vcf"))
+coords <- read_table(here("data", "bouzid", "Scelop.coord"), col_names =FALSE) %>% rename(x = X1, y = X2)
 dos <- algatr::vcf_to_dosage(vcf)
 dos_to_het <- function(dos){
   dos[dos == 1] <- 1
