@@ -72,3 +72,4 @@ rsconnect/
 *.vcf
 *.tif
 *.csv
+/data
