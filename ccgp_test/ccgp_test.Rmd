@@ -341,3 +341,8 @@ ggplot(csi_long, aes(x = csi, y = Ho)) +
   theme_classic() +
   xlab("Climate Stability Index (Degree of Past Climate Fluctuations)")
 ```
+
+# Rangemap
+```{r}
+library("rangemap")
+```
