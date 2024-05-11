@@ -71,3 +71,4 @@ rsconnect/
 *.ped
 *.vcf
 *.tif
+*.csv
