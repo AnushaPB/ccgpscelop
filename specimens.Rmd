@@ -892,14 +892,13 @@ suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = 
 # MVZ project
 
 ```{r, fig.width = 5, fig.height = 5}
-
 df <- 
   read_csv(here("data", "tracker.csv")) %>%
   # isolated southern specimens without existing specimens
   mutate(Samples = 
            case_when(
-             is.na(updated_note) & y < 34.1 & x > -119 ~ "Proposed", 
-             TRUE ~ "Existing"
+             is.na(updated_note) & y < 34.1 & x > -119 ~ "Proposed ", 
+             TRUE ~ "Existing "
              )
          ) %>%
   # remove one channel island point
@@ -907,19 +906,28 @@ df <-
 
 
 # get climate data (current, but from paleoclim package)
+library(terra)
 rpaleoclim::paleoclim("cur", "2_5m", region = ext(california), cache_path = here("data", "env", "paleoclim"))
 data <- rpaleoclim::load_paleoclim(here("data", "env", "paleoclim", "CHELSA_cur_V1_2B_r2_5m.zip"))
-data <- crop(data, ca)
-data <- mask(data, ca)
-bio1 <- as.data.frame(data[[1]], xy = TRUE)
+data <- project(data, crs(california))
+data <- crop(data, california)
+data <- mask(data, california)
+bio1 <- as.data.frame(data[["bio_1"]], xy = TRUE)
 
+# BIO1 
 
+pdf(here("pdfs", "mvz.pdf"), width = 4, height = 4)
 ggplot(df) +
   geom_sf(data = california) +
-  geom_raster(data = bio1, aes(x = x, y = y, fill = value)) +
-  geom_point(data = df, aes(x = x, y = y, pch = Samples))  +
-  scale_shape_manual(values = c(16, 1)) +
-  scale_fill_viridis_c(option = "magma") +
-  theme_void()
+  geom_raster(data = bio1, aes(x = x, y = y, fill = bio_1)) +
+  labs(fill = "Mean\ntemperature") +
+  geom_point(data = df, aes(x = x, y = y, pch = Samples, col = Samples, cex = Samples))  +
+  geom_point(data = filter(df, Samples == "Proposed "), aes(x = x, y = y), pch = 1, col = "black", cex = 1.7, alpha = 0.9)  +
+  scale_shape_manual(values = c(16, 16)) +
+  scale_color_manual(values = c("black", "#00dab5")) +
+  scale_size_manual(values = c(0.7, 1.7)) +
+  scale_fill_viridis_c(option = "rocket") +
+  theme_void() 
+dev.off()
 ```
 
