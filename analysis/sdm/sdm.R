@@ -85,7 +85,7 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   eval.results <- 
     myBiomodModelEval %>% 
     dplyr::group_by(metric.eval) %>% 
-    dplyr::summarize_at(c("sensitivity", "specificity", "validation"), mean, na.rm = TRUE)
+    dplyr::summarize_at(c("sensitivity", "specificity", "validation", "cutoff"), mean, na.rm = TRUE)
   print(eval.results)
   
   # Project model using final model (Run 11)
@@ -96,7 +96,8 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
                                     binary.meth = NULL, # evaluation method by which to choose threshold (If NULL then no binary transformation computed, else the given binary techniques will be used to transform the projection into 0/1 data.)
                                     compress = 'xz', # compression format for object storage
                                     build.clamping.mask = FALSE, #if TRUE, a clamping mask will be saved on hard drive
-                                    output.format = '.grd')                                
+                                    output.format = '.grd')  
+
   # Get predictions from full model 
   predictions <- get_predictions(myBiomodProj)
   allRun <- grepl("allData_allRun", names(predictions))
@@ -111,6 +112,9 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   
   # Write out evaluation results
   if (output) write.csv(spp.eval[["eval"]], here("outputs", paste0(file.name, "_eval_results.csv")))
+
+  # Write out tif
+  if (output) writeRaster(sdm_raster, here("outputs", paste0(file.name, "_sdm_raster.tif")))
   
   # Delete automatically generated biomod directory
   # DON"T DO THIS IF YOU WANT TO HINDCAST
