@@ -100,7 +100,7 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   eval.results <- 
     myBiomodModelEval %>% 
     dplyr::group_by(metric.eval) %>% 
-    dplyr::summarize_at(c("sensitivity", "specificity", "validation"), mean, na.rm = TRUE)
+    dplyr::summarize_at(c("sensitivity", "specificity", "validation", "cutoff"), mean, na.rm = TRUE)
   print(eval.results)
   
   # Project model using final model (allRun)
@@ -128,6 +128,9 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   
   # Write out evaluation results
   if (output) write.csv(spp.eval[["eval"]], here("outputs", paste0(file.name, "_eval_results.csv")))
+
+  # Write out tif
+  if (output) writeRaster(sdm_raster, here("outputs", paste0(file.name, "_sdm_raster.tif")))
   
   # Delete automatically generated biomod directory
   # DON'T DO THIS IF YOU WANT TO HINDCAST
