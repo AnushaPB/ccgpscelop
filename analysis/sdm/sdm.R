@@ -99,7 +99,7 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   # Mean
   eval.results <- 
     myBiomodModelEval %>% 
-    dplyr::group_by(metric.eval) %>% 
+    dplyr::group_by(metric.eval, algo) %>% 
     dplyr::summarize_at(c("sensitivity", "specificity", "validation", "cutoff"), mean, na.rm = TRUE)
   print(eval.results)
   
@@ -123,9 +123,6 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   # (biomod automatically multiplies everything by 1000 to make integer values)
   sdm_raster <- sdm_raster_BIOMOD/1000 
 
-  # Make outputs into list
-  spp.eval = list(raster = sdm_raster, eval = eval.results)
-  
   # Write out evaluation results
   if (output) write.csv(spp.eval[["eval"]], here("outputs", paste0(file.name, "_eval_results.csv")))
 
@@ -136,7 +133,7 @@ sdm <- function(coordinates, envlayers, biasdat = NULL, models = "MAXENT", nbkg 
   # DON'T DO THIS IF YOU WANT TO HINDCAST
   #unlink(BIOMOD_name, recursive = TRUE) 
   
-  return(list(eval = spp.eval, myBiomodModelOut = myBiomodModelOut, raster = sdm_raster))
+  return(list(eval = eval.results, myBiomodModelOut = myBiomodModelOut, raster = sdm_raster))
 }
 
 hindcast <- function(myBiomodModelOut, new_env){
