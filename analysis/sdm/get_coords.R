@@ -6,7 +6,7 @@
 # TODO: CHECK AND CLEAN THIS FUNCTION
 get_occ_coords <- function(spp, data_source = "both", occ_limit = 10000, envlayers = NULL, cache = TRUE, stateProvince = "California", grid_sample = TRUE, ncores = NULL){
   
-  if (data_source == "ccgp" | data_source == "both") ccgp <- get_coords() %>% mutate(decimalLatitude = x, decimalLongitude = y)
+  if (data_source == "ccgp" | data_source == "both") ccgp <- get_coords() %>% mutate(decimalLongitude = x, decimalLatitude = y)
   
   #if not combining with gbif data, clean data is only ccgp data
   if (data_source == "ccgp") dat_cl <- ccgp
