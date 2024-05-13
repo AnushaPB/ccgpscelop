@@ -1,12 +1,15 @@
 
 get_het <- function(){
   # callable sites for denominator
-  callable <- read.csv(here("58-Sceloporus", "callable_counts.csv"))
+  callable <- read.csv(here("58-Sceloporus2", "callable_counts.csv"))
   callable_sites <- callable %>% pull(callable_sites_post_filter)
 
   # CHANGE THIS:
   het <- format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus.het"), callable_sites = callable_sites)
-  het$SampleID <- het$IID
+  #het <- format_het(here("58-Sceloporus", "QC", "58-Sceloporus.het"), callable_sites = callable_sites)
+  
+  if ("IID" %in% names(het)) het$SampleID <- het$IID
+  if ("INDV" %in% names(het)) het$SampleID <- het$INDV
 
   return(het)
 }
@@ -16,9 +19,9 @@ format_het <- function(path, callable_sites){
   het_data <- read_table(path)
 
   # Calculate the average heterozygosity per individual
-  het_data$Ho <- (het_data$`N(NM)` - het_data$`O(HOM)`)/callable_sites
-
-  return(het_data)
+  if ("N(NM)" %in% names(het_data)) het_data$Ho <- (het_data$`N(NM)` - het_data$`O(HOM)`)/callable_sites
+  if ("N_SITES" %in% names(het_data)) het_data$Ho <- (het_data$N_SITES - het_data$`O(HOM)`)/callable_sites
+  return(het_data) 
 }
 
 get_pops <- function(){
