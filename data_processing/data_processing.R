@@ -7,7 +7,7 @@ devtools::load_all()
 
 # PART 1: CHECKING FULL SNP DATASET (POST DEPTH AND MAF FILTER) -------------------------------------------------
 # get data
-path <- here("58-Sceloporus")
+path <- here("data", "processed_data")
 depth <- read_table(here(path, "sample_depth_info.idepth"))
 miss <- read_table(here(path, "sample_missing_info.imiss"))
 

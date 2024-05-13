@@ -1,11 +1,19 @@
 # run in 58-Sceloporus directory
 #conda env create -f ccgpscelop.yml
 source activate ccgpscelop
+RAW_DATA=../raw_data/QC/58-Sceloporus_filteredQC.vcf.gz
+
+# calculate missingness and depth data from raw data
+vcftools --gzvcf $RAW_DATA --depth --out sample_depth_info_raw
+vcftools --gzvcf $RAW_DATA --missing-indv --out sample_missing_info_raw
+
+vcftools --gzvcf $RAW_DATA --site-mean-depth --out site_depth_info_raw
+vcftools --gzvcf $RAW_DATA --missing-site --out site_missing_info_raw
 
 # filter 1 (site based filter of maf and depth)
-vcftools --gzvcf 58-Sceloporus_clean_snps.vcf.gz --minDP 5 --maxDP 50 --maf 0.05 --recode --recode-INFO-all --out 58-Sceloporus_maf05_minDP5_maxDP50
+vcftools --gzvcf $RAW_DATA --minDP 5 --maxDP 50 --maf 0.05 --recode --recode-INFO-all --out 58-Sceloporus_maf05_minDP5_maxDP50
 
-# visualize
+# calculate missingness and depth data
 vcftools --gzvcf 58-Sceloporus_maf05_minDP5_maxDP50.recode.vcf --depth --out sample_depth_info
 vcftools --gzvcf 58-Sceloporus_maf05_minDP5_maxDP50.recode.vcf --missing-indv --out sample_missing_info
 
@@ -13,24 +21,25 @@ vcftools --gzvcf 58-Sceloporus_maf05_minDP5_maxDP50.recode.vcf --site-mean-depth
 vcftools --gzvcf 58-Sceloporus_maf05_minDP5_maxDP50.recode.vcf --missing-site --out site_missing_info
 
 # MISSING FILTER --------------------------------------------------------------------
-# filter out individuals with missingness >60% (this drops one individual)
+# filter out individuals with missingness >60% (this drops 14 individuals)
 awk '$5 <= 0.60 {print $1}' sample_missing_info.imiss > keep.list
+awk '$5 > 0.60 {print $1}' sample_missing_info.imiss > remove.list
 vcftools --vcf 58-Sceloporus_maf05_minDP5_maxDP50.recode.vcf --keep keep.list --recode --out 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60
 
 # filter out sites with missingness >20%
 vcftools --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60.recode.vcf --max-missing 0.8 --recode --recode-INFO-all --out 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80
 
 # count number of SNPs 
-grep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80.recode.vcf #16,287,843
+grep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80.recode.vcf #15,348,696
 
 # get missing data again
 vcftools --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80.recode.vcf --missing-indv --out sample_depth_info_postfilter
 
-# filter out individuals with missingness <20%
-# keeps 112 out of 126
-awk '$5 <= 0.20 {print $1}' sample_depth_info_postfilter.imiss > keep.list
-awk '$5 > 0.20 {print $1}' sample_depth_info_postfilter.imiss > remove.list
-vcftools --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80.recode.vcf --keep keep.list --recode --out 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20
+# filter out individuals with missingness >20%
+# keeps 112 out of 132 individuals
+awk '$5 <= 0.20 {print $1}' sample_depth_info_postfilter.imiss > keep_postfilter.list
+awk '$5 > 0.20 {print $1}' sample_depth_info_postfilter.imiss > remove_postfilter.list
+vcftools --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80.recode.vcf --keep keep_postfilter.list --recode --out 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20
 
 # rename files
 mv 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.recode.vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf
@@ -39,7 +48,7 @@ mv 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.recode.vcf 58-Scelo
 bgzip -c 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf > 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz
 
 # count number of SNPs 
-zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz #16,287,843
+zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz #15,348,696
 
 # LINKAGE PRUNING -------------------------------------------------------------------------
 # Run linkage pruning
@@ -84,14 +93,11 @@ bcftools view -r JALMGF010000001.1 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_m
 
 
 # COUNT NUMBER OF SITES ------------------------------------
-#download callable sites
-#rsync -avP hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus/58-Sceloporus_callable_sites.bed 58-Sceloporus
-
 # count snps
-zgrep -vc "^#" 58-Sceloporus_clean_snps.vcf.gz > 58-Sceloporus_allsnps_nsites.txt
+zgrep -vc "^#" $RAW_DATA > 58-Sceloporus_allsnps_nsites.txt
 
 # count snps postfilters
 zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz > 58-Sceloporus_postfiltersnps_nsites.txt
 
 # count number of callable sites 
-python ../data_processing/count_callable.py
+python ../../data_processing/count_callable.py
