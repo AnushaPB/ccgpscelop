@@ -3,7 +3,13 @@
 data/
 gnx/
 58-Sceloporus/
+58-Sceloporus2/
+BIOMOD/
 *.tif
+*.pdf
+
+# Maxent
+maxent.jar
 
 # Files in analysis except scripts
 # note this pattern is necessary to properly set-up rules:
