@@ -1,6 +1,6 @@
-source activate cchpscelop
+source activate ccgpscelop
 
-BASE_PATH=../../58-Sceloporus
+BASE_PATH=../../data/processed_data
 VCF=$BASE_PATH/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz
 GENOME="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
 
@@ -13,7 +13,8 @@ GENOME="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSce
 # N(NM): Count of non-missing genotypes
 # F: Inbreeding coefficient estimate
 # calculate heterozygosity stats
-plink --vcf $VCF --make-bed --out 58-Sceloporus --allow-extra-chr
+# set const-fid to set FID (population ID) to 0; otherwise Error: Multiple instances of '_' in sample ID.
+plink --vcf $VCF --make-bed --out 58-Sceloporus --allow-extra-chr --const-fid
 plink --bfile 58-Sceloporus --het --out 58-Sceloporus --allow-extra-chr
 
 # move files into outputs and delete unnecessary files
