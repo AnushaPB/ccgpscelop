@@ -65,13 +65,19 @@ ggplot(csi_df) +
   facet_wrap(~model, nrow = 1) +
   theme_void() 
 
-value_range <- range(csi_df$CSI, na.rm = TRUE)
-breaks <- seq(from = value_range[1], to = value_range[2], length.out = 11) # 10 breaks create 11 points
 ggplot(csi_df) +
   geom_sf(data = ca) +
   geom_raster(aes(x = x, y = y, fill = CSI)) +
-  scale_fill_stepsn(colours = viridis::magma(100), n.breaks = 10) +
+  scale_fill_stepsn(colours = viridis::magma(100), n.breaks = 20) +
   facet_wrap(~model, nrow = 1) +
+  theme_void() 
+
+ggplot(filter(csi_df, model == "SSP 3-7.0")) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = CSI)) +
+  labs(fill = "Future climate\nstability index\n(CSI)") +
+  scale_fill_viridis_c(option = "magma", na.value = "gray", limits = c(NA, 0.2)) +
+  facet_wrap(~model, nrow = 2) +
   theme_void() 
 ```
 
