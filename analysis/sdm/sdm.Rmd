@@ -32,7 +32,9 @@ names(stk) <- c("Current", "LGM")
 env_df <-
   as.data.frame(stk, xy = TRUE) %>%
   mutate(Change = Current - LGM)
+```
 
+```{r}
 plt2 <-
   ggplot(env_df) +
   geom_sf(data = ca) +
@@ -87,7 +89,8 @@ map(env_df_vals, ~ {
   strong <- cor(cordf, use = "complete.obs")["Ho", -1]
   which(abs(strong) > 0.5)
 })
-
+```
+```{r}
 cor_vals <- 
   map(env_df_vals, ~ {
     cordf <- .x %>% dplyr::select(Ho, contains("bio")) %>% drop_na(Ho)
@@ -267,7 +270,7 @@ no_na <- mod_df %>% drop_na(Ho)
 mod <- lm(Ho ~ bio_2, no_na)
 no_na$residuals <- residuals(mod)
 
-resid <- left_join(get_coords(sf = TRUE), no_na)
+resid <- left_join(get_coords(sf = TRUE), no_na, by = "SampleID")
 
 ggplot(resid) +
   geom_sf(data = ca) +
@@ -917,7 +920,7 @@ ggplot(as.data.frame(stability, xy = TRUE)) +
 
 ```{r}
 # is stability correlated with change in bio2
-dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
+dif_bio2 <- env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
 dif_vals <- extract(dif_bio2, coords, ID = FALSE)
 df$change_bio2 <- dif_vals[,1]
 
@@ -1026,47 +1029,6 @@ summary(mod2)
 mod3 <- lm(Ho ~ sdm_vals + change_bio2, data = df)
 summary(mod3)
 # sdm value is close to significant when bio2 is included
-```
-
-Try out changes in range size (binary)
-```{r}
-# Load environmental variables extracted from BIOCLIM (bio_3, bio_4, bio_7, bio_11 & bio_12)
-data("bioclim_future")
-myExplFuture = rast(bioclim_future)
-
-hindcast_sdms <- 
-  map(
-    env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")],
-   ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]])
-   )
-
-# Project onto future conditions
-myBiomodProjectionFuture <- BIOMOD_Projection(bm.mod = myBiomodModelOut,
-                                              proj.name = 'Future',
-                                              new.env = myExplFuture,
-                                              models.chosen = 'all',
-                                              metric.binary = 'TSS',
-                                              build.clamping.mask = TRUE)
-
-# Load current and future binary projections
-CurrentProj <- get_predictions(myBiomodProj, metric.binary = "TSS")
-FutureProj <- get_predictions(myBiomodProjectionFuture, metric.binary = "TSS")
-
-# Compute differences
-myBiomodRangeSize <- BIOMOD_RangeSize(proj.current = CurrentProj, 
-                                      proj.future = FutureProj)
-
-myBiomodRangeSize$Compt.By.Models
-plot(myBiomodRangeSize$Diff.By.Pixel)
-
-# Represent main results 
-gg = bm_PlotRangeSize(bm.range = myBiomodRangeSize, 
-                      do.count = TRUE,
-                      do.perc = TRUE,
-                      do.maps = TRUE,
-                      do.mean = TRUE,
-                      do.plot = TRUE,
-                      row.names = c("Species", "Dataset", "Run", "Algo"))
 ```
 
 # Recent climate
@@ -1260,4 +1222,44 @@ ggplot(filter(df_resamp, name == "bio_2")) +
   scale_fill_viridis_c(option = "magma", na.value = NA) +
   theme_void()
 
+```
+
+# Look at future climate change
+
+To download all bioclim data:
+Generate envidatS3paths.txt file here: https://envicloud.wsl.ch/#/?prefix=chelsa%2Fchelsa_V2%2FGLOBAL%2Fclimatologies%2F
+wget --no-host-directories --force-directories --input-file=envidatS3paths.txt
+
+```{r}
+# Get current climate
+paleovars <- get_paleovars()
+cur <- paleovars[["cur"]]
+cur <- crop(cur, ca)
+cur <- mask(cur, ca)
+
+# Get BIO1 and convert
+cur <- cur[["bio_1"]]/1000
+
+# Get future climate
+future2 <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1.tif"))
+# Get future climate
+future <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_gfdl-esm4_ssp585_V.2.1.tif"))
+future <- crop(future, ca)
+future <- mask(future, ca)
+
+future <- crop(future, ca)
+future <- mask(future, ca)
+
+# Convert future to same extent as cur
+future <- resample(future, cur)
+
+# Calculate climate change
+cc <- future - cur
+
+ggplot(as.data.frame(cc, xy = TRUE)) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(cc)[1]]])) +
+  labs(fill = "Future change\nin temperature")
+  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  theme_void()
 ```
