@@ -56,7 +56,6 @@ plt3 <-
   theme_void()
 
 grid.arrange(plt1, plt2, plt3, nrow = 1)
-
 ```
 
 # running linear models
@@ -226,7 +225,6 @@ map(unique(lm_result$model), ~ {
 ```{r}
 # showing off bio2
 mod_df <- env_df_vals[["dif_lh"]]
-
 plt2 <-
 ggplot(mod_df) +
   geom_sf(data = ca) +
@@ -241,9 +239,9 @@ ggplot(mod_df) +
   geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
   theme_void() +
   scale_color_viridis_c(option = "magma")
-  
 
-plt1 <- ggplot(mod_df, aes(bio_2, Ho)) +
+plt1 <- 
+  ggplot(mod_df, aes(bio_2, Ho)) +
   geom_point() +
   geom_smooth(method = "lm") +
   stat_regline_equation(
@@ -277,6 +275,97 @@ ggplot(resid) +
   theme_void() +
   scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
 ```
+
+try adding q-values
+```{r}
+# cluster = final cluster assignment for SampleID given max Q
+# PopGroup = Q values for each cluster
+q5 <- read_csv(here("analysis", "admixture", "outputs", "Q5.csv"))
+q5 <- 
+  q5 %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) 
+
+# plot residuals
+no_na <- 
+  mod_df %>% 
+  drop_na(Ho) %>%
+  left_join(q5, by = "SampleID")
+
+ggplot(no_na) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = Q), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_viridis_c()
+
+# Use the Q of the identified cluster (the max Q) to represent admixture (idea: lower max Q = more admixture)
+mod_q <- lm(Ho ~ bio_2 + Q, no_na)
+
+# Q is significant
+summary(mod_q)
+
+# Plot Ho vs Q
+ggplot(no_na, aes(x = 1/Q, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+no_na$residuals <- residuals(mod_q)
+ggplot(no_na) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = residuals), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+# create null model
+no_na$null <- 1
+mod_null <- lm(Ho ~ null, no_na)
+no_na$residuals_null <- residuals(mod_null)
+ggplot(no_na) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = residuals_null), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+mod_bio2 <- lm(Ho ~ bio_2, no_na)
+no_na$residuals_bio2 <- residuals(mod_bio2)
+
+mod_q <- lm(Ho ~ Q, no_na)
+no_na$residuals_q <- residuals(mod_q)
+
+mod_q_bio2 <- lm(Ho ~ Q + bio_2, no_na)
+no_na$residuals_q_bio2 <- residuals(mod_q_bio2)
+
+no_na$delta_residuals_q <- abs(no_na$residuals_bio2) - abs(no_na$residuals_q_bio2)
+no_na$delta_residuals_bio2 <- abs(no_na$residuals_q) -  abs(no_na$residuals_q_bio2)
+
+ggdf <-
+  no_na %>%
+  pivot_longer(c("delta_residuals_bio2", "delta_residuals_q")) 
+ggplot(ggdf) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
+  facet_wrap(~name) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+ggdf <-
+  no_na %>%
+  pivot_longer(c("residuals_bio2", "residuals_q", "residuals_q_bio2")) 
+ggplot(ggdf) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
+  facet_wrap(~name) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+```
+
 ### Evaluating other time periods
 ```{r}
 mega_df <- bind_rows(env_df_vals, .id = "timeperiod") %>% mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
@@ -639,6 +728,9 @@ ggplot() +
 
 
 # SDM
+
+BIOMOD: https://biomodhub.github.io/biomod2/articles/examples_1_mainFunctions.html
+
 ```{r}
 library(countrycode)
 library(CoordinateCleaner)
@@ -674,18 +766,49 @@ lh <- env_list[["lh"]]
 
 # pca
 selected_vars <- pc_var_selection(cur)
+```
 
+```{r}
 # get coordinates
 occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "both", occ_limit = 10000, cache = TRUE)
 
 # get or create bias background layer
-bias_class <- get_bias("Sceloporus occidentalis", rank = "class", cache = TRUE)
+bias_class <- get_bias("Sceloporus occidentalis", rank = "class", limit = 10000, n = 10000, cache = TRUE)
+
+envlayers <- cur[[selected_vars]]
+envlayers <- rast(here("data", "env", "CLEANED_ENVDATA_NOCOR.tif"))
 
 # run SDM
-sdm_mod <- sdm(occ_coords, cur[[selected_vars]], biasdat = bias_class, models = "RF", nbkg = 10000, output = FALSE, file.name = "", tune = TRUE)
+sdm_mod <- 
+  sdm(
+    coordinates = occ_coords,
+    envlayers = envlayers, 
+    biasdat = bias_class, 
+    models = "RF", 
+    BIOMOD_name = "BIOMOD", 
+    tune = FALSE
+    )
+
+sdm_raster <- sdm_mod$raster
+#writeRaster(sdm_raster, here("analysis", "sdm", "outputs", "sdm.tif"))
+sdm_raster <- rast(here("analysis", "sdm", "outputs", "sdm.tif"))
+
+cutoff <- 
+  sdm_mod$eval %>% 
+  filter(metric.eval == "TSS") %>% 
+  pull(cutoff) 
+  
+bin_raster <- sdm_raster
+bin_raster[bin_raster > cutoff/1000] <- 1
+bin_raster[bin_raster <= cutoff/1000] <- 0
+plot(bin_raster)
 
 # hindcast SDMs
-hindcast_sdms <- map(env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")], ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]]))
+hindcast_sdms <- 
+  map(
+    env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")],
+   ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]])
+   )
 hindcast_sdms <- rast(hindcast_sdms)
 writeRaster(hindcast_sdms, here("outputs", "hindcast_sdms.tif"))
 
@@ -693,18 +816,27 @@ writeRaster(hindcast_sdms, here("outputs", "hindcast_sdms.tif"))
 # TODO: PLAY AROUND WITH TIMEPERIOD USED TO CALCULATE DIF_SDM AND STABILITY
 cur_sdm <- sdm_mod$raster 
 dif_sdm <- cur_sdm - hindcast_sdms[["lh"]]
-stability <- sum(subset(hindcast_sdms, c("eh", "mh", "lh", "cur")))
-plot(stability)
-plot(dif_sdm)
- 
+
+hindcast_subset <- subset(hindcast_sdms, c("hs1", "ba", "yds", "eh", "mh", "lh", "cur"))
+stability <- app(hindcast_subset, mean, na.rm =TRUE)
+variability <- app(hindcast_subset, sd, na.rm =TRUE)
+plot(stability, col = mako(100))
+plot(variability, col = mako(100))
+plot(dif_sdm, col = viridis(100))
+
+trend <- global(hindcast_subset, mean, na.rm = TRUE)
+trend <- data.frame(mean = trend, tp = rownames(trend)) %>% mutate(tp = factor(tp, levels = names(hindcast_subset)))
+ggplot(trend) + geom_line(aes(x = tp, y = mean, group = 1))
+
 # compare to genetic diversity
 het <- get_het()
 roh <- get_roh()
 coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
 change_vals <- extract(dif_sdm, coords, ID = FALSE)
 stability_vals <- extract(stability, coords, ID = FALSE)
-sdm_vals <- extract(cur_sdm, coords, ID = FALSE)
-df <- data.frame(change = change_vals[,1], stability = stability_vals[,1],  coords)
+cur_vals <- extract(cur_sdm, coords, ID = FALSE)
+# df <- data.frame(cur = cur_vals, coords)
+df <- data.frame(change = change_vals[,1], stability = stability_vals[,1],  cur = cur_vals[,1], coords)
 ggplot(df, aes(x = change, y = Ho)) +
   geom_point() +
   stat_regline_equation(
@@ -725,7 +857,27 @@ ggplot(df, aes(x = stability, y = Ho)) +
   stat_cor(label.y = 0) +
   theme_classic()
 
+ggplot(df, aes(x = cur, y = Ho)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
 ggplot(df, aes(x = change, y = froh0)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+ggplot(df, aes(x = cur, y = froh0)) +
   geom_point() +
   stat_regline_equation(
       aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
@@ -747,12 +899,29 @@ ggplot(df_group) +
 ```
 
 ```{r}
+# presentation plots
+ggplot(as.data.frame(sdm_raster, xy = TRUE)) +
+  geom_sf(data = ca, fill = "darkgray") +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(sdm_raster)[1]]])) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Suitability") +
+  theme_void()
+
+ggplot(as.data.frame(stability, xy = TRUE)) +
+  geom_sf(data = ca, fill = "darkgray") +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(stability)[1]]])) +
+  scale_fill_viridis_c(option = "mako", limits =c(0,1)) +
+  labs(fill = "Stability") +
+  theme_void()
+```
+
+```{r}
 # is stability correlated with change in bio2
 dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
 dif_vals <- extract(dif_bio2, coords, ID = FALSE)
 df$change_bio2 <- dif_vals[,1]
 
-# confirm correlations with Ho
+# check correlations with Ho
 cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
 cor(df$stability, df$Ho, use = "pairwise.complete.obs")
 
@@ -787,9 +956,7 @@ ggplot(df, aes(x = value, y = Ho)) +
   stat_cor(label.y = 0) +
   theme_classic()
 
-
-# SDM and heterozygosity most strongly correlate Ho in the late holocene
-ggplot(filter(df, name %in% c("eh", "mh", "lh", "cur")), aes(x = value, y = Ho)) +
+ggplot(filter(df, name %in% c("ba", "eh", "mh", "lh", "cur")), aes(x = value, y = Ho)) +
   geom_point() +
   facet_wrap(~name) +
   stat_regline_equation(
@@ -813,11 +980,11 @@ ggplot(filter(df, name %in% c("lh", "cur")), aes(x = value, y = froh0)) +
 ```
 
 ```{r}
-# is sdm value correlated with change in bio2
+# is sdm current value correlated with change in bio2
 df <- coords
 dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
 df$change_bio2 <-  extract(dif_bio2, coords, ID = FALSE)[,1]
-df$sdm_vals <- extract(hindcast_sdms[["lh"]], coords, ID = FALSE)[,1]
+df$sdm_vals <- extract(hindcast_sdms[["cur"]], coords, ID = FALSE)[,1]
 
 # confirm correlations with Ho
 cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
@@ -833,9 +1000,74 @@ mod2 <- lm(Ho ~ sdm_vals, data = df)
 summary(mod2)
 mod3 <- lm(Ho ~ sdm_vals + change_bio2, data = df)
 summary(mod3)
-# SDM value is no longer significant when bio2 is included
+# sdm value is not significant when bio2 is included or by itself
 ```
 
+
+```{r}
+# is sdm ba value correlated with change in bio2 (noticed a correlation)
+df <- coords
+dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
+df$change_bio2 <-  extract(dif_bio2, coords, ID = FALSE)[,1]
+df$sdm_vals <- extract(hindcast_sdms[["cur"]], coords, ID = FALSE)[,1]
+
+# confirm correlations with Ho
+cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
+cor(df$sdm_vals, df$Ho, use = "pairwise.complete.obs")
+
+# correlated, but not strongly (-0.42)
+cor(df$change_bio2, df$sdm_vals, use = "pairwise.complete.obs")
+
+# check for statistical suppression/whether both variables are significant when both are included
+mod1 <- lm(Ho ~ change_bio2, data = df)
+summary(mod1)
+mod2 <- lm(Ho ~ sdm_vals, data = df)
+summary(mod2)
+mod3 <- lm(Ho ~ sdm_vals + change_bio2, data = df)
+summary(mod3)
+# sdm value is close to significant when bio2 is included
+```
+
+Try out changes in range size (binary)
+```{r}
+# Load environmental variables extracted from BIOCLIM (bio_3, bio_4, bio_7, bio_11 & bio_12)
+data("bioclim_future")
+myExplFuture = rast(bioclim_future)
+
+hindcast_sdms <- 
+  map(
+    env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")],
+   ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]])
+   )
+
+# Project onto future conditions
+myBiomodProjectionFuture <- BIOMOD_Projection(bm.mod = myBiomodModelOut,
+                                              proj.name = 'Future',
+                                              new.env = myExplFuture,
+                                              models.chosen = 'all',
+                                              metric.binary = 'TSS',
+                                              build.clamping.mask = TRUE)
+
+# Load current and future binary projections
+CurrentProj <- get_predictions(myBiomodProj, metric.binary = "TSS")
+FutureProj <- get_predictions(myBiomodProjectionFuture, metric.binary = "TSS")
+
+# Compute differences
+myBiomodRangeSize <- BIOMOD_RangeSize(proj.current = CurrentProj, 
+                                      proj.future = FutureProj)
+
+myBiomodRangeSize$Compt.By.Models
+plot(myBiomodRangeSize$Diff.By.Pixel)
+
+# Represent main results 
+gg = bm_PlotRangeSize(bm.range = myBiomodRangeSize, 
+                      do.count = TRUE,
+                      do.perc = TRUE,
+                      do.maps = TRUE,
+                      do.mean = TRUE,
+                      do.plot = TRUE,
+                      row.names = c("Species", "Dataset", "Run", "Algo"))
+```
 
 # Recent climate
 Download PRISM max temperature data from historical data: https://prism.oregonstate.edu/historical/

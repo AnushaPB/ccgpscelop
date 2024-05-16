@@ -346,3 +346,26 @@ ggplot(csi_long, aes(x = csi, y = Ho)) +
 ```{r}
 library("rangemap")
 ```
+
+# Building SDMs
+```{r}
+spps <- c("Sceloporus occidentalis", "Setophaga", "Ursus americanus")
+
+# get coordinates
+occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "both", occ_limit = 10000, cache = TRUE)
+
+# get or create bias background layer
+bias_class <- get_bias("Sceloporus occidentalis", rank = "class", limit = 10000, n = 10000, cache = TRUE)
+
+# run SDM
+sdm_mod <- 
+  sdm(
+    coordinates = occ_coords,
+    envlayers = cur[[selected_vars]], 
+    biasdat = bias_class, 
+    models = "RF", 
+    BIOMOD_name = "BIOMOD", 
+    tune = FALSE
+    )
+
+```

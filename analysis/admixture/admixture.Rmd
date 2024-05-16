@@ -94,14 +94,24 @@ do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
 ```{r}
-# write out population files
+# Write out Q files for Q = 5
+# cluster = final cluster assignment for SampleID given max Q
+# PopGroup = Q values for each cluster
+Q %>% 
+  filter(K == 5) %>% 
+  write_csv(here("analysis", "admixture", "outputs", "Q5.csv"))
+
+# write out population files for Q = 5
 Q %>%
-  filter(K == 5, PopGroup == "V1") %>%
+  filter(K == 5) %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) %>%
   mutate(pop = paste0("pop", cluster)) %>%
   group_by(cluster) %>%
   group_split() %>%
   map(~as.character(pull(.x, SampleID))) %>%
-  imap(\(x, idx) write(x, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
+  iwalk(\(x, idx) write(x, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
