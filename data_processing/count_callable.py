@@ -23,7 +23,7 @@ with open('58-Sceloporus_allsnps_nsites.txt', 'r') as file:
 # postfilter number of sites
 # calculated with this code:
 # zgrep -vc "^#" 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz > 58-Sceloporus_postfiltersnps_nsites.txt
-with open('58-Sceloporus_postfiltersnps_nsites.txt', 'r') as file:{}
+with open('58-Sceloporus_postfiltersnps_nsites.txt', 'r') as file:
     snps_filter = int(file.readline())
 
 # calculate number of snps excluded by filter
