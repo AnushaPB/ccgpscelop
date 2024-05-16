@@ -82,10 +82,10 @@ ggplot(ggmaps) +
 
 ## Paleoclimate
 ```{r}
-envstack <- rast(here("data", "env", "paleoclim.tif"))
+envstack <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
 lhstack <- envstack[[grepl("lh", names(envstack))]]
-lhpcs <- RStoolbox::rasterPCA(envstack, nComp = 3, scale = TRUE)
-lhpcs <- pcs$map
+lhpcs <- RStoolbox::rasterPCA(lhstack, nComp = 3, scale = TRUE)
+lhpcs <- lhpcs$map
 
 coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) 
 env <- terra::extract(lhpcs, coords_proj, ID = FALSE)
@@ -103,7 +103,7 @@ points(coords_proj, pch = 1, cex = 1)
 ```
 ```{r}
 curstack <- envstack[[grepl("cur", names(envstack))]]
-curpcs <- RStoolbox::rasterPCA(envstack, nComp = 3, scale = TRUE)
+curpcs <- RStoolbox::rasterPCA(curstack, nComp = 3, scale = TRUE)
 curpcs <- curpcs$map
 
 coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) 
@@ -113,13 +113,31 @@ gdm_cur <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", 
 
 print(gdm_cur$coeff_df)
 
-maps <- gdm_map(gdm$model, curpcs, coords_proj, plot_vars = FALSE)
+maps <- gdm_map(gdm_cur$model, curpcs, coords_proj, plot_vars = FALSE)
+plotRGB(maps$pcaRastRGB)
+points(coords_proj, pch = 1, cex = 1)
+```
+
+
+```{r}
+bio2 <- envstack[[grepl("lh_2", names(envstack))]]
+
+coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) 
+env <- terra::extract(bio2, coords_proj, ID = FALSE)
+
+gdm_bio2 <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
+
+print(gdm_bio2$coeff_df)
+
+maps <- gdm_map(gdm_bio2$model, bio2, coords_proj, plot_vars = FALSE)
+plotRGB(maps$pcaRastRGB)
+points(coords_proj, pch = 1, cex = 1)
+print(gdm_bio2$coeff_df)
 ```
 
 ```{r}
 print(gdm_cur$coeff_df)
 print(gdm_lh$coeff_df)
-
 ```  
 
 # MMRR
