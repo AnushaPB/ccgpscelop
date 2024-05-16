@@ -22,12 +22,7 @@ format_dist()
 ```
 
 ```{r}
-# Load the U.S. state boundaries data
-states <- states(cb = TRUE)
-# Extract the boundary of California (CA)
-ca <- states[states$STUSPS == "CA", "STUSPS"]
-
-# sample coords
+ca <- get_ca()
 coords <- get_coords()
 ```
 
