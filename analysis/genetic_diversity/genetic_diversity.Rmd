@@ -48,7 +48,9 @@ coords <- get_coords(sf = TRUE)
 het <- get_het()
 
 # Combine coords and het data
-coords <- left_join(coords, het, by = "SampleID") 
+coords <- 
+  left_join(coords, het, by = "SampleID") %>% 
+  drop_na(Ho)
 
 ggplot(coords) + 
   geom_sf(data = ca) +
@@ -89,7 +91,9 @@ mask_Ho <- mask_gd(krig_Ho, ca_proj)
 #mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 1)
 
 # Plot masked kriging result
-ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100))
+ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100)) +
+  labs(fill = "Ho") +
+  scale_fill_viridis_c(labels = scales::scientific, option = "magma")
 ```
 
 # ROH
@@ -148,14 +152,21 @@ ggplot_gd(mask_froh, bkg = ca_proj, col = magma(100))
 
 # Models
 ```{r models, fig.width = 5, fig.height = 5, result = FALSE, message = FALSE, eval = TRUE}
-envdata <- get_env()
+envdata <- get_env() %>% left_join(get_coords(), by = c("x","y")) %>% rename(SampleID = SampleID.y)
 mod_df <- 
-  left_join(roh, envdata) %>%
+  left_join(froh, envdata) %>%
   left_join(het) %>%
   st_drop_geometry() %>%
   mutate(froh0_log = log(froh0 + 1)) %>%
   drop_na(froh0, Ho, elevation)
 
+mod_df <- 
+  left_join(het, envdata) %>%
+  st_drop_geometry() %>%
+  drop_na(Ho, elevation)
+
+
+# FROH
 mod_div <- lm(froh0_log ~ Ho + elevation, data = mod_df)
 summary(mod_div)
 plot(mod_div)
@@ -215,6 +226,36 @@ ggplot(mod_df) +
   theme_classic()
 ```
 
+```{r}
+# HO
+# Climate model:
+mod_clim <- lm(Ho ~ CA_rPCA1 + CA_rPCA2 + CA_rPCA3, data = mod_df)
+# CA_rPCA1 is significant
+summary(mod_clim)
+
+# Elevation model:
+mod_elev <- lm(Ho ~ elevation, data = mod_df)
+# Elevation is not significant...but it is close
+summary(mod_elev)
+
+# Development and imperviousness model
+mod_imperv <- lm(Ho ~ nlcd_imperviousness + elevation, data = mod_df)
+summary(mod_imperv)
+
+mod_devel <- lm(Ho ~ developed + elevation, data = mod_df)
+summary(mod_devel)
+
+ggplot(mod_df) +
+  geom_point(aes(x = CA_rPCA1, y = Ho)) +
+  theme_classic()
+
+ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = CA_rPCA1)) +
+  theme_void() +
+  scale_color_viridis_c()
+```
+
 # Comparison of ROH vs Ho
 ```{r}
 mod_df <- mod_df %>% drop_na(Ho, froh0)
@@ -239,3 +280,4 @@ ggplot(mod_df, aes(x = Ho, y = froh0)) +
 mod_df <- st_as_sf(mod_df)
 
 rclone
+```
