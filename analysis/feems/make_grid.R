@@ -29,4 +29,4 @@ ggplot() +
 
 # write out shp file
 st_crs(grid) <- NA
-sf::st_write(grid, here("analysis", "feems", "triangle_res8.shp"), append = FALSE)
+sf::st_write(grid, here("analysis", "feems", "outputs", "triangle_res8.shp"), append = FALSE)
