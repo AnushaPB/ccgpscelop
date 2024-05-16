@@ -1,3 +1,4 @@
+# first set-up feems with: feems_setup.sh
 # source activate feems_env
 # cd analysis/feems
 
@@ -9,7 +10,8 @@ from pandas_plink import read_plink
 
 # viz
 import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
+# causes core dump:
+#import cartopy.crs as ccrs
 
 # feems
 from feems.utils import prepare_graph_inputs
@@ -19,9 +21,6 @@ import pandas as pd
 # grid
 import geopandas as gpd
 from shapely.geometry import Polygon
-
-# set data path
-data_path = pkg_resources.resource_filename("feems", "data/")
 
 # change matplotlib fonts
 plt.rcParams["font.family"] = "Arial"
@@ -50,10 +49,6 @@ coord = filtered_coords_df.iloc[:, [1, 2]]
 # convert to numpy array
 coord = coord.values
 
-# setup graph
-coordd = np.loadtxt("{}/wolvesadmix.coord".format(data_path))  # sample coordinates
-outerd = np.loadtxt("{}/wolvesadmix.outer".format(data_path)) 
-
 # Calculate the outer coordinates by getting the minimum and maximum values from coord
 min_x = np.min(coord[:, 0])
 max_x = np.max(coord[:, 0])
@@ -68,7 +63,6 @@ outer = np.array([[min_x - buffer, min_y - buffer],
           [max_x + buffer, min_y - buffer]])
 
 # Continue with the rest of the code
-grid_pathd = "{}/grid_100.shp".format(data_path)  # path to discrete global grid
 grid_path = "triangle_res8.shp"
 
 # Load the shapefile
