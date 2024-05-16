@@ -14,7 +14,9 @@ library(terra)
 library(sf)
 source(here("general_functions.R"))
 source(here("analysis", "ibdibe", "gendist.R"))
+```
 
+```{r}
 # Format distances and write out file
 format_dist()
 ```
@@ -26,27 +28,21 @@ states <- states(cb = TRUE)
 ca <- states[states$STUSPS == "CA", "STUSPS"]
 
 # sample coords
-coords <- read_table(here("data/58-Sceloporus.coords.txt"), col_names = FALSE)
-colnames(coords) <- c("ID", "x", "y")
+coords <- get_coords()
 ```
 
 # GDM
 
 ```{r}
 gendist <- get_gendist()
-# fix Array sample ID
-row.names(gendist)[!(row.names(gendist) %in% coords$ID)]
-i <- which(row.names(gendist) == "Array")
-row.names(gendist)[i] <- colnames(gendist)[i] <- "Array#33"
-row.names(gendist)[!(row.names(gendist) %in% coords$ID)]
 
 gendist_coords <- 
   coords %>% 
-  filter(ID %in% row.names(gendist)) %>%
-  mutate(ID = factor(ID, levels = row.names(gendist))) %>%
-  arrange(ID)
+  filter(SampleID %in% row.names(gendist)) %>%
+  mutate(SampleID = factor(SampleID, levels = row.names(gendist))) %>%
+  arrange(SampleID)
 
-stopifnot(gendist_coords$ID == row.names(gendist))
+stopifnot(gendist_coords$SampleID == row.names(gendist))
 
 ```
 
@@ -54,9 +50,13 @@ stopifnot(gendist_coords$ID == row.names(gendist))
 ```{r}
 envstack <- rast(here("data", "env", "envstack.tif"))
 names(envstack) <- c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3", "elevation")
-env_agg <- aggregate(envstack, 100)
+env_agg <- aggregate(envstack, 50)
 
-coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) %>% st_transform(3310)
+coords_proj <- 
+  gendist_coords[,c("x", "y")] %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  st_transform(3310)
+
 env <- terra::extract(envstack, coords_proj, ID = FALSE)
 
 gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
@@ -124,7 +124,14 @@ print(gdm_lh$coeff_df)
 
 # MMRR
 ```{r}
-mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = envstack, quiet = FALSE)
+coords_proj <- 
+  gendist_coords[,c("x", "y")] %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  st_transform(3310)
+
+env <- terra::extract(envstack, coords_proj, ID = FALSE)
+
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = FALSE)
 
 print(mmrr$coeff_df)
 ```
