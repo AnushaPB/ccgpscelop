@@ -1,0 +1,53 @@
+# Dockerfile modified from: http://haines-lab.com/post/2022-01-23-automating-computational-reproducibility-with-r-using-renv-docker-and-github-actions/
+# Start with geospatial v 4.3.1
+#FROM ghcr.io/rocker-org/devcontainer/geospatial:4.3
+FROM rocker/r-base:latest
+
+# Relabel docker
+LABEL org.opencontainers.image.description=""
+
+# Install git
+RUN apt-get update && apt-get install -y git
+
+# Install Miniconda
+ENV PATH="/root/miniconda3/bin:${PATH}"
+ARG PATH="/root/miniconda3/bin:${PATH}"
+RUN apt-get update
+
+RUN apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+RUN wget \
+    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
+    && mkdir /root/.conda \
+    && bash Miniconda3-latest-Linux-x86_64.sh -b \
+    && rm -f Miniconda3-latest-Linux-x86_64.sh 
+
+# Copy over to the Docker image
+COPY erik_feems.txt erik_feems.txt
+
+# Create a Conda environment and install FEEMS
+RUN conda create --name feems6 --file erik_feems.txt
+
+# Activate the conda environment by default
+RUN echo "source activate feems6" >> ~/.bashrc
+
+# Set the PATH for the environment
+ENV PATH /opt/conda/envs/feems6/bin:$PATH
+
+# Activate conda environment
+RUN /bin/bash -c "source activate feems6 && pip install git+https://github.com/NovembreLab/feems"
+
+# Ensure PROJ_LIB environment variable is set correctly
+ENV PROJ_LIB=/opt/conda/envs/feems6/share/proj
+
+# Add the UbuntuGIS repository and install additional packages
+RUN apt-get -y update && apt-get install -y libudunits2-dev libgdal-dev libgeos-dev libproj-dev
+
+# Install R packages
+RUN R -e "install.packages(c('sf'), repos='http://cran.rstudio.com/')"
+
+# Set the working directory
+WORKDIR /workspace
+
+# Set the entrypoint to use bash
+ENTRYPOINT ["/bin/bash"]
