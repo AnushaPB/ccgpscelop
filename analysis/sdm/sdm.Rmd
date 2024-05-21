@@ -17,11 +17,16 @@ source("general_functions.R")
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 source(here("analysis", "sdm", "paleovars.R"))
 ca <- get_ca()
+pdfpath <- here("analysis", "sdm", "pdfs")
 ```
+
 ```{r}
 # get paleovars
 env_list <- get_paleovars()
 paleokey <- get_paleokey()
+
+# Drop mis19
+env_list <- env_list[names(env_list) != "mis19"]
 
 # Assign the loaded and processed data to individual variables
 list2env(env_list, envir = .GlobalEnv)
@@ -60,7 +65,7 @@ plt3 <-
 grid.arrange(plt1, plt2, plt3, nrow = 1)
 ```
 
-# running linear models
+
 ```{r}
 # get coordinates
 df <- get_coords()
@@ -81,7 +86,10 @@ diff_vals <- map(diff_vars, ~ {
 })
 env_df_vals <- c(env_df_vals, diff_vals)
 names(env_df_vals) <- c(names(env_list), paste0("dif_", diff_vars))
+```
 
+# Correlation tests
+```{r}
 # check for strong correlations
 # only strong correlation is with the late holocene/bio2
 map(env_df_vals, ~ {
@@ -106,7 +114,7 @@ cor_df <-
   mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals))) %>%
   mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
 
-pdf("correlation_heatmap.pdf", width = 5, height = 3.75)
+pdf(here(pdfpath, "correlation_heatmap.pdf"), width = 5, height = 3.75)
 ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
   geom_tile() +
   labs(fill = expression(r[Ho])) +
@@ -129,7 +137,12 @@ map(env_df_vals, ~ {
 })
 ```
 
+# Linear models
+
+## Linear models with all variables (excluding correlated pairs)
 ```{r}
+
+# Run linear models (dropping correlated variables for models, but adding them back in for visualization)
 run_lm <- function(df, model_name){
   safe_collinear <- possibly(spatialEco::collinear)
   drop_vars <- safe_collinear(df %>% dplyr::select(contains("bio")), p = 0.6)
@@ -160,88 +173,251 @@ run_lm <- function(df, model_name){
 
 lm_result <- imap(env_df_vals, \(x, idx) run_lm(x, idx)) %>% bind_rows()
 
-sigvars <- lm_result %>% dplyr::select(-corvars) %>% distinct() %>% filter(`Pr...t..` < 0.05) %>% arrange(desc(Estimate))
+sigvars <- 
+  lm_result %>% 
+  dplyr::select(-corvars) %>% 
+  distinct() %>% 
+  filter(`Pr...t..` < 0.05) %>%
+  arrange(desc(Estimate))
 ```
 
 ```{r}
 plts <-
-map(unique(lm_result$model), ~ {
-  sig_df <-
-   lm_result %>% 
-   filter(model == .x) %>%
-   filter(`Pr...t..` < 0.05)
+  map(unique(lm_result$model), ~ {
+    sig_df <-
+    lm_result %>% 
+    filter(model == .x) %>%
+    filter(`Pr...t..` < 0.05)
 
-  sig_env_df <- 
-    env_df_vals[[.x]] %>% 
-    pivot_longer(contains("bio"), names_to = "var") %>% 
-    #include correlated vars
-    filter(var %in% unique(sig_df$corvars))
+    sig_env_df <- 
+      env_df_vals[[.x]] %>% 
+      pivot_longer(contains("bio"), names_to = "var") %>% 
+      #include correlated vars
+      filter(var %in% unique(sig_df$corvars))
 
-  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+    title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
 
-  if (nrow(sig_env_df) == 0) return(NULL)
-  plt <-
-  ggplot(sig_env_df, aes(value, Ho)) +
-    geom_point(alpha = 0.7) +
-    facet_wrap(~var, scales = "free", ncol = 5, nrow = 3) +
-    stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-    geom_smooth(method = "lm") +
-    stat_cor(label.y = 0) +
-    theme_classic() +
-    ggtitle(title)
+    if (nrow(sig_env_df) == 0) return(NULL)
+    plt <-
+    ggplot(sig_env_df, aes(value, Ho)) +
+      geom_point(alpha = 0.7) +
+      facet_wrap(~var, scales = "free", ncol = 5, nrow = 3) +
+      stat_regline_equation(
+        aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+        formula = y ~ x
+      ) +
+      geom_smooth(method = "lm") +
+      stat_cor(label.y = 0) +
+      theme_classic() +
+      ggtitle(title)
 
-  plt
-})
+    plt
+  })
 
-pdf("env_sigvars_with_corvars.pdf", width = 20, height = 15)
+pdf(here(pdfpath, "env_sigvars_with_corvars.pdf"), width = 20, height = 15)
 walk(plts, print)
 dev.off()
 
 plts <-
-map(unique(lm_result$model), ~ {
-  sig_df <- lm_result %>% filter(model == .x) %>% filter(`Pr...t..` < 0.05)
-  sig_env_df <- env_df_vals[[.x]] %>% pivot_longer(contains("bio"), names_to = "var") %>% filter(var %in% unique(sig_df$var))
-  title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+  map(unique(lm_result$model), ~ {
+    sig_df <- lm_result %>% filter(model == .x) %>% filter(`Pr...t..` < 0.05)
+    sig_env_df <- env_df_vals[[.x]] %>% pivot_longer(contains("bio"), names_to = "var") %>% filter(var %in% unique(sig_df$var))
+    title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
 
-  if (nrow(sig_env_df) == 0) return(NULL)
-  plt <-
-  ggplot(sig_env_df, aes(value, Ho)) +
-    geom_point(alpha = 0.7) +
-    facet_wrap(~var, scales = "free", nrow = 1) +
-    stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-    geom_smooth(method = "lm") +
-    stat_cor(label.y = 0) +
-    theme_classic() +
-    ggtitle(title)
+    if (nrow(sig_env_df) == 0) return(NULL)
+    plt <-
+    ggplot(sig_env_df, aes(value, Ho)) +
+      geom_point(alpha = 0.7) +
+      facet_wrap(~var, scales = "free", nrow = 1) +
+      stat_regline_equation(
+        aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+        formula = y ~ x
+      ) +
+      geom_smooth(method = "lm") +
+      stat_cor(label.y = 0) +
+      theme_classic() +
+      ggtitle(title)
 
-  plt
-})
+    plt
+  })
+
+```
+
+## PC-based linear models
+```{r}
+# Run PCA on the environmental variables for each time period
+run_pca <- function(df, model_name){
+  # Remove NAs
+  df <- 
+    df %>% 
+    drop_na(contains("bio"), "Ho")
+
+  # Get environmental variables
+  bio_df <- 
+    df %>% 
+    dplyr::select(contains("bio")) 
+    
+  # Run PCA
+  pca <- prcomp(bio_df, scale = TRUE)
+
+  # Select principal components
+  pcs <- pca$x[,1:3]
+
+  # Create a data frame with the principal components and genetic diversity
+  pcs_df <- data.frame(pcs, Ho = df$Ho)
+
+  # Fit a linear model with the principal components
+  mod <- summary(lm(Ho ~ ., data = pcs_df))
+
+  # Return the model statistics
+  result <- 
+    data.frame(mod$coefficients) %>% 
+    mutate(model = model_name) %>% 
+    mutate(adj_rsqr = mod$adj.r.squared) %>% 
+    mutate(var = rownames(.)) %>% 
+    filter(var != "(Intercept)")
+
+  return(list(result = result, pca = pca, pcs = pcs_df))
+}
+
+lmpca <- imap(env_df_vals, \(x, idx) run_pca(x, idx)) 
+lmpca_result <- map(lmpca, "result") %>% bind_rows()
+lmpca_pcs <- map(lmpca, "pcs") %>% bind_rows(.id = "model")
+sigvars <- 
+  lmpca_result %>% 
+  distinct() %>% 
+  filter(`Pr...t..` < 0.05) %>%
+  arrange(desc(adj_rsqr))
+```
+
+```{r}
+plts <-
+  map(unique(lmpca_result$model), ~ {
+    sig_df <-
+      lmpca_result %>% 
+      filter(model == .x) %>%
+      filter(`Pr...t..` < 0.05)
+
+    sig_env_df <- 
+      lmpca_pcs %>% 
+      filter(model == .x) %>%
+      pivot_longer(contains("PC"), names_to = "var") %>%
+      filter(var %in% unique(sig_df$var))
+
+    title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
+
+    if (nrow(sig_env_df) == 0) return(NULL)
+   
+    plt <-
+      ggplot(sig_env_df, aes(value, Ho)) +
+        geom_point(alpha = 0.7) +
+        facet_wrap(~var, scales = "free", ncol = 5, nrow = 3) +
+        stat_regline_equation(
+          aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+          formula = y ~ x
+        ) +
+        geom_smooth(method = "lm") +
+        stat_cor(label.y = 0) +
+        theme_classic() +
+        ggtitle(title) +
+        theme(strip.background = element_blank(), strip.text = element_text(size = 12))
+
+    plt
+  })
+
+pdf(here(pdfpath, "pca_lms.pdf"), width = 6, height = 4)
+walk(plts, print)
+dev.off()
 
 ```
 
 ```{r}
-# showing off bio2
+# PCA of PCAs
+lmpca_pcs_wide <- 
+  lmpca_pcs %>% 
+  pivot_wider(names_from = "model", values_from = contains("PC")) %>%
+  drop_na(contains("PC"))
+pca_pca <- prcomp(lmpca_pcs_wide %>% dplyr::select(contains("PC")), scale = TRUE)
+plot(pca_pca)
+pcs_pca <- data.frame(pca_pca$x[,1:6])
+
+summary(lm(lmpca_pcs_wide$Ho ~ ., pcs_pca))
+
+# PCA of all variables excluding mis19
+env_wide <- 
+  bind_rows(env_df_vals, .id = "timeperiod") %>% 
+  dplyr::select("Ho", contains("bio"), "timeperiod") %>%
+  drop_na("Ho") %>%
+  pivot_longer(contains("bio")) %>% 
+  filter(timeperiod != "hs1") %>%
+  pivot_wider(names_from = "timeperiod", values_from = value) %>% 
+  pivot_wider(names_from = "name", values_from = names(env_df_vals)[names(env_df_vals) != "hs1"]) %>%
+  drop_na(contains("bio"), "Ho")
+
+pca_all <- prcomp(env_wide %>% dplyr::select(contains("bio")), scale = TRUE)
+plot(pca_all)
+pcs_all <- data.frame(pca_all$x[,1:6])
+summary(lm(env_wide$Ho ~ ., pcs_all))
+
+loadings <- data.frame(pca_all$rotation[,1:6])
+loadings %>% arrange(desc(PC1)) %>% head()
+
+ggplot() +
+  geom_point(aes(x = pcs_all$PC1, y =env_wide$Ho)) +
+  geom_smooth(aes(x = pcs_all$PC1, y =env_wide$Ho), method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+
+# Just change variables
+pca_change <- prcomp(env_wide %>% dplyr::select(contains("dif")), scale = TRUE)
+plot(pca_change)
+pcs_change <- data.frame(pca_change$x[,1:6])
+summary(lm(env_wide$Ho ~ ., pcs_change))
+
+loadings <- data.frame(pca_change$rotation[,1:6])
+loadings %>% arrange(desc(PC2)) %>% head()
+
+ggplot() +
+  geom_point(aes(x = pcs_change$PC2, y =env_wide$Ho)) +
+  geom_smooth(aes(x = pcs_change$PC2, y =env_wide$Ho), method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+
+# Just single variables
+pca_change <- prcomp(env_wide %>% dplyr::select(-contains("dif")), scale = TRUE)
+plot(pca_change)
+pcs_change <- data.frame(pca_change$x[,1:6])
+summary(lm(env_wide$Ho ~ ., pcs_change))
+
+loadings <- data.frame(pca_change$rotation[,1:6])
+loadings %>% arrange(desc(PC1)) %>% head()
+
+ggplot() +
+  geom_point(aes(x = pcs_change$PC2, y =env_wide$Ho)) +
+  geom_smooth(aes(x = pcs_change$PC2, y =env_wide$Ho), method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+```
+
+## Showing off BIO2
+```{r}
 mod_df <- env_df_vals[["dif_lh"]]
 plt2 <-
-ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
-  labs(color = "Change\nin mean\ndiurnal\nrange") +
-  scale_color_viridis_c(option = "magma", direction = -1) +
-  theme_void() 
+  ggplot(mod_df) +
+    geom_sf(data = ca) +
+    geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
+    labs(color = "Change\nin mean\ndiurnal\nrange") +
+    scale_color_viridis_c(option = "magma", direction = -1) +
+    theme_void() 
 
 plt3 <-
-ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")
+  ggplot(mod_df) +
+    geom_sf(data = ca) +
+    geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
+    theme_void() +
+    scale_color_viridis_c(option = "magma")
 
 plt1 <- 
   ggplot(mod_df, aes(bio_2, Ho)) +
@@ -256,7 +432,7 @@ plt1 <-
   xlim(-7.5, NA) +
   theme_classic()
 
-pdf(here("bio2.pdf"), width = 15, height = 5)
+pdf(here(pdfpath, "bio2.pdf"), width = 15, height = 5)
 grid.arrange(plt1, plt2, plt3, nrow = 1)
 dev.off()
 ```
@@ -369,9 +545,12 @@ ggplot(ggdf) +
   scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
 ```
 
-### Evaluating other time periods
+### Evaluating BIO2 in other time periods
 ```{r}
-mega_df <- bind_rows(env_df_vals, .id = "timeperiod") %>% mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+mega_df <- 
+  bind_rows(env_df_vals, .id = "timeperiod") %>% 
+  mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+
 mega_df2 <- 
   mega_df %>% 
   filter(grepl("dif", timeperiod)) %>%
@@ -418,19 +597,21 @@ gg_df <-
   pivot_longer(all_of(bio2_cors_names)) %>%
   left_join(get_coords())
 
-plt1 <- ggplot(gg_df, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic() +
-  xlab("value")
+plt1 <- 
+  ggplot(gg_df, aes(value, Ho)) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    stat_regline_equation(
+      aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    facet_wrap(~name, scales = "free") +
+    stat_cor(label.y = 0) +
+    theme_classic() +
+    xlab("value")
 
-plt_list <- gg_df %>%
+plt_list <- 
+  gg_df %>%
   split(.$name) %>%
   map(~ {
     limit <- max(abs(.x[["value"]])) * c(-1, 1)
@@ -444,14 +625,14 @@ plt_list <- gg_df %>%
         )
 
 plt3 <-
-ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho)) +
-  ggtitle("E. Genetic diversity") +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")  
+  ggplot(gg_df) +
+    geom_sf(data = ca) +
+    geom_point(aes(x = x, y = y, color = Ho)) +
+    ggtitle("E. Genetic diversity") +
+    theme_void() +
+    scale_color_viridis_c(option = "magma")  
 
-pdf("correlated_vars.pdf", width = 10, height = 10)
+pdf(here(pdfpath, "correlated_vars.pdf"), width = 10, height = 10)
 print(plt1)
 do.call(grid.arrange, c(c(plt_list), nrow = 3))
 print(plt3)
@@ -487,7 +668,7 @@ cor_df <-
   mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
 
 # WARNING I THINK LABELS OF TIMEPERIODS/BIOCLIMS ARE OFF FIX THIS
-pdf("all_comparisons.pdf", width = 13, height = 10)
+pdf(here(pdfpath, "all_comparisons.pdf"), width = 13, height = 10)
 ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
   geom_tile() +
   labs(fill = expression(r[Ho])) +
@@ -502,16 +683,19 @@ ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
 dev.off()
 ```
 
-### Evaluating variance
+### Evaluating variance in variables 
 ```{r}
 var_df <- 
   mega_df %>%
   group_by(SampleID) %>%
-  mutate(across(contains("bio"), ~ var(., na.rm =TRUE))) %>%
+  mutate(across(contains("bio"), ~ var(., na.rm =TRUE))) 
+
+var_df_long <- 
+  var_df %>%
   pivot_longer(contains("bio"))
 
-pdf("var.pdf", width = 13, height = 10)
-ggplot(var_df, aes(value, Ho)) +
+pdf(here(pdfpath, "var.pdf"), width = 13, height = 10)
+ggplot(var_df_long, aes(value, Ho)) +
   geom_point() +
   geom_smooth(method = "lm") +
   stat_regline_equation(
@@ -526,21 +710,33 @@ dev.off()
 ```
 ### big lazy model
 ```{r}
+# NOTE: this way does not work well, results in low R^2 (PCS)
 no_na_df <- wide_df %>% drop_na(contains("bio"), Ho)
 pca <- prcomp(drop_na(dplyr::select(no_na_df, contains("bio"))))
-pcs <- pca$x[,1:3]
+pcs <- pca$x[,1:10]
 #make a screeplot
 screeplot(pca, type="lines", main="Screeplot of PCA")
 
 mod_df_pca <- data.frame(Ho = no_na_df$Ho, pcs)
-
 summary(lm(Ho ~ . , data = mod_df_pca))
 
 all_cors <- cor(no_na_df %>% dplyr::select(contains("bio")))
 
+# get variables with biggest PCA contributions to PC1, 2, and 3
+# NOTE: this way does not work well, results in low R^2 (Variables selection based on PCs)
+vars <- 
+  as.data.frame(pca$rotation[,1:10]) %>%
+  mutate(var = rownames(.)) %>%
+  pivot_longer(-var, names_to = "PC", values_to = "loading") %>%
+  group_by(PC) %>%
+  filter(loading == max(loading)) %>%
+  pull(var)
+f <- formula(paste("Ho ~", paste(vars, collapse = " + ")))
+summary(lm(f, data = no_na_df))
 ```
 
 ```{r}
+# THIS DOESN"T WOKR
 # get all cors and get absolute value (has to be absolute for clustering!)
 all_cors <- abs(cor(dplyr::select(no_na_df, contains("bio"))))
 
@@ -568,18 +764,21 @@ selected_vars <-
     return(var)
   }) %>% as.vector()
 
+cor(no_na_df$bio_3_dif_ba, no_na_df$bio_7_dif_lig)
+grouped_vars[map_lgl(grouped_vars, ~"bio_3_dif_ba" %in% .x)]
+grouped_vars[map_lgl(grouped_vars, ~"bio_7_dif_lig" %in% .x)]
 
 # check that all cors are below 0.6
 check_df <- dplyr::select(no_na_df, all_of(selected_vars))
 check_cor <- cor(check_df, use = "complete.obs")
 diag(check_cor) <- 0
 all(abs(check_cor) < 0.6)
+max(check_cor)
 
 # run model
 mod_df_no_cor <- no_na_df %>% dplyr::select(all_of(selected_vars), Ho)
 mod <- lm(Ho ~ ., data = mod_df_no_cor)
 summary(mod)
-
 df <- data.frame(predicted = mod$fitted.values, observed = mod_df_no_cor$Ho)
 
 ggplot(df, aes(x = observed, y = predicted)) +
@@ -591,6 +790,93 @@ ggplot(df, aes(x = observed, y = predicted)) +
   ) +
   stat_cor(label.y = 0) +
   theme_classic()
+```
+
+```{r}
+# get all cors and get absolute value 
+all_cors <- abs(cor(dplyr::select(no_na_df, contains("bio"))))
+
+# for each variable get the variables it is correlated with
+cor_vars <- 
+  map(1:nrow(all_cors), ~ {
+    cor_vars <- names(which(all_cors[.x,] > 0.6))
+    return(cor_vars)
+  })
+
+#define a function to merge overlapping vectors
+merge_overlaps <- function(lst) {
+  for (i in seq_along(lst)) {
+    for (j in seq_along(lst)) {
+      if (i != j && any(lst[[i]] %in% lst[[j]])) {
+        # Merge i and j and remove j from the list
+        lst[[i]] <- unique(c(lst[[i]], lst[[j]]))
+        lst <- lst[-j]
+        # Recursively call the function until there are no overlaps left
+        return(merge_overlaps(lst))
+      }
+    }
+  }
+  # Return the list if there are no overlaps left
+  lst
+}
+
+# Use the function to merge overlaps
+lst <- merge_overlaps(cor_vars)
+
+summary(lm(Ho ~ bio_2_dif_lh + bio_8_dif_lig + bio_2_dif_lig, no_na_df))
+```
+
+```{r}
+# Playing around with vars
+mod_df <- data.frame(wide_df, var = var_df$bio_1) %>% drop_na(Ho, var, bio_2_dif_lh, bio_9_dif_lh, bio_19_dif_lig, bio_2_hs1, bio_3_dif_lh)
+mod <- (lm(Ho ~ var + bio_2_dif_lh + bio_9_dif_lh + bio_19_dif_lig + bio_9_dif_lh + bio_2_hs1 + bio_3_dif_lh, data = mod_df))
+summary(mod)
+df <- data.frame(predicted = mod$fitted.values, observed = mod_df$Ho)
+
+ggplot(df, aes(x = observed, y = predicted)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  stat_cor(label.y = 0) +
+  theme_classic()
+```
+
+```{r}
+mod <- lm(wide_df$Ho ~ ., data = select(wide_df, contains("bio")))
+library(MuMIn)
+library(glmnet)
+
+no_na_df <- wide_df %>% drop_na()
+# Fit Elastic Net model (alpha = 0.5 combines Ridge and Lasso)
+x = as.matrix(select(no_na_df, contains("bio")))
+y = no_na_df$Ho
+elastic_net_model <- cv.glmnet(x, y, alpha = 0.5, standardize = TRUE)
+
+# Plot the cross-validated mean squared error
+plot(elastic_net_model)
+
+# Get the best lambda (penalty parameter)
+best_lambda <- elastic_net_model$lambda.min
+print(best_lambda)
+
+# Fit the model with the best lambda
+final_model <- glmnet(x, y, alpha = 0.5, lambda = best_lambda)
+
+# Get the coefficients of the final model
+coef(final_model)
+
+# Extract the indices of the selected variables
+coefs <- coef(final_model) 
+coefs <- as.vector(coef(final_model))
+names(coefs) <- rownames(coef(final_model))
+selected_vars <- names(which(coefs != 0))
+selected_vars <- selected_vars[selected_vars != "(Intercept)"]
+print(selected_vars)
+
+summary(lm(wide_df$Ho ~ ., data = select(wide_df, all_of(selected_vars))))
 ```
 
 ### Testing for effects of population structure
