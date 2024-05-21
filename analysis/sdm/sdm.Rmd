@@ -524,6 +524,7 @@ ggplot(var_df, aes(value, Ho)) +
   xlab("value")
 dev.off()
 ```
+
 ### big lazy model
 ```{r}
 no_na_df <- wide_df %>% drop_na(contains("bio"), Ho)
