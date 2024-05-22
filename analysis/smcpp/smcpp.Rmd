@@ -1,0 +1,95 @@
+---
+title: "SMC++"
+output:
+  github_document:
+    toc: TRUE
+---
+
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(scales)
+source(here("analysis", "smcpp", "smcpp.R"))
+
+# Set global options
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+```
+
+```{r, fig.width = 13, fig.height = 6}
+smcpp <- get_smcpp()
+
+#log_years <- smcpp %>% filter(GenusSpecies == "Rallus limicola") %>% filter(T ==1) %>% pull(years) %>% log()
+#inc <- log_years[2] - log_years[3]
+#vira_start = exp(log_years[2] - inc)
+
+smcpp <- 
+  smcpp %>%
+  group_by(pop) 
+
+ggplot(smcpp) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = T)) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  facet_wrap(~pop)+
+  theme_classic() +
+  scale_color_manual(values = viridis::mako(3, begin = 0.2, end = 0.8)) +
+  ylab("Ne") +
+  xlab("years") 
+
+ggplot(filter(smcpp, T == 3, !is.na(pop))) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
+  geom_vline(xintercept = 21e3) +
+  geom_vline(xintercept = 130e3) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop))) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "#575757")) +
+  # added so that 10^2 is shown on the graph
+  #geom_vline(xintercept = 100, alpha = 0) +
+  ylab("Ne") +
+  xlab("years") +
+  ggtitle("T = 2")
+
+  cur	Current (1979 – 2013)		CHELSA
+lh	Late Holocene: Meghalayan	4.2-0.3 ka	Fordham  et al. 2017
+mh	Mid Holocene: Northgrippian	8.326-4.2 ka	Fordham  et al. 2017
+eh	Early Holocene: Greenlandian	11.7-8.326 ka	Fordham  et al. 2017
+yds	Pleistocene: Younger Dryas Stadial	12.9-11.7 ka	Fordham  et al. 2017
+ba	Pleistocene: Bølling-Allerød	14.7-12.9 ka	Fordham  et al. 2017
+hs1	Pleistocene: Heinrich Stadial 1	17.0-14.7 ka	Fordham  et al. 2017
+lgm	Pleistocene: Last Glacial Maximum	ca. 21 ka	CHELSA
+lig	Pleistocene: Last Interglacial	ca. 130 ka	Otto-Bliesner et al. 2006
+```
+
+# Joint models
+```{r, fig.width = 13, fig.height = 6}
+joint <- get_joint()
+
+# The divergence time is very recent
+# 25-85 years ago
+print("Bay Area vs Southern California:")
+filter(joint, joint_short == "ba_sc" & label == "blra_sc") %>% filter(x != 0) %>% dplyr::select(T, years)
+
+print("Bay Area vs Sierra Foothills:")
+filter(joint, joint_short == "ba_sf" & label == "blra_sf") %>% filter(x != 0) %>% dplyr::select(T, years)
+
+ggplot(filter(joint, T == 1)) +
+  geom_line(data = filter(smcpp, T == 1, GenusSpecies == "Laterallus jamaicensis"), aes(x = years, y = y, col = group), lwd = 1, alpha = 0.8) +
+  geom_line(aes(x = years, y = y, col = group), lwd = 1, alpha = 0.8) +
+  facet_wrap(~joint) +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4")) +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  theme(strip.background = element_rect(colour = NA)) +
+  ylab("Ne") +
+  xlab("years") +
+  ggtitle("BLRA (T = 1)")
+```
