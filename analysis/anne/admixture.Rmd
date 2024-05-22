@@ -25,7 +25,7 @@ library(hierfstat)
 library(tigris)
 devtools::load_all()
 
-source(here("analysis", "admixture", "admixture.R"))
+source(here("analysis", "anne", "admixture.R"))
 source(here("general_functions.R"))
 ```
 
