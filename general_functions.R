@@ -9,7 +9,7 @@ get_ca <- function() {
 
 get_coords <- function(sf = FALSE) {
   # sample coords
-  coords <- read_table(here("data", "58-Sceloporus.coords.txt"), col_names = FALSE)
+  coords <- read_table(here("data", "raw_data", "58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
   if (sf) {
     coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326)
