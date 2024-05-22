@@ -332,58 +332,101 @@ dev.off()
 ```
 
 ```{r}
-# PCA of PCAs
-lmpca_pcs_wide <- 
-  lmpca_pcs %>% 
-  pivot_wider(names_from = "model", values_from = contains("PC")) %>%
-  drop_na(contains("PC"))
-pca_pca <- prcomp(lmpca_pcs_wide %>% dplyr::select(contains("PC")), scale = TRUE)
-plot(pca_pca)
-pcs_pca <- data.frame(pca_pca$x[,1:6])
-
-summary(lm(lmpca_pcs_wide$Ho ~ ., pcs_pca))
-
-# PCA of all variables excluding mis19
+# PCA of all variables 
 env_wide <- 
   bind_rows(env_df_vals, .id = "timeperiod") %>% 
   dplyr::select("Ho", contains("bio"), "timeperiod") %>%
   drop_na("Ho") %>%
+  # Filter out rows where all bio values are NA (only one sample for hs1)
+  filter(!rowSums(is.na(dplyr::select(., contains("bio"))) == ncol(dplyr::select(., contains("bio"))))) %>%
   pivot_longer(contains("bio")) %>% 
-  filter(timeperiod != "hs1") %>%
   pivot_wider(names_from = "timeperiod", values_from = value) %>% 
-  pivot_wider(names_from = "name", values_from = names(env_df_vals)[names(env_df_vals) != "hs1"]) %>%
-  drop_na(contains("bio"), "Ho")
-
-pca_all <- prcomp(env_wide %>% dplyr::select(contains("bio")), scale = TRUE)
-plot(pca_all)
-pcs_all <- data.frame(pca_all$x[,1:6])
-summary(lm(env_wide$Ho ~ ., pcs_all))
-
-loadings <- data.frame(pca_all$rotation[,1:6])
-loadings %>% arrange(desc(PC1)) %>% head()
-
-ggplot() +
-  geom_point(aes(x = pcs_all$PC1, y =env_wide$Ho)) +
-  geom_smooth(aes(x = pcs_all$PC1, y =env_wide$Ho), method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
+  pivot_wider(names_from = "name", values_from = names(env_df_vals)) %>%
+  drop_na(contains("bio"))
 
 # Just change variables
 pca_change <- prcomp(env_wide %>% dplyr::select(contains("dif")), scale = TRUE)
 plot(pca_change)
-pcs_change <- data.frame(pca_change$x[,1:6])
-summary(lm(env_wide$Ho ~ ., pcs_change))
 
-loadings <- data.frame(pca_change$rotation[,1:6])
-loadings %>% arrange(desc(PC2)) %>% head()
+# calculate when 90% of the variance is explained
+varexp <- cumsum(pca_change$sdev^2) / sum(pca_change$sdev^2)
+npcs <- which(varexp > 0.8)[1]
+  
+# Run lm with PCs
+pcs_change <- data.frame(pca_change$x[,1:npcs])
+mod <-summary(lm(env_wide$Ho ~ ., pcs_change))
+mod_df <- - data.frame(mod$coefficients) 
+adj_rsq <- mod$adj.r.squared
 
-ggplot() +
-  geom_point(aes(x = pcs_change$PC2, y =env_wide$Ho)) +
-  geom_smooth(aes(x = pcs_change$PC2, y =env_wide$Ho), method = "lm") +
+# Get loadings for significant PCs
+sigpcs <- 
+  mod %>% 
+  filter(`Pr...t..` < 0.05) %>%
+  mutate(var = row.names(.)) %>% 
+  filter(var != "(Intercept)") %>%
+  pull(var)
+
+ggdf <-
+  data.frame(pcs_change, Ho = env_wide$Ho) %>%
+  pivot_longer(contains("PC")) %>%
+  filter(name %in% sigpcs)
+
+ggplot(ggdf, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
   stat_cor(label.y = 0) +
   theme_classic()
 
+
+loadings <- data.frame(pca_change$rotation[,1:npcs], var = row.names(pca_change$rotation))
+
+important_vars <-  map(sigpcs, ~{
+  # Get loadings for the PC
+  subloadings <- loadings %>% dplyr::select(all_of(.x), var)
+
+  # Identify the variable with the highest loading
+  bigvar <- loadings %>% arrange(desc(.x)) %>% head(1) %>% pull(var)
+
+  # Get variables correlated with the bigvar
+  bigcor <- 
+    env_wide %>% 
+    dplyr::select(contains("dif")) %>%
+    cor(use = "complete.obs") %>% 
+    .[bigvar,] 
+    
+  bigcorvars <- names(which(abs(bigcor) > 0.7))
+}) %>% unlist() %>% unique()
+
+
+important_df <- 
+  env_wide %>% 
+  dplyr::select(contains("dif")) %>%
+  pivot_longer(contains("dif")) %>% 
+  filter(name %in% important_vars) %>%
+  mutate(splitname = name) %>%
+  separate(splitname, into = c("prefix", "timeperiod", "bio", "bion"), sep = "_") %>%
+  mutate(bio = paste0("bio_", bion)) 
+
+ggplot(important_df, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+biokey <- get_biokey()
+count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
+count(count_df, vartype)
+count(count_df, bio) %>% arrange(desc(n))
 
 # Just single variables
 pca_change <- prcomp(env_wide %>% dplyr::select(-contains("dif")), scale = TRUE)
@@ -399,6 +442,8 @@ ggplot() +
   geom_smooth(aes(x = pcs_change$PC2, y =env_wide$Ho), method = "lm") +
   stat_cor(label.y = 0) +
   theme_classic()
+
+
 ```
 
 ## Showing off BIO2
