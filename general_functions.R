@@ -32,3 +32,45 @@ get_dem <- function(r = FALSE) {
 get_env <- function() {
   read_csv(here("data", "env", "envdata.csv"))
 }
+
+get_biokey <- function(){
+  biokey <- 
+    data.frame(
+      bio = paste0("bio_", 1:20),
+      description = c(
+        "mean annual temperature",
+        "min temperature of coldest month",
+        "max temperature of warmest month",
+        "temperature annual range",
+        "mean diurnal range",
+        "isothermality",
+        "temperature seasonality",
+        "max temperature of warmest period",
+        "min temperature of coldest period",
+        "temperature annual range",
+        "mean temperature of wettest quarter",
+        "mean temperature of driest quarter",
+        "mean temperature of warmest quarter",
+        "mean temperature of coldest quarter",
+        "annual precipitation",
+        "precipitation of wettest month",
+        "precipitation of driest month",
+        "precipitation seasonality",
+        "precipitation of wettest quarter",
+        "precipitation of driest quarter"
+      )
+    ) %>%
+    mutate(
+      vartype = 
+        case_when(
+          grepl("temperature", description) ~ "temperature", 
+          grepl("precipitation", description) ~ "precipitation",
+          grepl("isothermality", description) ~ "temperature",
+          grepl("mean diurnal range", description) ~ "temperature",
+          TRUE ~ description
+          )
+        )
+    
+    return(biokey)
+  }
+
