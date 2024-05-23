@@ -24,9 +24,10 @@ get_dem <- function(r = FALSE) {
   dem <- mask(dem, ca)
   dem <- crop(dem, ca)
   if (r) return(dem)
-  dem <- as.data.frame(dem, xy = TRUE)
-  colnames(dem) <- c("x", "y", "elev")
-  return(dem)
+  coords_dem <- st_transform(coords, st_crs(dem))
+  dem_df <- terra::extract(dem, coords_dem, ID = FALSE)
+  dem_df <- data.frame(SampleID = coords$SampleID, elev = dem_df)
+  return(dem_df)
 }
 
 get_env <- function() {
@@ -73,4 +74,3 @@ get_biokey <- function(){
     
     return(biokey)
   }
-

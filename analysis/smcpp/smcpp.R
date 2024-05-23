@@ -11,6 +11,7 @@ get_smcpp <- function(folder = "outputs"){
   # binds as data.frame
   result <- 
     result %>%
+    #FIX INDEX IS WRONG IF NOT ALL POPS ARE PRESENT
     imap(~mutate(.x, pop = .y)) %>%
     bind_rows(result)
 
