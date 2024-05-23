@@ -1,7 +1,17 @@
-get_cv <- function(id = "58-Sceloporus"){
 
+# Admixture functions -----------------------------------------------------
+# -------------------------------------------------------------------------
+
+#' Get CV from admixture run
+#'
+#' @param output_dir directory with admixture files
+#' @param prefix file prefix
+#'
+#' @return
+#' @export
+get_cv <- function(output_dir, prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60"){
   # create a vector with file names
-  file_names <- here("analysis", "admixture", "outputs", paste0(id, ".log", 2:10, ".out"))
+  file_names <- paste0(output_dir, paste0("/", prefix, ".", 1:10, ".out"))
 
   # get cv errors
   safe_read <- possibly(readLines)
@@ -22,24 +32,41 @@ get_cv <- function(id = "58-Sceloporus"){
   return(df)
 }
 
-get_Q <- function(K, id = "58-Sceloporus", qmat_only = FALSE){
-  # use fam to get sampleID order/names 
-  fam <- data.frame(read_table(here("analysis", "admixture", "outputs", paste0(id, ".fam")), col_names = FALSE))
+#' Get Q-values for specific K
+#'
+#' @param K K-value
+#' @param output_dir directory with admixture files
+#' @param prefix file prefix
+#' @param qmat_only if TRUE, only return Q-values; if FALSE, also return individual max assignment into cluster and sample ID
+#'
+#' @return
+#' @export
+get_Q <- function(K, output_dir, prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60", qmat_only = FALSE){
+  # use fam to get sampleID order/names
+  fam <- data.frame(read_table(paste0(output_dir, paste0("/", prefix, ".fam")), col_names = FALSE))
 
   # read in Q vals
-  qmat <- read.table(here("analysis", "admixture", "outputs", paste0(id, ".", K, ".Q")), header = FALSE)
+  qmat <- read_table(paste0(output_dir, paste0("/", prefix, ".", K, ".Q")), col_names = FALSE)
 
   if (qmat_only) return(qmat)
 
   # add clusters
-  qmat$cluster <-  factor(apply(qmat, 1, which.max))
+  qmat$cluster <- factor(apply(qmat, 1, which.max))
 
   # add SampleID
-  qmat$SampleID <- as.vector(fam[,2])
+  qmat$SampleID <- as.vector(fam[ ,2])
 
   return(qmat)
 }
 
+#' Build structure-style bar plot for admixture results
+#'
+#' @param qmat df of Q values
+#' @param sort_by_Q whether to sort individuals by max Q value
+#' @param legend whether to plot legend
+#'
+#' @return
+#' @export
 structure_plot <- function(qmat, sort_by_Q = TRUE, legend = TRUE) {
   # Get K
   K <- ncol(qmat)
@@ -64,7 +91,7 @@ structure_plot <- function(qmat, sort_by_Q = TRUE, legend = TRUE) {
   gg_df <-
     dat %>%
     tidyr::pivot_longer(names_to = "cluster", values_to = "Q_value", -c(order)) %>%
-    dplyr::mutate(cluster = gsub("V", "", cluster))
+    dplyr::mutate(cluster = gsub("X", "", cluster))
 
   # Build plot using helper function
   plt <- ggbarplot_helper(gg_df) + scale_fill_manual(values = viridis::turbo(K))
@@ -74,7 +101,6 @@ structure_plot <- function(qmat, sort_by_Q = TRUE, legend = TRUE) {
 
   return(plt)
 }
-
 
 #' Helper function for TESS barplots using ggplot
 #'
@@ -101,3 +127,14 @@ ggbarplot_helper <- function(gg_df) {
                    strip.background = ggplot2::element_rect(colour = "white", fill = "white"),
                    panel.spacing = ggplot2::unit(-0.1, "lines"))
 }
+
+# Kriging functions -------------------------------------------------------
+# -------------------------------------------------------------------------
+
+
+
+
+# Structure boundaries ----------------------------------------------------
+# -------------------------------------------------------------------------
+
+
