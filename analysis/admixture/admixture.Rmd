@@ -15,7 +15,6 @@ library(viridis)
 library(vcfR)
 library(hierfstat)
 library(tigris)
-devtools::load_all()
 source(here("analysis", "admixture", "admixture.R"))
 source(here("general_functions.R"))
 # Set global options for caching
@@ -51,13 +50,13 @@ coords <- get_coords()
 # 2. ADMIXTURE
 ```{r}
 cv <- get_cv()
-```
-
-```{r admixture, fig.width = 13, fig.height = 6}
 ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
   geom_point() +
   geom_line() +
   theme_bw()
+```
+
+```{r admixture, fig.width = 13, fig.height = 6}
 # join with coords
 Kvals <- c(2:10)
 Q <-
@@ -71,40 +70,59 @@ Q <-
 df <-
  left_join(Q, coords[,c("x", "y", "SampleID")], by = "SampleID") %>%
  st_as_sf(coords = c("x", "y")) %>%
- st_set_crs(st_crs(4326)) 
+ st_set_crs(st_crs(4326))
+
 ggplot(df) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 2) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(max(Kvals))) 
+
 barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
-ggplot(filter(df, K %in% 3:6)) +
+ggplot(filter(df, K %in% 3:7)) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 1) +
   theme_void() +
+  scale_color_manual(values = viridis::turbo(7))
+barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(7)))
+do.call(ggarrange, c(barplots, ncol = 1))
+```
+
+```{r, fig.width = 13, fig.height = 6}
+
+a <- filter(df, K == 6, PopGroup == "V1") %>% mutate(row = 1:nrow(.))
+ggplot(a) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  geom_text(aes(label = row, x = st_coordinates(a)[,1], y =  st_coordinates(a)[,2]), size = 3) +
+  facet_wrap(~K, nrow = 1) +
+  theme_void() +
   scale_color_manual(values = viridis::turbo(6))
-barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
+
+filter(a, row == 45) %>% pull(SampleID)
+barplots <- map(6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
 ```{r}
-# Write out Q files for Q = 5
+# FOR LINEAR MODELS: 
+# Write out Q files for K = 6
 # cluster = final cluster assignment for SampleID given max Q
 # PopGroup = Q values for each cluster
 Q %>% 
-  filter(K == 5) %>% 
-  write_csv(here("analysis", "admixture", "outputs", "Q5.csv"))
+  filter(K == 6) %>% 
+  write_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
 
-# write out population files for Q = 5
+# write out Q values for the assigned population for Q = 6
 Q %>%
-  filter(K == 5) %>%
-  # only keep the pop group corresponding to the cluster
+  filter(K == 6) %>%
+  # only keep the pop group/Q values corresponding to the cluster
   mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
   filter(cluster == PopGroup) %>%
   mutate(pop = paste0("pop", cluster)) %>%
@@ -115,6 +133,7 @@ Q %>%
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
+# Check for consistency
 # simplified df with only cluster assignments and not Q values
 simplified_df <- 
   df %>%
@@ -122,6 +141,7 @@ simplified_df <-
   filter(PopGroup == "V1") %>%
   dplyr::select(SampleID, cluster, K)
 IDs <- unique(simplified_df$SampleID)
+
 same_all_df <-
   map(IDs, ~{
     pop <- 
@@ -145,4 +165,32 @@ same_summarize_df <-
 ggplot(same_summarize_df) +
   geom_sf(aes(col = same)) +
   scale_color_viridis_c(option = "plasma")
+```
+
+# Write out individuals
+```{r}
+# FOR ROH/SMCPP:
+# Write out individual popupulation assignments for Q = 6
+get_Q(K = 6) %>% 
+  filter(!grepl("CHI1382", SampleID)) %>%
+  group_by(cluster) %>% 
+  group_split() %>%
+  iwalk(\(x, idx) write(x$SampleID, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
+
+# Check population locations
+# Read in files and bind with coords 
+pop_files <- list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = ".txt")
+pop_df <- 
+  map(pop_files, ~{
+    pop <- read_lines(.x)
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .))
+    return(pop_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords, by = "SampleID") %>%
+  st_as_sf(coords = c("x", "y")) %>%
+  st_set_crs(st_crs(4326))
+
+ggplot(pop_df) +
+  geom_sf(aes(col = pop))
 ```
