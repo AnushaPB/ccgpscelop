@@ -65,7 +65,7 @@ Import and plot cross-validation results for K=1-10.
 
 ```{r cv, fig.width = 13, fig.height = 6}
 cv <- get_cv(output_dir = here("analysis", "anne", "outputs"), 
-             prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60")
+             prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60")
 
 ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
   geom_point() +
@@ -80,7 +80,7 @@ Kvals <- c(1:10)
 Q <-
   map(Kvals, ~get_Q(K = .x, 
                    output_dir = here("analysis", "anne", "outputs"), 
-                   prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60") %>% 
+                   prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60") %>% 
   mutate(K = .x)) %>% 
   bind_rows() %>%
   arrange(across(starts_with("X"))) %>%
@@ -103,7 +103,7 @@ ggplot(df %>% filter(K != 1) %>% filter(SampleID != "Scelocci_CHI1382_DAW5-46-21
 
 barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, 
                                                     output_dir = here("analysis", "anne", "outputs"),
-                                                    prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60",
+                                                    prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60",
                                                     qmat_only = TRUE)) + 
                   scale_fill_manual(values = viridis::turbo(max(Kvals))))
 do.call(ggarrange, c(barplots, ncol = 1))
@@ -121,7 +121,7 @@ ggplot(df %>% filter(K %in% 5:7) %>% filter(SampleID != "Scelocci_CHI1382_DAW5-4
 
 barplots <- map(5:7, ~structure_plot(qmat = get_Q(K = .x, 
                                                   output_dir = here("analysis", "anne", "outputs"),
-                                                  prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60",
+                                                  prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60",
                                                   qmat_only = TRUE)) + 
                   scale_fill_manual(values = viridis::turbo(7)))
 do.call(ggarrange, c(barplots, ncol = 1))
