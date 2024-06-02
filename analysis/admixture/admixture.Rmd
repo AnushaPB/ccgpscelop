@@ -169,13 +169,16 @@ ggplot(same_summarize_df) +
 
 # Write out individuals
 ```{r}
+library(here)
+library(tidyverse)
+library(sf)
+source(here("analysis", "admixture", "admixture.R"))
 # FOR ROH/SMCPP:
-# Write out individual popupulation assignments for Q = 6
-get_Q(K = 6) %>% 
-  filter(!grepl("CHI1382", SampleID)) %>%
+# Write out individual popupulation assignments for Q = 7
+get_Q(K = 7) %>% 
   group_by(cluster) %>% 
   group_split() %>%
-  iwalk(\(x, idx) write(x$SampleID, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
+  iwalk(\(x, idx) write(x$SampleID, here("analysis", "admixture", "outputs", paste0("k7_pop", idx, ".txt"))))
 
 # Check population locations
 # Read in files and bind with coords 
