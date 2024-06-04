@@ -1,27 +1,20 @@
-# Use rocker/geospatial as the base image
-FROM rocker/geospatial:latest
 
-# Install system dependencies for Python and FEEMS
-RUN apt-get update && apt-get install -y \
-    python3-pip \
-    python3-dev \
-    libgeos-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+FROM ubuntu:latest
 
-# Install Miniconda to manage Python packages
-ENV MINICONDA_VERSION 4.7.12.1
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py38_${MINICONDA_VERSION}-Linux-x86_64.sh -O ~/miniconda.sh \
-    && /bin/bash ~/miniconda.sh -b -p /opt/conda \
-    && rm ~/miniconda.sh \
-    && /opt/conda/bin/conda clean -tipsy
+ENV PATH="/root/miniconda3/bin:${PATH}"
+ARG PATH="/root/miniconda3/bin:${PATH}"
+RUN apt-get update
 
-# Add Conda to PATH
-ENV PATH /opt/conda/bin:$PATH
+RUN apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+RUN wget \
+    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
+    && mkdir /root/.conda \
+    && bash Miniconda3-latest-Linux-x86_64.sh -b \
+    && rm -f Miniconda3-latest-Linux-x86_64.sh 
 
 # Create a Conda environment and install FEEMS
-RUN conda create -n feems_e python=3.8.3 -y
-SHELL ["conda", "run", "-n", "feems_e", "/bin/bash", "-c"]
+RUN conda create -n feems_e -y
 
 # Activating the environment and installing FEEMS and its dependencies
 RUN conda install -c bioconda feems -c conda-forge -y
