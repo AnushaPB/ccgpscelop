@@ -7,11 +7,13 @@ source activate ccgpscelop
 mkdir -p outputs
 
 # Specify prefix for file formatting
-PREFIX="../../58-Sceloporus/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60"
+PREFIX="58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60"
 
 # based on code from: https://github.com/ccgproject/ccgpWorkflow/blob/227e6506cf03274be7295e9de6411bb34162d97c/workflow/modules/qc/Snakefile#L126
-# Make plink files
-plink --vcf $PREFIX.vcf.gz --out $PREFIX --allow-extra-chr --make-bed --const-fid --noweb
+# Copy plink files over from processed_data
+cp ../../data/processed_data/$PREFIX.bed .
+cp ../../data/processed_data/$PREFIX.bim .
+cp ../../data/processed_data/$PREFIX.fam .
 
 # Fix chromosome numbers
 awk '{$1=0;print $0}' $PREFIX.bim > $PREFIX.bim.tmp # make temp file
