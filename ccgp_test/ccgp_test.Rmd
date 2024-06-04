@@ -15,7 +15,7 @@ library("ggpubr")
 library("terra")
 library("sf")
 library("gridExtra")
-source("general_functions.R")
+source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 ca <- get_ca()
 ```
@@ -35,7 +35,10 @@ het_files <- paste0(projects, ".het")
 df <-
   map(projects, ~{
     het <- read_table(here("ccgp_test", "data", paste0(.x, ".het")))
-    het <- het %>% mutate(Ho = `O(HOM)`/N_SITES) %>% rename(SampleID = INDV)
+    if ("INDV" %in% names(het)) het <- het %>% rename(SampleID = INDV)
+    if ("IID" %in% names(het)) het <- het %>% rename(SampleID = IID) %>% mutate(note = "OLD")
+    if ("N(NM)" %in% names(het)) het$Ho <- (het$`N(NM)` - het$`O(HOM)`)/het$`N(NM)`
+    if ("N_SITES" %in% names(het)) het$Ho <- (het$N_SITES - het$`O(HOM)`)/het$N_SITES
     coords <- read_table(here("ccgp_test", "data", paste0(.x, ".coords.txt")), col_names = FALSE)
     df <- 
       coords %>% 
@@ -44,44 +47,25 @@ df <-
       mutate(project = .x)
     return(df)
   }) %>% bind_rows()
-
+ 
 
 ```
 
 # Paleoclim
 ## Get paleoclim data
 ```{r}
-paleovars <- c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
-# download data
-walk(paleovars, ~ {
-  paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env"))
+env_stack <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+env_stack <- env_stack[[grepl("lgm|lig|lh|cur", names(env_stack))]]
+
+tp <- unique(map_chr(str_split(names(env_stack), "_"), 1))
+env_list <- map(tp, ~{
+  r <- env_stack[[grepl(.x, names(env_stack))]]
+  names(r) <- gsub(paste0(.x, "_"), "", names(r))
+  return(r)
 })
+names(env_list) <- tp
 
-# Create a key with layer information
-paleokey <- data.frame(
-  id = c("cur", "lh", "mh", "eh", "yds", "ba", "hs1", "lgm", "lig", "mis19", "mpwp", "m2"),
-  period = c("Current", "Late Holocene: Meghalayan", "Mid Holocene: Northgrippian", "Early Holocene: Greenlandian", "Pleistocene: Younger Dryas Stadial", "Pleistocene: Bølling-Allerød", "Pleistocene: Heinrich Stadial 1", "Pleistocene: Last Glacial Maximum", "Pleistocene: Last Interglacial", "Pleistocene: MIS19", "Pliocene: Mid-Pliocene warm period", "Pliocene: M2"),
-  time = c("1979 – 2013", "4.2-0.3 ka", "8.326-4.2 ka", "11.7-8.326 ka", "12.9-11.7 ka", "14.7-12.9 ka", "17.0-14.7 ka", "ca. 21 ka", "ca. 130 ka", "ca. 787 ka", "3.205 Ma", "ca. 3.3 Ma"),
-  source = c("CHELSA", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "Fordham et al. 2017", "CHELSA", "Otto-Bliesner et al. 2006", "Brown et al. 2018", "Hill 2015", "Dolan et al. 2015")
-)
-
-# Print the dataframe
-print(df) 
-# Define the file names and paths
-file_names <- c("LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
-file_paths <- file.path(here("data", "env"), file_names)
-
-# Load and process the data using purrr
-env_list <- purrr::map(file_paths, ~ {
-  data <- load_paleoclim(.x)
-  data <- crop(data, ca)
-  data <- mask(data, ca)
-  data
-})
-names(env_list) <- paleovars
-env_stack <- rast(env_list)
-cur <- env_list[["cur"]]
-
+cur <- env_list$cur
 env_stack_vals <- extract(env_stack, df[,c("x", "y")], ID = FALSE)
 env_stack_vals <- bind_cols(df, env_stack_vals)
 
@@ -99,7 +83,7 @@ diff_vals <- map(diff_vars, ~ {
   return(data.frame(df, extract(diff, df[,c("x", "y")], ID = FALSE)))
 })
 env_df_vals <- c(env_df_vals, diff_vals)
-names(env_df_vals) <- c(paleovars, paste0("dif_", diff_vars))
+names(env_df_vals) <- c(names(env_list), paste0("dif_", diff_vars))
 
 # check for strong correlations
 cor_result <- imap(env_df_vals, \(x, idx){
@@ -114,25 +98,29 @@ cor_result <- imap(env_df_vals, \(x, idx){
 bind_rows() %>%
 mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
 
-cor_result %>% filter(abs(r) > 0.6) %>% group_by(var, timeperiod) %>% count() %>% arrange(desc(n))
-cor_result %>% filter(abs(r) > 0.6) %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
+cor_result %>% 
+  filter(abs(r) > 0.6) %>% 
+  group_by(var, timeperiod) %>% 
+  count() %>% 
+  arrange(desc(n)) %>%
+  mutate(n = n/length(unique(cor_result$project))) %>%
+  head(n = 10)
 
-bio7 <- cor_result %>% filter(var == "bio_7")
+bio7 <- cor_result %>% filter(var == "bio_10")
 ggplot(bio7, aes(x = timeperiod, y = project, fill = r)) +
   geom_tile() +
   labs(col = "r") +
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
   theme_minimal()
 
-ggplot(bio7, aes(x = timeperiod, y = project, fill = abs(r))) +
-  geom_tile() +
-  scale_fill_viridis_c(option = "rocket", direction = -1) +
-  labs(fill = "|r|") +
-  theme_minimal()
 ```
 
 ```{r}
 
+```
+
+
+```{r}
 run_lm <- function(project, timeperiod, env_df_vals){
   # subset df
   env_df <- env_df_vals[[timeperiod]] %>% filter(project == !!project)
@@ -367,5 +355,34 @@ sdm_mod <-
     BIOMOD_name = "BIOMOD", 
     tune = FALSE
     )
+
+```
+
+# Test with other variables
+```{r}
+env_stack_other <- rast(here("data", "env", "california_env_stack.tif")) 
+coords <- df[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) %>% st_transform(st_crs(env_stack_other))
+env_stack_other <- env_stack_other[[!grepl("CHELSA", names(env_stack_other))]]
+env_stack_other_vals <- extract(env_stack_other, coords, ID = FALSE)
+env_df_other_vals <- bind_cols(df, env_stack_other_vals)
+
+env_stack <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+env_stack <- env_stack[[grepl("lgm|lig|lh|cur", names(env_stack))]]
+env_stack_vals <- extract(env_stack, df[,c("x", "y")], ID = FALSE)
+env_stack_vals <- bind_cols(df, env_stack_vals) %>% mutate(lig_dif_bio_1 = lig_bio_10 - cur_bio_10)
+
+big_env <- left_join(env_df_other_vals, env_stack_vals)
+
+summary(lm(Ho ~ cur_bio_1 * project + lig_dif_bio_1 * project + project, data = big_env))
+
+data.frame(summary(lm(Ho ~ cur_bio_1*project + lig_dif_bio_1*project + project + BurnDate*project + NDVI*project + gHM*project, data = big_env))$coefficients) %>% 
+mutate(var = row.names(.)) %>% 
+filter(!grepl("project", var)) %>%
+filter(`Pr...t..` < 0.05)
+
+data.frame(summary(lm(Ho ~  BurnDate+ NDVI + gHM + cur_bio_1 + lig_dif_bio_1 + project, data = big_env))$coefficients) %>% 
+mutate(var = row.names(.)) %>% 
+filter(!grepl("project", var)) %>%
+filter(`Pr...t..` < 0.05)
 
 ```
