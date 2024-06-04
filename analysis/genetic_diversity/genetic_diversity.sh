@@ -1,7 +1,7 @@
 source activate ccgpscelop
 
 BASE_PATH=../../data/processed_data
-VCF=$BASE_PATH/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz
+VCF=$BASE_PATH/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz
 GENOME="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
 
 # PLINK -----------------------------

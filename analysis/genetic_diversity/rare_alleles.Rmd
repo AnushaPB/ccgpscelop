@@ -1,0 +1,98 @@
+```{r}
+library(wingen)
+library(tidyverse)
+library(here)
+load_middle_earth_ex()
+
+dos <- vcf_to_dosage(lotr_vcf)
+
+# Calculate allele counts for each loci 
+allele_counts <- colSums(dos)
+
+# Make an allele frequency spectrum
+hist(allele_counts)
+
+# Get sites with less than 10 allele counts
+# Doesn't really work because no mutation
+rare <- which(allele_counts < 20)
+
+# Filter for rare sites
+dos_rare <- dos[,rare]
+
+# Calculate allele counts for each individual
+ind_counts <- rowSums(dos_rare)
+
+# Plot
+df <- data.frame(lotr_coords, count = ind_counts)
+ggplot(df) +
+  geom_point(aes(x = x, y = y, col = count), size = 2) +
+  scale_color_viridis_c() +
+  theme_minimal()
+
+#
+vcf <- vcfR::read.vcfR(here("data", "bouzid", "populations_r20.haplotypes.filtered_m70_randomSNP.vcf"))
+coords <- read_table(here("data", "bouzid", "Scelop.coord"), col_names =FALSE) %>% rename(x = X1, y = X2)
+dos <- algatr::vcf_to_dosage(vcf)
+
+# Calculate allele counts for each loci 
+allele_counts <- colSums(dos)
+
+# Make an allele frequency spectrum
+hist(allele_counts)
+
+# Get sites with less than 10 allele counts
+# Doesn't really work because no mutation
+rare <- which(allele_counts < 20)
+
+# Filter for rare sites
+dos_rare <- dos[,rare]
+
+# Calculate allele counts for each individual
+ind_counts <- rowSums(dos_rare)
+
+df <- data.frame(coords, count = ind_counts)
+ca <- get_ca()
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = count), size = 2) +
+  scale_color_viridis_c() +
+  theme_minimal()
+```
+
+```{r}
+source(here("general_functions.R"))
+#path <- here("58-Sceloporus", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz")
+path <- here("data", "processed_data", "rare_alleles.vcf")
+vcf <- vcfR::read.vcfR(path)
+dos <- vcf_to_dosage(vcf)
+coords <- get_coords()
+
+# Calculate allele counts for each loci
+allele_counts <- colSums(dos, na.rm = TRUE)
+
+# Calculate allele counts for each individual
+ind_counts <- rowSums(dos[, allele_counts < 3], na.rm = TRUE)
+
+# Plot
+
+df <- 
+  data.frame(SampleID = names(ind_counts), count = ind_counts) %>% 
+  left_join(get_coords(sf = FALSE))
+
+ca <- get_ca()
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = log(count)), size = 2) +
+  scale_color_viridis_c() +
+  theme_minimal()
+
+library(terra)
+library(sf)
+env_stack <- rast(here("data", "env", "california_env_stack.tif"))
+env_vals <- extract(env_stack, coords)
+mod_df <- bind_cols(coords, env_vals) %>% right_join(df)
+
+mod <- lm(log(count + 1) ~ BurnDate + NDVI + gHM, data = mod_df)
+summary(mod)
+plot(mod_df$gHM, log(mod_df$count + 1))
+```

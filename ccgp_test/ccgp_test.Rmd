@@ -32,6 +32,7 @@ projects <- gsub("\\..*", "", het_files)
 coords_files <- paste0(projects, ".coords.txt")
 het_files <- paste0(projects, ".het")
 
+
 df <-
   map(projects, ~{
     het <- read_table(here("ccgp_test", "data", paste0(.x, ".het")))
@@ -48,6 +49,7 @@ df <-
     return(df)
   }) %>% bind_rows()
  
+
 
 ```
 
@@ -279,6 +281,8 @@ result <-
   group_by(project) %>%
   summarise(across(c("Past", starts_with("SSP")), ~possibly_cor(Ho, ., use = "complete.obs"))) %>% 
   pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "r") 
+
+result %>% count(r > 0)
 
 ggplot(result, aes(x = model, y = project, fill = r)) +
   geom_tile() +

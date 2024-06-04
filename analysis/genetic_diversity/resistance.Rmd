@@ -1,0 +1,141 @@
+```{r}
+library(here)
+library(terra)
+library(tidyverse)
+library(wingen)
+library(sf)
+library(ggpubr)
+source(here("general_functions.R"))
+coords <- get_coords()
+het <- get_het()
+dem <- get_dem(r= TRUE)
+```
+
+# ECOREGIONS COME BACK AND CLEAN THIS UP
+```{r}
+ecol3 <- st_read(here("data", "env", "ecoregions", "ca_eco_l3.shp")) %>% st_transform(crs = 3310)
+ecol4 <- st_read(here("data", "env", "ecoregions", "ca_eco_l4.shp")) %>% st_transform(crs = 3310)
+ecol30 <- st_read(here("data", "env", "ecoregions", "ACE_Ecoregions_BaileyDerived_2022.shp")) %>% st_transform(crs = 3310)
+
+ggplot() + geom_sf(data = ecol3, aes(fill = US_L3NAME)) 
+ggplot() + geom_sf(data = ecol4, aes(fill = US_L4CODE)) +theme(legend.position = "none")
+ggplot() + geom_sf(data = ecol30, aes(fill = ECOREGION_))
+```
+wget https://gis.data.cnra.ca.gov/api/download/v1/items/d5ab2f9c5f7c45e682fd7e9a6ba8ad59/shapefile?layers=0
+
+wget https://gaftp.epa.gov/EPADataCommons/ORD/Ecoregions/ca/ca_eco_l3.zip
+
+Ecoregions: https://www.epa.gov/eco-research/ecoregion-download-files-state-region-9#pane-04
+
+# Making resistance based on elevation + removing central valley
+```{r}
+# Higher elevation = higher resistance = lower connectivity
+# rescale dem from 0 to 1
+ca <- get_ca()
+
+coords_sf <- get_coords(sf = TRUE)
+
+coords_sf_buffer <- st_buffer(coords_sf, 50000)
+
+dem <- elevatr::get_elev_raster(coords_sf_buffer, z = 5)
+
+dem <- crop(dem, coords_sf_buffer)
+
+dem[dem < 0] <- NA
+
+# Plot the result
+plot(dem, zlim = c(0,4000))
+points(coords_sf)
+
+dem <- rast(dem)
+
+minr <- global(dem, "min", na.rm = TRUE)[,1]
+maxr <- global(dem, "max", na.rm = TRUE)[,1]
+dem01 <- (dem - minr) / (maxr - minr)
+
+connectivity <- 1 - dem01
+
+plot(connectivity)
+points(coords_sf)
+# INVERSE IS WEIRD FIGURE OUT LAYER
+
+valley <- ecol3 %>% filter(US_L3NAME == "Central California Valley") %>% st_transform(st_crs(dem))
+connectivity_mask <- mask(connectivity, valley, inverse = TRUE) 
+connectivity_mask[is.na(connectivity_mask)] <- global(connectivity, "min", na.rm = TRUE)[,1]
+connectivity_mask <- mask(connectivity_mask, dem)
+connectivity_mask <- project(connectivity_mask, "EPSG:3310")
+coords_sf <- st_transform(get_coords(sf =TRUE), "EPSG:3310")
+plot(connectivity_mask)
+points(coords_sf)
+
+# Calculate resistance distance
+# COME BACK AND COMPARE TO BIO2 AND EACH OTHER
+lyr <- aggregate(connectivity_mask, 5, fun = mean, na.rm = TRUE)
+plot(lyr, col = viridis::inferno(100))
+# we know the central valley was a barrier
+#lyr <- aggregate(connectivity, 5, fun = mean, na.rm = TRUE)
+
+# convert coords to matrix and rename
+coords_mat <- 
+  get_coords(sf = TRUE) %>% 
+  st_transform(crs = st_crs(lyr)) %>% 
+  st_coordinates() %>% 
+  as.matrix()
+
+# create transition surface
+trSurface <- gdistance::transition(raster::raster(lyr), transitionFunction = mean, directions = 8)
+
+# note: type = "c" is for least cost distances
+trSurface <- gdistance::geoCorrection(trSurface, type = "c", scl = FALSE)
+
+# plot transition surface
+plot(raster::raster(trSurface), col = viridis::inferno(100))
+
+# NOTE: If you get an out of bounds error that means you have coordinates on the edge, increase the edge aroudn your raster (buffer it)
+resdist <- as.matrix(gdistance::commuteDistance(trSurface, coords_mat))
+
+# Get southern-most point
+southern_point <- which(coords_mat[,2] == min(coords_mat[,2]))
+
+# Get the resistance distance from the southern-most point to all other points
+southern_resdist <- resdist[southern_point,]
+
+# Get the geographic distance from the southern-most point to all other points
+southern_dist <- as.vector(st_distance(coords_sf[southern_point,], coords_sf))
+
+df <- 
+  get_coords(sf = TRUE) %>%
+  mutate(resdist = southern_resdist, geodist = southern_dist) %>% 
+  # remove channel islands
+  filter(resdist != min(resdist, na.rm = TRUE)) %>%
+  # and weird northern point (could be a mistake)
+  filter(resdist != max(resdist, na.rm = TRUE)) %>%
+  left_join(get_het()) %>%
+  pivot_longer(c(resdist, geodist), names_to = "distance_type", values_to = "distance") %>%
+  mutate(distance_type = case_when(
+    distance_type == "resdist" ~ "B. Resistance distance",
+    distance_type == "geodist" ~ "A. Geographic distance"
+  ))
+
+ggplot(df) +
+  geom_sf(aes(color = resdist)) +
+  theme_minimal() + 
+  scale_color_viridis_c(option = "plasma")
+
+ggplot(df, aes(x = distance, y = Ho)) +
+  geom_point() + 
+  theme_classic() +
+  labs(x = "Distance from southern-most point", y = "Ho") +
+  facet_wrap(~distance_type, scales = "free_x") +
+  # add correlation
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_regline_equation(
+        aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+        formula = y ~ x
+      ) +
+  stat_cor(label.y = 0) +
+  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
+
+# AIC TEST AGAIN BIO2 DIF
+# I mean it is def not as good a fit, but that could be because I didn't parameterize resistance correctly or somethign
+```

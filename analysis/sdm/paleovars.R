@@ -15,8 +15,8 @@ get_paleovars <- function(cache = TRUE){
   # Load and process the data using purrr
   env_list <- purrr::map(file_paths, ~ {
     data <- rpaleoclim::load_paleoclim(.x)
-    data <- crop(data, ca)
-    data <- mask(data, ca)
+    data <- terra::crop(data, ca)
+    data <- terra::mask(data, ca)
     data
   })
   names(env_list) <- paleovars
@@ -24,6 +24,11 @@ get_paleovars <- function(cache = TRUE){
   # export
   path =  here("data", "env", "paleoclim", "paleoclim.tif")
   if (!file.exists(path)){
+    # Add unique names
+    # Note: doesn't work to just turn list into stack, the names will be the list names plus the index
+    env_list_names <- unlist(imap(env_list, ~paste0(.y, "_", names(.x))))
+    env_stack <- rast(env_list)
+    names(env_stack) <- env_list_names
     writeRaster(env_stack, path, overwrite = TRUE)
   }
 

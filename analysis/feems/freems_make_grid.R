@@ -26,9 +26,11 @@ sf::st_write(ca, shp_path, append = FALSE)
 grid <- dgshptogrid(dggs, shp_path)
 
 #Plot borders and the associated grid
+coords <- get_coords(sf = TRUE)
 ggplot() +
     geom_sf(data=ca, fill=NA, color="black")   +
-    geom_sf(data=grid, fill=alpha("blue", 0.4), color=alpha("white", 0.4))
+    geom_sf(data=grid, fill=alpha("blue", 0.4), color=alpha("white", 0.4)) +
+    geom_sf(data = coords, color = "red")
 
 # write out shp file
 st_crs(grid) <- NA

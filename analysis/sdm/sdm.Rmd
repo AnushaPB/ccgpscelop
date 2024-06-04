@@ -500,95 +500,6 @@ ggplot(resid) +
   scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
 ```
 
-try adding q-values
-```{r}
-# cluster = final cluster assignment for SampleID given max Q
-# PopGroup = Q values for each cluster
-q5 <- read_csv(here("analysis", "admixture", "outputs", "Q5.csv"))
-q5 <- 
-  q5 %>%
-  # only keep the pop group corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup) 
-
-# plot residuals
-no_na <- 
-  mod_df %>% 
-  drop_na(Ho) %>%
-  left_join(q5, by = "SampleID")
-
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = Q), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_viridis_c()
-
-# Use the Q of the identified cluster (the max Q) to represent admixture (idea: lower max Q = more admixture)
-mod_q <- lm(Ho ~ bio_2 + Q, no_na)
-
-# Q is significant
-summary(mod_q)
-
-# Plot Ho vs Q
-ggplot(no_na, aes(x = 1/Q, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-no_na$residuals <- residuals(mod_q)
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = residuals), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-# create null model
-no_na$null <- 1
-mod_null <- lm(Ho ~ null, no_na)
-no_na$residuals_null <- residuals(mod_null)
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = residuals_null), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-mod_bio2 <- lm(Ho ~ bio_2, no_na)
-no_na$residuals_bio2 <- residuals(mod_bio2)
-
-mod_q <- lm(Ho ~ Q, no_na)
-no_na$residuals_q <- residuals(mod_q)
-
-mod_q_bio2 <- lm(Ho ~ Q + bio_2, no_na)
-no_na$residuals_q_bio2 <- residuals(mod_q_bio2)
-
-no_na$delta_residuals_q <- abs(no_na$residuals_bio2) - abs(no_na$residuals_q_bio2)
-no_na$delta_residuals_bio2 <- abs(no_na$residuals_q) -  abs(no_na$residuals_q_bio2)
-
-ggdf <-
-  no_na %>%
-  pivot_longer(c("delta_residuals_bio2", "delta_residuals_q")) 
-ggplot(ggdf) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
-  facet_wrap(~name) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-ggdf <-
-  no_na %>%
-  pivot_longer(c("residuals_bio2", "residuals_q", "residuals_q_bio2")) 
-ggplot(ggdf) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
-  facet_wrap(~name) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-```
 
 ### Evaluating BIO2 in other time periods
 ```{r}
@@ -1412,9 +1323,10 @@ tmax_his <- tmax_his %>% group_by(SampleID) %>% summarise(tmax_his = mean(tmax, 
 tmax_cur <- map(1986:2016, ~calculate_yearly_avg(.x, type = "current"), .progress =TRUE) %>% bind_rows()  
 tmax_cur <- tmax_cur %>% group_by(SampleID) %>% summarise(tmax_cur = mean(tmax, na.rm = TRUE))
 tmax <- 
-left_join(tmax_his, tmax_cur) %>% 
-mutate(dif = tmax_cur - tmax_his) %>%
-right_join(coords) %>% st_as_sf()
+  left_join(tmax_his, tmax_cur) %>% 
+  mutate(dif = tmax_cur - tmax_his) %>%
+  right_join(coords) %>% 
+  st_as_sf()
 
 ggplot(tmax) +
   geom_sf(data = ca) +
@@ -1422,10 +1334,36 @@ ggplot(tmax) +
   scale_color_viridis_c(option = "magma", direction = -1) +
   theme_void()
 
-tmax <- left_join(tmax, froh)
+tmax_df <- left_join(tmax, get_het())
 
-summary(lm(froh0 ~ dif, data =tmax))
-summary(lm(froh0 ~ tmax_cur, data =tmax))
+# Difference not signif by itself
+summary(lm(Ho ~ dif, data =tmax_df))
+
+# But once you add cur, it is significant and ahs a negative relationsihp
+summary(lm(Ho ~ dif + tmax_cur, data = tmax_df))
+# Close also for tmax_his, but note tmax_cur+tmax_his are super correlated
+summary(lm(Ho ~ dif + tmax_his, data = tmax_df))
+
+# Both tmax_cur and tmax_his are significant alone
+summary(lm(Ho ~ tmax_his, data =tmax_df))
+summary(lm(Ho ~ tmax_cur, data =tmax_df))
+
+# Check with BIO2
+source(here("analysis", "sdm", "paleovars.R"))
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+bio2_dif <- paleovars$cur_bio_2 - paleovars$lh_bio_2
+bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
+bio2_dif_df <- data.frame(SampleID = coords$SampleID, bio2_dif = bio2_dif_vals)
+
+# dif is no longer significant once you account for bio2_dif, but tmax_his and tmax_cur still are significant
+# ...likely just a elevation affect idk
+tmax_df <- left_join(tmax_df, bio2_dif_df)
+summary(lm(Ho ~ bio2_dif + dif + tmax_cur, data = tmax_df))
+summary(lm(Ho ~ bio2_dif + dif + tmax_his, data = tmax_df))
+# They aren't strongly correlated so it is likely not a suppression effect
+cor(tmax_df$bio2_dif, tmax_df$dif)
+
+plot(tmax_df$dif, tmax_df$Ho)
 ```
 
 ```{r}
@@ -1516,7 +1454,51 @@ names(ice_mean) <- "ice"
 plot(ice_mean)
 ```
 
-# Look at change in climate in regions that were glaciated
+
+# Look at future climate change
+
+To download all bioclim data:
+Generate envidatS3paths.txt file here: https://envicloud.wsl.ch/#/?prefix=chelsa%2Fchelsa_V2%2FGLOBAL%2Fclimatologies%2F
+wget --no-host-directories --force-directories --input-file=envidatS3paths.txt
+
+```{r}
+# Get current climate
+paleovars <- get_paleovars()
+cur <- paleovars[["cur"]]
+cur <- crop(cur, ca)
+cur <- mask(cur, ca)
+
+# Get BIO1 and convert
+cur <- cur[["bio_1"]]/1000
+
+# Get future climate
+future2 <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1.tif"))
+# Get future climate
+future <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_gfdl-esm4_ssp585_V.2.1.tif"))
+future <- crop(future, ca)
+future <- mask(future, ca)
+
+future <- crop(future, ca)
+future <- mask(future, ca)
+
+# Convert future to same extent as cur
+future <- resample(future, cur)
+
+# Calculate climate change
+cc <- future - cur
+
+ggplot(as.data.frame(cc, xy = TRUE)) +
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(cc)[1]]])) +
+  labs(fill = "Future change\nin temperature")
+  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  theme_void()
+```
+
+
+# FINAL LM MODELS
+
+## Look at change in climate in regions that were glaciated
 ```{r}
 # get current/lh climate
 paleovars <- get_paleovars()
@@ -1556,42 +1538,249 @@ ggplot(filter(df_resamp, name == "bio_2")) +
 
 ```
 
-# Look at future climate change
-
-To download all bioclim data:
-Generate envidatS3paths.txt file here: https://envicloud.wsl.ch/#/?prefix=chelsa%2Fchelsa_V2%2FGLOBAL%2Fclimatologies%2F
-wget --no-host-directories --force-directories --input-file=envidatS3paths.txt
-
+## Adding Q-values
 ```{r}
-# Get current climate
-paleovars <- get_paleovars()
-cur <- paleovars[["cur"]]
-cur <- crop(cur, ca)
-cur <- mask(cur, ca)
+# cluster = final cluster assignment for SampleID given max Q
+# PopGroup = Q values for each cluster
+mod_df <- env_df_vals[["dif_lh"]]
+q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
+q <- 
+  q %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) 
 
-# Get BIO1 and convert
-cur <- cur[["bio_1"]]/1000
+# plot residuals
+no_na <- 
+  mod_df %>% 
+  drop_na(Ho) %>%
+  left_join(q, by = "SampleID")
 
-# Get future climate
-future2 <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1.tif"))
-# Get future climate
-future <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_gfdl-esm4_ssp585_V.2.1.tif"))
-future <- crop(future, ca)
-future <- mask(future, ca)
-
-future <- crop(future, ca)
-future <- mask(future, ca)
-
-# Convert future to same extent as cur
-future <- resample(future, cur)
-
-# Calculate climate change
-cc <- future - cur
-
-ggplot(as.data.frame(cc, xy = TRUE)) +
+ggplot(no_na) +
   geom_sf(data = ca) +
-  geom_raster(aes(x = x, y = y, fill = .data[[names(cc)[1]]])) +
-  labs(fill = "Future change\nin temperature")
-  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  geom_point(aes(x = x, y = y, fill = Q), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_viridis_c()
+
+# Use the Q of the identified cluster (the max Q) to represent admixture (idea: lower max Q = more admixture)
+mod_q <- lm(Ho ~ bio_2 + Q, no_na)
+
+# Q is significant
+summary(mod_q)
+
+# Plot Ho vs Q
+ggplot(no_na, aes(x = 1/Q, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+no_na$residuals <- residuals(mod_q)
+ggplot(no_na) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = residuals), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+# create null model
+no_na$null <- 1
+mod_null <- lm(Ho ~ null, no_na)
+no_na$residuals_null <- residuals(mod_null)
+ggplot(no_na) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = residuals_null), cex = 3, color = "#00000087", pch = 21) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+mod_bio2 <- lm(Ho ~ bio_2, no_na)
+no_na$residuals_bio2 <- residuals(mod_bio2)
+
+mod_q <- lm(Ho ~ Q, no_na)
+no_na$residuals_q <- residuals(mod_q)
+
+mod_q_bio2 <- lm(Ho ~ Q + bio_2, no_na)
+no_na$residuals_q_bio2 <- residuals(mod_q_bio2)
+
+no_na$delta_residuals_q <- abs(no_na$residuals_bio2) - abs(no_na$residuals_q_bio2)
+no_na$delta_residuals_bio2 <- abs(no_na$residuals_q) -  abs(no_na$residuals_q_bio2)
+
+ggdf <-
+  no_na %>%
+  pivot_longer(c("delta_residuals_bio2", "delta_residuals_q")) 
+ggplot(ggdf) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
+  facet_wrap(~name) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+ggdf <-
+  no_na %>%
+  pivot_longer(c("residuals_bio2", "residuals_q", "residuals_q_bio2")) 
+ggplot(ggdf) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
+  facet_wrap(~name) +
+  theme_void() +
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+```
+
+## EVERYTHING
+```{r}
+elev <- get_dem()
+coords <- get_coords(sf = TRUE)
+
+# Climate data
+paleovars <- get_paleovars()
+bio2_dif <- paleovars$cur$bio_2 - paleovars$lh$bio_2
+bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
+clim <- data.frame(SampleID = coords$SampleID, bio_2 = bio2_dif_vals)
+
+# Q data
+q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
+q <- 
+  q %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) 
+
+# Glacier data
+lgm_glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "LGM_maxextent.shp"))
+# Note: have to first intersect and then transform otherwise you get a node error
+lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_glaciers)))
+lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
+# Add a new column to coords indicating whether each point is inside the lgm shapefile
+coords <- get_coords(sf = TRUE)
+glacier <- 
+  coords %>%
+  mutate(glacier = lengths(st_within(coords, lgm_glaciers)) > 0) %>%
+  mutate(glacier = ifelse(glacier, "Inside", "Outside")) %>%
+  mutate(glacier = factor(glacier, levels = c("Inside", "Outside")))
+
+# make model df
+mod_df <- 
+  get_coords() %>%
+  left_join(get_het()) %>%
+  left_join(glacier) %>%
+  left_join(clim) %>% 
+  left_join(q) %>%
+  left_join(elev) %>%
+  drop_na(Ho, glacier, Q, bio_2) 
+
+mod_df_elev <- 
+  mod_df %>%
+  drop_na(elev)
+
+mod <- lm(Ho ~ bio_2 + Q + glacier + elev, mod_df_elev)
+
+# Confirm: elev is not significant after adding bio2 and based on AIC bio2 alone is about the same
+summary(lm(Ho ~ elev, mod_df_elev))
+summary(lm(Ho ~ bio_2 + elev, mod_df_elev))
+AIC(lm(Ho ~ elev, mod_df_elev))
+AIC(lm(Ho ~ bio_2 + elev, mod_df_elev))
+AIC(lm(Ho ~ bio_2, mod_df_elev))
+
+mod <- lm(Ho ~ bio_2 + Q + glacier, mod_df)
+print(summary(mod)$adj.r.squared)
+result <- summary(mod)$coefficients
+
+# Plot predicted vs observed values
+qplt1 <- 
+  ggplot(mod_df) +
+  geom_point(aes(x = predict(mod), y = Ho, col = Q)) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+  theme_classic() +
+  labs(x = "Predicted", y = "Observed") +
+  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
+
+gplt1 <- 
+  ggplot(mod_df) +
+  geom_point(aes(x = predict(mod), y = Ho, col = glacier)) +
+  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+  theme_classic() +
+  labs(x = "Predicted", y = "Observed") +
+  scale_color_manual(values = c("skyblue2", "lightgray"))
+
+bio2plt1 <-
+  ggplot(mod_df) +
+  geom_point(aes(x = predict(mod), y = Ho, col = bio_2)) +
+  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+  theme_classic() +
+  labs(x = "Predicted", y = "Observed") +
+  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
+
+# Plot values across california
+qplt2 <-
+  ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = Q)) +
+  theme_void() +
+  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
+
+gplt2 <-
+  ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = glacier)) +
+  theme_void() +
+  scale_color_manual(values = c("skyblue2", "gray"))
+
+bio2plt2 <-
+  ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = bio_2)) +
+  theme_void() +
+  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
+
+# Plot Ho vs variable
+qplt3 <-
+  ggplot(mod_df, aes(x = Q, y = Ho, col = Q)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
+
+
+gplt3 <- 
+  ggplot(mod_df) +
+  geom_boxplot(aes(x = glacier, y = Ho, fill = glacier)) +
+  geom_jitter(aes(x = glacier, y = Ho), alpha = 0.5) +
+  theme_classic() +
+  scale_fill_manual(values = c("skyblue2", "lightgray"))
+
+bio2plt3 <-
+  ggplot(mod_df, aes(x = bio_2, y = Ho, col = bio_2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
+
+# use cowplot to combine plots
+pdf(here("analysis", "sdm", "pdfs", "linear_model_plot.pdf"), width = 13, height = 10)
+cowplot::plot_grid(qplt2, gplt2, bio2plt2,  qplt3, gplt3, bio2plt3, qplt1, gplt1, bio2plt1, ncol = 3)
+dev.off() 
+
+# Plot Ho
+
+mod_df <-
+   mod_df %>% 
+   mutate(explain =
+    case_when(
+      glacier == "Inside" ~ "Inside glaciated region",
+      Q < 0.8 ~ "High admixture"
+    )
+   )
+
+ggplot(mod_df) + 
+  geom_sf(data = ca) +
+  geom_point(data = filter(mod_df, is.na(explain)), aes(x = x, y = y, fill = Ho), col = "black", pch = 21, cex = 3) +
+  geom_point(data = drop_na(mod_df, explain), aes(x = x, y = y, fill = Ho, col = explain), pch = 21, cex = 3, stroke = 1) +
+  scale_fill_viridis_c(option = "inferno") +
+  scale_color_manual(values = c("green", "skyblue2")) +
   theme_void()
 ```
