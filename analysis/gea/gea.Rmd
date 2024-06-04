@@ -8,7 +8,7 @@ source(here("general_functions.R"))
 ```{r}
 load_algatr_example()
 #path <- here("58-Sceloporus", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz")
-path <- here("58-Sceloporus", "QC", "58-Sceloporus.pruned.vcf.gz")
+path <- here("data", "raw_data", "QC", "58-Sceloporus.pruned.vcf.gz")
 vcf <- vcfR::read.vcfR(path)
 dos <- vcf_to_dosage(vcf)
 dos_imp <- simple_impute(dos)

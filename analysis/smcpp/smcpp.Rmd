@@ -10,6 +10,7 @@ library(here)
 library(tidyverse)
 library(scales)
 source(here("analysis", "smcpp", "smcpp.R"))
+source(here("general_functions.R"))
 
 # Set global options
 knitr::opts_chunk$set(
@@ -22,25 +23,12 @@ knitr::opts_chunk$set(
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
-smcpp <- get_smcpp()
-
 #log_years <- smcpp %>% filter(GenusSpecies == "Rallus limicola") %>% filter(T ==1) %>% pull(years) %>% log()
 #inc <- log_years[2] - log_years[3]
 #vira_start = exp(log_years[2] - inc)
-
 smcpp <- 
-  smcpp %>%
-  group_by(pop) 
-
-ggplot(smcpp) +
-  geom_line(lwd = 1, aes(x = years, y = y, col = T)) +
-  scale_x_continuous(trans = "log10") +
-  scale_y_continuous(trans = "log10") +
-  facet_wrap(~pop)+
-  theme_classic() +
-  scale_color_manual(values = viridis::mako(3, begin = 0.2, end = 0.8)) +
-  ylab("Ne") +
-  xlab("years") 
+  get_smcpp() %>%
+  group_by(pop)
 
 ggplot(filter(smcpp, T == 3, !is.na(pop))) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
@@ -54,42 +42,188 @@ ggplot(filter(smcpp, T == 3, !is.na(pop))) +
   # added so that 10^2 is shown on the graph
   #geom_vline(xintercept = 100, alpha = 0) +
   ylab("Ne") +
-  xlab("years") +
-  ggtitle("T = 2")
+  xlab("years")
 
-  cur	Current (1979 – 2013)		CHELSA
-lh	Late Holocene: Meghalayan	4.2-0.3 ka	Fordham  et al. 2017
-mh	Mid Holocene: Northgrippian	8.326-4.2 ka	Fordham  et al. 2017
-eh	Early Holocene: Greenlandian	11.7-8.326 ka	Fordham  et al. 2017
-yds	Pleistocene: Younger Dryas Stadial	12.9-11.7 ka	Fordham  et al. 2017
-ba	Pleistocene: Bølling-Allerød	14.7-12.9 ka	Fordham  et al. 2017
-hs1	Pleistocene: Heinrich Stadial 1	17.0-14.7 ka	Fordham  et al. 2017
-lgm	Pleistocene: Last Glacial Maximum	ca. 21 ka	CHELSA
-lig	Pleistocene: Last Interglacial	ca. 130 ka	Otto-Bliesner et al. 2006
-```
-
-# Joint models
-```{r, fig.width = 13, fig.height = 6}
-joint <- get_joint()
-
-# The divergence time is very recent
-# 25-85 years ago
-print("Bay Area vs Southern California:")
-filter(joint, joint_short == "ba_sc" & label == "blra_sc") %>% filter(x != 0) %>% dplyr::select(T, years)
-
-print("Bay Area vs Sierra Foothills:")
-filter(joint, joint_short == "ba_sf" & label == "blra_sf") %>% filter(x != 0) %>% dplyr::select(T, years)
-
-ggplot(filter(joint, T == 1)) +
-  geom_line(data = filter(smcpp, T == 1, GenusSpecies == "Laterallus jamaicensis"), aes(x = years, y = y, col = group), lwd = 1, alpha = 0.8) +
-  geom_line(aes(x = years, y = y, col = group), lwd = 1, alpha = 0.8) +
-  facet_wrap(~joint) +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4")) +
+ggplot(filter(smcpp, T == 2 | T == 3, !is.na(pop))) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "gray") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "gray") +
+  annotate("text", x = 25e3, y = 1e8, label = "LGM", hjust = 0) +
+  annotate("text", x = 160e3, y = 1e8, label = "LIG", hjust = 0) +
+  annotate("text", x = 1.1e3, y = 1e8, label = "Holocene", hjust = 0) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop), lty = T)) +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
-  theme(strip.background = element_rect(colour = NA)) +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2")) +
+  ylab("Ne") +
+  xlab("years")
+```
+
+```{r}
+library(sf)
+library(terra)
+source("analysis/sdm/paleovars.R")
+ca <- get_ca()
+coords <- get_coords(sf = TRUE)
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+paleokey <- get_paleokey()
+# isolate paleovars that end in 1 and no following numebers
+bio <- paleovars[[grepl("1$", names(paleovars)) | grepl("2$", names(paleovars))]]
+bio <- paleovars[[!grepl("mis19", names(paleovars))]]
+biovals <- extract(bio, coords, ID = FALSE)
+clim_df <- bind_cols(coords, biovals)
+
+pop_df <- 
+  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k7") %>%
+  map(~{
+    pop <- read_lines(.x)
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k7_pop", "", .))
+    return(pop_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords, by = "SampleID") 
+
+paleokey_split <- 
+  paleokey %>%
+  filter(id != "mis19") %>%
+  mutate(time = 
+    case_when(
+      period == "Current" ~ "1.979-2.013 ka", 
+      .default = time
+      )
+    ) %>%
+  separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
+  mutate(across(c(start_time, end_time), ~ case_when(
+    str_detect(.x, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
+    str_detect(.x, "Ma") ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
+    TRUE ~ as.numeric(.x)
+  )))
+
+# get values
+change_df <- 
+  clim_df %>%
+  pivot_longer(all_of(names(bio))) %>%
+  # split based on underscore using tidyvrse
+  separate(name, into = c("name", "var"), sep = "_") %>%
+  left_join(paleokey_split, by = c("name" ="id")) %>%
+  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
+  drop_na(time) %>%
+  left_join(pop_df)
+
+mean_change <-
+  change_df %>%
+  group_by(time, pop, var) %>%
+  summarize(value = mean(value, na.rm =TRUE)) %>%
+  drop_na(time, pop, var) %>%
+  # scale value between min and max of smcpp y
+  group_by(var) %>%
+  mutate(value = scale(value)) %>%
+  group_by(pop, var) %>%
+  mutate(value = scales::rescale(value, to = c(1e5, 1e6)))
+# IDEA PLOT THE TIME POINTS OUT (LOOK AT SDM)
+
+all_mean_change <- 
+  change_df %>%
+  group_by(time, var) %>%
+  summarize(value = mean(value, na.rm =TRUE)) %>%
+  drop_na(time, var) %>%
+  # scale value between min and max of smcpp y
+  group_by(var) %>%
+  mutate(value = scale(value)) %>%
+  mutate(value = scales::rescale(value, to = c(21259.24, 2004553)))
+
+plt1 <-
+  ggplot(data = filter(smcpp, T == 2, !is.na(pop))) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_line(data = all_mean_change, aes(x = time, y = value), col = "#596678", lty = "dashed", lwd = 0.8, alpha = 0.6) +
+  #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#3b4657", cex = 0.5) +
+  geom_line(data = mean_change, aes(x = time, y = value, col = factor(pop)), alpha = 0.7) +
+  geom_point(data = mean_change, aes(x = time, y = value, col = factor(pop))) +
+  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2")+
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2") +
+  annotate("text", x = 5e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2") +
+  geom_text(aes(label = pop), x = Inf, y = Inf,  hjust = 1.5, vjust = 1.5, size = 4) +
+  geom_line(lwd = 1.5, aes(x = years, y = y, col = factor(pop))) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  facet_wrap(~factor(pop)) +
+  theme_classic() +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
   ylab("Ne") +
   xlab("years") +
-  ggtitle("BLRA (T = 1)")
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+
+# plot of population assignments
+plt2 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = st_as_sf(pop_df), aes(col = pop)) +
+  labs(col = "Population") +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan"))  +
+  theme_void() +
+  theme(
+    legend.position = c(0.8, 0.75),
+    legend.key.size = unit(0.8, "cm"), # Increase the size of the legend keys
+    legend.text = element_text(size = 14), # Increase the size of the legend text
+    legend.title = element_text(size = 16) # Increase the size of the legend title
+  )
+ 
+
+pdf(here("analysis", "smcpp", "smcpp.pdf"), width = 18, height = 6)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(1, 2))
+dev.off()
+
+
+plt1 <-
+  ggplot(data = filter(smcpp, T == 3, !is.na(pop), years != 0)) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
+  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
+  ylab("Ne") +
+  xlab("years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+pdf(here("analysis", "smcpp", "smcpp2.pdf"), width = 12, height = 5)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
+dev.off()
+ 
+
+
+plt1 <-
+  ggplot(data = filter(smcpp, T == 3, !is.na(pop), years != 0)) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
+  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  facet_wrap(~var) +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
+  ylab("Ne") +
+  xlab("years") +
+  theme(legend.position = "none", panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+pdf(here("analysis", "smcpp", "smcpp3.pdf"), width = 25, height = 10)
+plt1
+dev.off()
 ```

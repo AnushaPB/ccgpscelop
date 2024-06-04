@@ -55,7 +55,7 @@ csi_future <- mask(csi_future, ca)
 
 csi_stack <- c(csi_past, csi_future)
 names(csi_stack) <- c("Past",  "SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
-writeRaster(csi_stack, here("data", "env", "stability", "csi.tif"))
+writeRaster(csi_stack, here("data", "env", "stability", "csi.tif"), overwrite = TRUE)
 csi_df <- terra::as.data.frame(csi_stack, xy = TRUE) %>% pivot_longer(-c(x, y), names_to = "model", values_to = "CSI")
 
 ggplot(csi_df) +

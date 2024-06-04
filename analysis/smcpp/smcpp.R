@@ -2,17 +2,14 @@ get_smcpp <- function(folder = "outputs"){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
   
-  result <- map(1:5, ~safe_csv(here("analysis", "smcpp", paste0("pop", .x), paste0("pop", .x, ".csv")))) 
+  result <- map(1:7, ~safe_csv(here("analysis", "smcpp", paste0("pop", .x), paste0("pop", .x, ".csv")))) 
   
-  # drops anything that is not a data.frame
-  # NULL cases will be lists
-  result <- result[map_lgl(result, is.data.frame)]
+  # drops anything NULL
+  result <- compact(result)
 
   # binds as data.frame
   result <- 
     result %>%
-    #FIX INDEX IS WRONG IF NOT ALL POPS ARE PRESENT
-    imap(~mutate(.x, pop = .y)) %>%
     bind_rows(result)
 
   # converts from generation times to years
@@ -25,7 +22,8 @@ get_smcpp <- function(folder = "outputs"){
     result %>%
     mutate(years1 = x, years2 = x*2, years3 = x*3) %>% 
     pivot_longer(c(years1, years2, years3), names_to = "T", values_to = "years") %>%
-    mutate(T = gsub("years", "", T))
-
+    mutate(T = gsub("years", "", T)) %>%
+    mutate(pop = gsub("pop", "",  label))
+ 
   return(result)
 }

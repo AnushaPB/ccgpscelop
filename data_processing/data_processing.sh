@@ -79,7 +79,7 @@ plink --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz
 # calculate distance based on 1 - IBS (1 - proportion of shared alleles)
 plink --vcf 58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz --out 58-Sceloporus_plinkdist_1ibs --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid
 
-bcftools query -l CCGP/58-Sceloporus_annotated.vcf.gz > samples.txt
+# NOT SURE WHAT THIS IS:  bbcftools query -l CCGP/58-Sceloporus_annotated.vcf.gz > samples.txt
 
 # FILTER ONE CONTIG -----------------------------------------------------------------------------------
 # get first contig name: JALMGF010000001.1

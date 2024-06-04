@@ -1,10 +1,11 @@
 get_feems <- function(crop = TRUE, nodes = TRUE){
   # Code from this issue: https://github.com/NovembreLab/feems/issues/34
   # Read in output from FEEMS
-  feems_nodes <- read_csv(here("analysis", "feems", 'feems_nodes.csv'), col_names='node_id', col_types='i')
-  feems_node_pos <- read_csv(here("analysis", "feems", 'feems_node_pos.csv'), col_names=c('lon', 'lat', "nsamp"), col_types='dd')
-  feems_edges <- read_csv(here("analysis", "feems", 'feems_edges.csv'), col_names=c('n1', 'n2'), col_types='ii')
-  feems_w <- read_csv(here("analysis", "feems", 'feems_w.csv'), col_names='w', col_types='d')
+  output_dir <- here("analysis", "feems", "outputs")
+  feems_nodes <- read_csv(here(output_dir, 'feems_nodes.csv'), col_names='node_id', col_types='i')
+  feems_node_pos <- read_csv(here(output_dir, 'feems_node_pos.csv'), col_names=c('lon', 'lat', "nsamp"), col_types='dd')
+  feems_edges <- read_csv(here(output_dir, 'feems_edges.csv'), col_names=c('n1', 'n2'), col_types='ii')
+  feems_w <- read_csv(here(output_dir, 'feems_w.csv'), col_names='w', col_types='d')
 
   # Add lon/lat to nodes and weights to edges
   feems_nodes <- add_column(feems_nodes, feems_node_pos)

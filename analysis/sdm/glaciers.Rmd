@@ -1,0 +1,163 @@
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(cowplot)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+
+ca <- get_ca()
+het <- get_het()
+coords <- get_coords(sf = TRUE)
+coords <- left_join(coords, het, by = "SampleID") %>% drop_na(Ho)
+
+lgm_glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "LGM_maxextent.shp"))
+# Note: have to first intersect and then transform otherwise you get a node error
+lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_glaciers)))
+lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
+
+plt1 <- 
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgray") +
+  geom_sf(data = lgm_glaciers, col = "skyblue2", fill = "skyblue2", alpha = 0.3, lty = "solid", lwd = 0.7) + 
+  geom_sf(data = coords, aes(fill = Ho), col = "#00000087", pch = 21, cex = 3) +
+  scale_fill_viridis_c(option = "inferno") +
+  theme_void() +
+  theme(legend.position = c(0.9, 0.83)) +
+  ggtitle("A.")
+
+# Add a new column to coords indicating whether each point is inside the lgm shapefile
+coords <- 
+  coords %>%
+  mutate(glacier = lengths(st_within(coords, lgm_glaciers)) > 0) %>%
+  mutate(glacier = ifelse(glacier, "Inside", "Outside")) %>%
+  mutate(glacier = factor(glacier, levels = c("Inside", "Outside")))
+
+# Check that the new column is correct
+ggplot() +
+  geom_sf(data = ca, fill = "lightgray") +
+  geom_sf(data = lgm_glaciers, col = "skyblue2", fill = "white", alpha = 0.7, lty = "dashed", lwd = 0.7) + 
+  geom_sf(data = coords, aes(fill = glacier), col = "#00000087", pch = 21, cex = 3) +
+  theme_void()
+
+plt2 <- 
+  ggplot(coords, aes(x = glacier, y = Ho, fill = glacier)) +
+  geom_boxplot(col = "black", alpha = 0.7) +
+  geom_jitter(width = 0.3, height = 0, col = "black", alpha = 0.5) +
+  scale_fill_manual(values = c("skyblue2", "gray")) +
+  xlab("Glacier") +
+  theme_classic() +
+  theme(legend.position = "none") +
+  ggtitle("B.")
+
+# Test for differences in genetic diversity between points inside and outside the glacier area
+nglacier <- sum(coords$glacier == "Inside")
+permtest <-
+  map_dbl(1:1000, ~{
+    s <- sample(1:nrow(coords), nglacier)
+    mean(coords$Ho[s], na.rm = TRUE)
+  })
+
+mean_inside_glacier <- data.frame(mean = mean(coords$Ho[coords$glacier == "Inside"], na.rm = TRUE))
+
+plt3 <- 
+  ggplot() +
+  geom_histogram(aes(x = permtest, fill = "Null"), col = "darkgray", alpha = 0.5) +
+  geom_vline(data = mean_inside_glacier, aes(xintercept = mean,  col = "Inside\nglacier"), lty = "solid", lwd = 1) +
+  theme_classic() +
+  scale_fill_manual(values = "gray") +
+  scale_color_manual(values = "skyblue2") +
+  xlab("Mean Ho") +
+  ylab("Count") +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(color = "", fill = "") +
+  ggtitle("C.") +
+  theme(
+    legend.position = c(0.9, 0.9),
+    legend.spacing.y = unit(-0.5, "cm"), 
+    legend.background = element_blank(),
+    axis.title.y = element_text(margin = margin(r = 0)))
+
+# Create the first grid (align by axis)
+grid1 <- plot_grid(plt2, plt3, ncol = 1, align = 'v', axis = 't')
+# Create the final grid
+plot_grid(plt1, grid1, ncol = 2, axis = "t", align = "v", rel_widths = c(5, 4))
+
+```
+
+```{r}
+# note sure what this is:
+glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "glacial_arc.shp"))
+glaciers <- st_transform(glaciers, crs = st_crs(ca))
+glaciers <- st_intersection(glaciers, ca)
+plot(glaciers[,1])
+```
+
+# Combining with BIO2
+```{r}
+source(here("analysis", "sdm", "paleovars.R"))
+paleovars <- get_paleovars()
+bio2_dif <- paleovars$cur$bio_2 - paleovars$lh$bio_2
+bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
+coords_df <- 
+  coords %>% 
+  mutate(bio2 = bio2_dif_vals) %>% 
+  drop_na(Ho)
+
+bio2_mod <- lm(Ho ~ bio2, data = coords_df)
+glacier_mod <- lm(Ho ~ glacier, data = coords_df)
+bio2_glacier_mod <- lm(Ho ~ bio2 + glacier, data = coords_df)
+
+mod_list <- list(bio2_mod, glacier_mod, bio2_glacier_mod)
+names(mod_list) <- map(mod_list, ~as.character(.x$call))
+
+print(map(mod_list, summary))
+
+# Plot residuals for each model on a map
+gg_df <- 
+  coords_df %>% 
+  mutate(resid_bio2 = residuals(bio2_mod),
+         resid_glacier = residuals(glacier_mod),
+         resid_bio2_glacier = residuals(bio2_glacier_mod)) %>%
+  pivot_longer(starts_with("resid"), names_to = "model", values_to = "residuals") %>%
+  mutate(model = factor(model, levels = c("resid_bio2", "resid_glacier", "resid_bio2_glacier")))
+
+ggplot() +
+  geom_sf(data = ca, fill = "lightgray") +
+  geom_sf(data = lgm_glaciers, col = "skyblue2", fill = "skyblue2", alpha = 0.3, lty = "solid", lwd = 0.7) + 
+  geom_sf(data = gg_df, aes(fill = residuals), col = "#00000087", pch = 21, cex = 3) +
+  facet_wrap(~model) +
+  theme_void() +
+  theme(legend.position = c(0.9, 0.83))+
+  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
+
+# Plot predicted vs observed for each model
+gg_df <- 
+  coords_df %>% 
+  mutate(pred_bio2 = predict(bio2_mod),
+         pred_bio2_glacier = predict(bio2_glacier_mod)) %>%
+  pivot_longer(starts_with("pred"), names_to = "model", values_to = "predicted") %>%
+  mutate(model = case_when(
+    grepl("bio2_glacier", model) ~ "B. Ho ~ Change in BIO2 + Glacier",
+    grepl("bio2", model) ~ "A. Ho ~ Change in BIO2"
+  )) 
+
+ggplot(gg_df) +
+  geom_point(aes(x = predicted, y = Ho, col = glacier), alpha = 0.9) +
+  geom_abline(intercept = 0, slope = 1, lty = "dashed") +
+  facet_wrap(~model) +
+  labs(x = "Predicted Ho", y = "Observed Ho", col = "Glacier") +
+  theme_classic() +
+  scale_color_manual(values = c("skyblue2", "lightgray")) +
+  theme(strip.background = element_blank(),
+  strip.text.x = element_text(hjust = 0, size = 12)) 
+
+q5 <- read_csv(here("analysis", "admixture", "outputs", "Q5.csv"))
+q5 <- 
+  q5 %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) 
+
+```
