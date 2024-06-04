@@ -128,7 +128,7 @@ ggplot(roh) +
 ```
 
 
-```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+```{r roh window, fig.width = 7, fig.height = 7, eval = FALSE}
 # project roh 
 coords_proj <- roh %>% st_as_sf() %>% st_transform(3310)
 
@@ -154,7 +154,7 @@ ggplot_gd(mask_froh, bkg = ca_proj, col = magma(100))
 ```{r models, fig.width = 5, fig.height = 5, result = FALSE, message = FALSE, eval = TRUE}
 envdata <- get_env() %>% left_join(get_coords(), by = c("x","y")) %>% rename(SampleID = SampleID.y)
 mod_df <- 
-  left_join(froh, envdata) %>%
+  left_join(roh, envdata) %>%
   left_join(het) %>%
   st_drop_geometry() %>%
   mutate(froh0_log = log(froh0 + 1)) %>%
