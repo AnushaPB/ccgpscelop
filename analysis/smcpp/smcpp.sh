@@ -107,29 +107,43 @@ BASE_PATH="../.."
 MUTATION_RATE=1.12e-9
 
 # Files
-VCF_FILE="${BASE_PATH}/data/processed_data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20.vcf.gz"
+VCF_FILE="${BASE_PATH}/data/processed_data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
 # Index the vcf file
 tabix -p vcf "${VCF_FILE}"
 
 # Extract contig information for contigs with length > 1Mb
-mapfile -t CONTIGS_ALL < <(zgrep '##contig=' "${VCF_FILE}" | awk -F'[<>,]' '{for(i=1;i<=NF;i++) {if($i ~ /ID=/) id=substr($i,4); if($i ~ /length=/) len=substr($i,8);} if(len+0 > 1000000) print id}')
+CONTIG_FILE="outputs/contigs.txt"
+if [ -f $CONTIF_FILE ]; then
+    mapfile -t CONTIGS_ALL < "${CONTIG_FILE}"
+else
+    mapfile -t CONTIGS_ALL < <(zgrep '##contig=' "${VCF_FILE}" | awk -F'[<>,]' '{for(i=1;i<=NF;i++) {if($i ~ /ID=/) id=substr($i,4); if($i ~ /length=/) len=substr($i,8);} if(len+0 > 1000000) print id}')
+    # write contigs_all out to eht CONTIG FILE
+    printf "%s\n" "${CONTIGS_ALL[@]}" > "${CONTIG_FILE}"
+fi
 
-# Subset first 10 contigs
+# Subset contigs
+#CONTIGS=("${CONTIGS_ALL[0]}")
 CONTIGS=("${CONTIGS_ALL[@]:0:10}")
+# Print the contigs
+echo ${CONTIGS[@]}
 
 # Process each population
-for i in {1..5}
+for i in {1..7}
 do
-  eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/pop$i.txt" | paste -sd, -)
+  eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k7_pop$i.txt" | paste -sd, -)
   pop="inds_pop${i}"
-  process_population "pop${i}" "${!pop}" 2> pop$i.stderr
+  process_population "pop${i}" "${!pop}" 2> pop$i.stderr &
 done
+wait
 
+# Check the status of the background jobs
+jobs
 # Move files into outputs
 mv *bed* outputs
-for i in {1..5}
+mv *stderr outputs
+for i in {1..7}
 do
   mv pop$i/ outputs/pop$i
 done
