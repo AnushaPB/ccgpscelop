@@ -1,4 +1,4 @@
-get_paleovars <- function(){
+get_paleovars <- function(cache = TRUE){
   ca <- get_ca()
   paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
   # download data
@@ -24,7 +24,7 @@ get_paleovars <- function(){
   # export
   path =  here("data", "env", "paleoclim", "paleoclim.tif")
   if (!file.exists(path)){
-    writeRaster(env_stack, here("data", "env", "paleoclim", "paleoclim.tif"), overwrite = TRUE)
+    writeRaster(env_stack, path, overwrite = TRUE)
   }
 
   return(env_list)
