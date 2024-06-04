@@ -1,12 +1,15 @@
 #source activate feems_e
-Sys.setenv(PROJ_LIB = "/home/wanglab/miniconda3/envs/feems_e/share/proj")
-Sys.setenv(PKG_CONFIG_PATH = "/home/wanglab/miniconda3/envs/feems_e/share/proj")
+#Sys.setenv(PROJ_LIB = "/home/wanglab/miniconda3/envs/feems6/share/proj")
+#Sys.setenv(PKG_CONFIG_PATH = "/home/wanglab/miniconda3/envs/feems6/share/proj")
+#Sys.setenv(PROJ_LIB = "/root/miniconda3/envs/feems6/share/proj")
+#Sys.setenv(PKG_CONFIG_PATH = "/root/miniconda3/envs/feems6/share/proj")
 
+Sys.setenv(PROJ_LIB = "/usr/share/proj")
+Sys.setenv(PKG_CONFIG_PATH = "/usr/share/proj")
 library("here")
 library("dggridR")
 library("sf")
-library("ggplot2")
-library("terra")
+library("readr")
 source(here("general_functions.R"))
 
 #Generate a dggs specifying an intercell spacing of ~25 miles
@@ -16,7 +19,7 @@ dggs <- dgconstruct(res = 8, projection = "ISEA", aperture = 4, topology = "TRIA
 ca <- get_ca()
 
 #Write out shp file
-shp_path <- here("analysis", "feems", "ca.shp")
+shp_path <- here("analysis", "feems", "outputs", "ca.shp")
 sf::st_write(ca, shp_path, append = FALSE)
 
 #Get a grid covering ca
