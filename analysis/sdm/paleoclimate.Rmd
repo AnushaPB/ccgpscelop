@@ -86,6 +86,9 @@ diff_vals <- map(diff_vars, ~ {
 })
 env_df_vals <- c(env_df_vals, diff_vals)
 names(env_df_vals) <- c(names(env_list), paste0("dif_", diff_vars))
+
+# Join env_df_vals and het
+env_df_vals <- map(env_df_vals, ~ left_join(.x, het))
 ```
 
 # Correlation tests
@@ -244,92 +247,6 @@ plts <-
 ```
 
 ## PC-based linear models
-```{r}
-# Run PCA on the environmental variables for each time period
-run_pca <- function(df, model_name){
-  # Remove NAs
-  df <- 
-    df %>% 
-    drop_na(contains("bio"), "Ho")
-
-  # Get environmental variables
-  bio_df <- 
-    df %>% 
-    dplyr::select(contains("bio")) 
-    
-  # Run PCA
-  pca <- prcomp(bio_df, scale = TRUE)
-
-  # Select principal components
-  pcs <- pca$x[,1:3]
-
-  # Create a data frame with the principal components and genetic diversity
-  pcs_df <- data.frame(pcs, Ho = df$Ho)
-
-  # Fit a linear model with the principal components
-  mod <- summary(lm(Ho ~ ., data = pcs_df))
-
-  # Return the model statistics
-  result <- 
-    data.frame(mod$coefficients) %>% 
-    mutate(model = model_name) %>% 
-    mutate(adj_rsqr = mod$adj.r.squared) %>% 
-    mutate(var = rownames(.)) %>% 
-    filter(var != "(Intercept)")
-
-  return(list(result = result, pca = pca, pcs = pcs_df))
-}
-
-lmpca <- imap(env_df_vals, \(x, idx) run_pca(x, idx)) 
-lmpca_result <- map(lmpca, "result") %>% bind_rows()
-lmpca_pcs <- map(lmpca, "pcs") %>% bind_rows(.id = "model")
-sigvars <- 
-  lmpca_result %>% 
-  distinct() %>% 
-  filter(`Pr...t..` < 0.05) %>%
-  arrange(desc(adj_rsqr))
-```
-
-```{r}
-plts <-
-  map(unique(lmpca_result$model), ~ {
-    sig_df <-
-      lmpca_result %>% 
-      filter(model == .x) %>%
-      filter(`Pr...t..` < 0.05)
-
-    sig_env_df <- 
-      lmpca_pcs %>% 
-      filter(model == .x) %>%
-      pivot_longer(contains("PC"), names_to = "var") %>%
-      filter(var %in% unique(sig_df$var))
-
-    title <- paste0(.x, " (adj R^2 = ", round(unique(sig_df$adj_rsqr), 2), ")" )
-
-    if (nrow(sig_env_df) == 0) return(NULL)
-   
-    plt <-
-      ggplot(sig_env_df, aes(value, Ho)) +
-        geom_point(alpha = 0.7) +
-        facet_wrap(~var, scales = "free", ncol = 5, nrow = 3) +
-        stat_regline_equation(
-          aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-          formula = y ~ x
-        ) +
-        geom_smooth(method = "lm") +
-        stat_cor(label.y = 0) +
-        theme_classic() +
-        ggtitle(title) +
-        theme(strip.background = element_blank(), strip.text = element_text(size = 12))
-
-    plt
-  })
-
-pdf(here(pdfpath, "pca_lms.pdf"), width = 6, height = 4)
-walk(plts, print)
-dev.off()
-
-```
 
 ```{r}
 # PCA of all variables 
@@ -428,7 +345,7 @@ count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distin
 count(count_df, vartype)
 count(count_df, bio) %>% arrange(desc(n))
 
-# Just single variables
+# Just single variables (i.e., not change/dif variables)
 pca_change <- prcomp(env_wide %>% dplyr::select(-contains("dif")), scale = TRUE)
 plot(pca_change)
 pcs_change <- data.frame(pca_change$x[,1:6])
