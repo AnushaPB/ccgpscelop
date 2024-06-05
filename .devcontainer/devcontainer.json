@@ -1,0 +1,22 @@
+{
+  "image": "ghcr.io/rocker-org/devcontainer/tidyverse:4.3",
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "settings": {
+        "r.rterm.linux": "/usr/local/bin/radian",
+        "r.bracketedPaste": true,
+        "r.plot.useHttpgd": true,
+        "[r]": {
+          "editor.wordSeparators": "`~!@#%$^&*()-=+[{]}\\|;:'\",<>/?"
+        }
+      },
+      "extensions": [
+        "github.copilot",
+        "reditorsupport.r"
+      ]
+    }
+  }
+}

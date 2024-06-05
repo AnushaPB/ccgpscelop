@@ -1,17 +1,26 @@
+
 ```{r}
-library(here)
-library(terra)
-library(tidyverse)
-library(wingen)
-library(sf)
-library(ggpubr)
-source(here("general_functions.R"))
+library("rpaleoclim")
+library("here")
+library("tidyverse")
+library("ggpubr")
+library("terra")
+library("sf")
+library("gridExtra")
+library("rpaleoclim")
+source("general_functions.R")
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+source(here("analysis", "sdm", "paleovars.R"))
+ca <- get_ca()
+pdfpath <- here("analysis", "sdm", "pdfs")
+
 coords <- get_coords()
 het <- get_het()
 dem <- get_dem(r= TRUE)
 ```
 
-# ECOREGIONS COME BACK AND CLEAN THIS UP
+# Hypothesis 1: Genetic diversity explained by geography of range expansion
+Get ecoregions:
 ```{r}
 ecol3 <- st_read(here("data", "env", "ecoregions", "ca_eco_l3.shp")) %>% st_transform(crs = 3310)
 ecol4 <- st_read(here("data", "env", "ecoregions", "ca_eco_l4.shp")) %>% st_transform(crs = 3310)
@@ -27,7 +36,7 @@ wget https://gaftp.epa.gov/EPADataCommons/ORD/Ecoregions/ca/ca_eco_l3.zip
 
 Ecoregions: https://www.epa.gov/eco-research/ecoregion-download-files-state-region-9#pane-04
 
-# Making resistance based on elevation + removing central valley
+Making resistance layer based on elevation + removing central valley
 ```{r}
 # Higher elevation = higher resistance = lower connectivity
 # rescale dem from 0 to 1
@@ -138,4 +147,98 @@ ggplot(df, aes(x = distance, y = Ho)) +
 
 # AIC TEST AGAIN BIO2 DIF
 # I mean it is def not as good a fit, but that could be because I didn't parameterize resistance correctly or somethign
+```
+
+# Hypothesis 2: Genetic diversity explained by paleoclimate
+
+```{r}
+# Get paleoclimate data
+# Created using paleoclimate.Rmd
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+
+# Select current, late holocene, LGM, and LIG
+paleovars <- 
+bio2_dif <- paleovars$cur_bio_2 - paleovars$lh_bio_2
+bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
+bio2_dif_df <- data.frame(SampleID = coords$SampleID, bio2_dif = bio2_dif_vals)
+
+```
+
+# FULL MODELS
+```{r}
+library(terra)
+library(sf)
+library(here)
+library(tidyverse)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+coords <- get_coords(sf = TRUE)
+# LOOK INTO: If you use bio1 dif instead of bio2 dif the model is super different (correlations)
+source(here("analysis", "sdm", "paleovars.R"))
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+bio2_dif <- paleovars$cur_bio_2 - paleovars$lh_bio_2
+bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
+bio2_dif_df <- data.frame(SampleID = coords$SampleID, bio2_dif = bio2_dif_vals)
+
+env_data <- rast(here("data", "env", "california_env_stack.tif"))
+env_vals <- data.frame(terra::extract(env_data, coords, ID = FALSE))
+env_vals$SampleID <- coords$SampleID
+
+csi_past <- rast(here("data", "env", "stability", "Layers", "past", "csi_past.tif"))
+csi_vals <- data.frame(csi = terra::extract(csi_past, coords, ID = FALSE)[,1])
+csi_vals$SampleID <- coords$SampleID
+
+q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
+q <- 
+  q %>%
+  # only keep the pop group corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) %>%
+  dplyr::select(SampleID, Q)
+
+
+dem <- get_dem()
+
+mod_df <- 
+  get_coords() %>% 
+  left_join(get_het()) %>%
+  left_join(get_roh()) %>%
+  left_join(env_vals) %>%
+  left_join(bio2_dif_df) %>%
+  left_join(dem) %>%
+  left_join(q) %>%
+  left_join(csi_vals) %>%
+  mutate(BurnDate = BurnDate > 0) %>%
+  drop_na(Ho, BurnDate, NDVI, gHM, bio2_dif, elev, CHELSA_bio1_1981.2010_V.2.1, Q, csi)
+
+mod_sf <- st_as_sf(mod_df)
+ggplot(mod_sf) +
+  geom_sf(aes(col = BurnDate))
+
+cor(mod_df[,c("NDVI", "gHM", "CHELSA_bio1_1981.2010_V.2.1", "elev", "BurnDate", "bio2_dif", "Q", "csi")], use = "pairwise.complete.obs")
+
+# with Q
+summary(lm(Ho ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + bio2_dif + elev + Q + csi, data = mod_df))
+
+# without Q
+summary(lm(Ho ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + bio2_dif + elev + csi, data = mod_df))
+
+# Note how Q is predicted by BurnDateTRUE/CHELSA_bio1_1981.2010_V.2.1 which are the variables that drop out in the with Q model
+summary(lm(Q ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + bio2_dif + elev + csi, data = mod_df))
+# therefore, I don't think Q should be a predictor variable, but I think it is circular (already a measure of genetic variation)
+# we may want to add Q models however to get models of predicted admixture
+
+
+plot(mod_df$gHM, mod_df$Ho)
+plot(mod_df$BurnDate, mod_df$Ho)
+plot(mod_df$CHELSA_bio1_1981.2010_V.2.1, mod_df$Ho)
+
+ggplot(mod_df,aes(x = BurnDate, y = Ho)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  theme_classic()
+ 
+ggplot(st_as_sf(mod_df)) +
+  geom_sf(aes(col = BurnDate)) 
+  
 ```
