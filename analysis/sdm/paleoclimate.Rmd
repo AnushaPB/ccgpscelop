@@ -261,6 +261,7 @@ env_wide <-
   pivot_wider(names_from = "name", values_from = all_of(timeperiods)) %>%
   drop_na(contains("bio"))
 ```
+
 Change PCA:
 ```{r}
 # Get just change variables
@@ -347,7 +348,7 @@ count(count_df, vartype)
 count(count_df, bio) %>% arrange(desc(n))
 ```
 ```{r}
-# Get just singel timeperiod variables
+# Get just single timeperiod variables
 pca_single <- prcomp(env_wide %>% dplyr::select(-contains("dif"), -Ho), scale = TRUE)
 plot(pca_single)
 
@@ -485,17 +486,19 @@ ggplot(ggdf, aes(value, Ho)) +
 # Get variables strongly correlated with each PC
 important_vars <-  map(sigpcs, ~{
   # Get variables correlated with the PC
-  bigcor <- 
-    env_wide %>% 
-    dplyr::select(-Ho) %>%
-    cor(mod_df[, .x], use = "complete.obs") 
-    
-  bigcor_df <- data.frame(r = bigcor, PC = .x)
-  bigcor_df$var <- row.names(bigcor)
-  row.names(bigcor_df) <- NULL
-  
-  bigcor_df %>%
-  filter(abs(r) > 0.7) 
+  cor_results <- 
+    map(names(env_wide)[-1], \(column) {
+      cor.test(env_wide[[column]], mod_df[, .x])
+    })  
+
+  data.frame(
+    r = map_dbl(cor_results, "estimate"),
+    p = map_dbl(cor_results, "p.value"),
+    PC = .x,
+    var = names(env_wide)[-1]
+  ) %>%
+  filter(p < 0.05) 
+
 }) %>% bind_rows()
 
 vars <- important_vars %>% pull(var) %>% unique()
@@ -536,6 +539,196 @@ biokey <- get_biokey()
 count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
 count(count_df, vartype)
 count(count_df, bio) %>% arrange(desc(n))
+```
+
+PCS WITH ALL Variables
+```{r}
+# Get just single timeperiod variables
+pca <- prcomp(env_wide %>% dplyr::select(-Ho), scale = TRUE)
+plot(pca)
+
+# calculate when 90% of the variance is explained
+varexp <- cumsum(pca$sdev^2) / sum(pca$sdev^2)
+npcs <- which(varexp > 0.8)[1]
+  
+# Run lm with PCs
+pcs <- data.frame(pca$x[,1:npcs])
+mod_df <- data.frame(pcs, Ho = env_wide$Ho)
+
+# Use dredge to determine what combination of pcs is best
+full_model <- lm(Ho ~ ., data = mod_df, na.action = na.fail)
+
+# Use dredge for model selection
+model_set <- dredge(full_model)
+
+# Select the best models based on ΔAIC < 2
+best_models <- get.models(model_set, subset = delta < 2)
+
+# There are four best models 
+length(best_models)
+sapply(best_models, AIC)
+
+mod <- best_models[[which.min(sapply(best_models, AIC))]]
+mod_summary <- - data.frame(summary(mod)$coefficients) 
+
+# Get the significant PCs
+sigpcs <- 
+  mod_summary %>% 
+  filter(`Pr...t..` < 0.05) %>%
+  mutate(var = row.names(.)) %>% 
+  filter(var != "(Intercept)") %>%
+  pull(var)
+
+ggdf <-
+  data.frame(mod_df) %>%
+  pivot_longer(contains("PC")) %>%
+  filter(name %in% sigpcs)
+
+ggplot(ggdf, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+# Get variables strongly correlated with each PC
+important_vars <-  map(sigpcs, ~{
+  # Get variables correlated with the PC
+  cor_results <- 
+    map(names(env_wide)[-1], \(column) {
+      cor.test(env_wide[[column]], mod_df[, .x])
+    })  
+
+  data.frame(
+    r = map_dbl(cor_results, "estimate"),
+    p = map_dbl(cor_results, "p.value"),
+    PC = .x,
+    var = names(env_wide)[-1]
+  ) %>%
+  filter(p < 0.05) 
+
+}) %>% bind_rows()
+
+vars <- important_vars %>% pull(var) %>% unique()
+
+important_df <- 
+  env_wide %>% 
+  dplyr::select(-Ho) %>%
+  pivot_longer(contains("bio")) %>% 
+  filter(name %in% vars) %>%
+  mutate(splitname = name) %>%
+  mutate(splitname = gsub("dif_", "dif-", splitname)) %>%
+  separate(splitname, into = c("timeperiod", "bio", "bion"), sep = "_") %>%
+  mutate(bio = paste0("bio_", bion)) 
+
+
+ggplot(important_df, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+
+biokey <- get_biokey()
+count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
+count(count_df, vartype)
+count(count_df, bio) %>% arrange(desc(n))
+```
+
+```{r}
+# Calculate correlation of each var with Ho
+Ho_cors <- 
+  env_wide %>% 
+  select(Ho, all_of(vars)) %>%
+  cor(use = "complete.obs") %>% 
+  .["Ho", -1] %>%
+  bind_rows() %>%
+  pivot_longer(everything(), names_to = "var", values_to = "r_Ho") %>%
+  arrange(desc(abs(r_Ho))) %>%
+  left_join(important_vars, by = "var")
+
+# See top vars:
+head(Ho_cors)
+
+# For each significant PC, get the variable with the highest r_Ho
+Ho_vars <- 
+  Ho_cors %>% 
+  # First, for variables that have significant associations with more than one PC, get the one with the highest r with the PC
+  group_by(var) %>%
+  filter(abs(r) == max(abs(r))) %>% 
+  # Then, filter to get the variable with the highest correlation with Ho for each PC
+  group_by(PC) %>% 
+  filter(abs(r_Ho) == max(abs(r_Ho))) %>% 
+  ungroup() %>% 
+  pull(var)
+
+# Check correlations
+cors <- cor(env_wide[, Ho_vars])
+diag(cors) <- 0
+stopifnot(max(cors) < 0.7)
+
+# Build linear model with the explanatory variables
+mod_df2 <- env_wide %>% dplyr::select(Ho, all_of(Ho_vars))
+mod <- lm(Ho ~ ., data = mod_df2, na.action = na.fail)
+
+# Run dredge again
+model_set <- dredge(mod)
+
+# Select the best models based on ΔAIC < 2
+best_models <- get.models(model_set, subset = delta < 2)
+
+# There are three best models
+length(best_models)
+
+# Get the best of them
+best_mod <- best_models[[which.min(sapply(best_models, AIC))]]
+summary(best_mod)
+mod_result <- data.frame(summary(best_mod)$coefficients) %>% filter(`Pr...t..` < 0.05)
+# The best mod is dif_lh_bio_2 and dif_lig_bio_2
+
+# Get variables strongly correlated with each of the significant variables from the best model
+cor_df <- data.frame(cor(env_wide, env_wide[,row.names(mod_result)]))
+cor_df$var <- row.names(cor_df)
+cor_df %>% 
+  pivot_longer(-var) %>% 
+  # filter out identity correlation
+  filter(value != 1) %>%
+  # get remaining vars
+  filter(abs(value) > 0.7)
+# The only correlation is dif_lh_bio_2 with dif_lig_bio_1
+# Check which is the better model based on AIC
+AIC(lm(Ho ~ dif_lh_bio_2 , data = env_wide))
+AIC(lm(Ho ~ dif_lig_bio_1, data = env_wide))
+# Based on AIC, dif_lh_bio_2 is better
+
+# Plot all three important variables :dif_lh_bio_2, dif_lig_bio_1, and dif_lig_bio_2
+ggdf <- 
+  env_wide %>% 
+  dplyr::select(Ho, dif_lh_bio_2, dif_lig_bio_1, dif_lig_bio_2) %>%
+  pivot_longer(-Ho) 
+
+
+pdf("Rplots.pdf", width =10)
+ggplot(ggdf, aes(value, Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  facet_wrap(~name, scales = "free") +
+  stat_cor(label.y = 0) +
+  theme_classic()
+dev.off()
+
 ```
 ## Showing off BIO2
 ```{r}
