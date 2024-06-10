@@ -63,14 +63,14 @@ ggplot(filter(smcpp, T == 2 | T == 3, !is.na(pop))) +
 ```{r}
 library(sf)
 library(terra)
-source("analysis/sdm/paleovars.R")
+source(here("analysis/sdm/paleovars.R"))
 ca <- get_ca()
 coords <- get_coords(sf = TRUE)
 paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
 paleokey <- get_paleokey()
 # isolate paleovars that end in 1 and no following numebers
-bio <- paleovars[[grepl("1$", names(paleovars)) | grepl("2$", names(paleovars))]]
-bio <- paleovars[[!grepl("mis19", names(paleovars))]]
+bio <- paleovars[[grepl("bio_1$", names(paleovars))]]
+bio <- bio[[!grepl("mis19", names(bio))]]
 biovals <- extract(bio, coords, ID = FALSE)
 clim_df <- bind_cols(coords, biovals)
 
@@ -85,7 +85,7 @@ pop_df <-
   left_join(coords, by = "SampleID") 
 
 paleokey_split <- 
-  paleokey %>%
+  get_paleokey() %>%
   filter(id != "mis19") %>%
   mutate(time = 
     case_when(
@@ -95,8 +95,9 @@ paleokey_split <-
     ) %>%
   separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
   mutate(across(c(start_time, end_time), ~ case_when(
-    str_detect(.x, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
-    str_detect(.x, "Ma") ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
+    # Only end_time has the unit for some and start_time has unit for others
+    str_detect(end_time, "ka") | str_detect(start_time, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
+    str_detect(end_time, "Ma") | str_detect(start_time, "Ma")  ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
     TRUE ~ as.numeric(.x)
   )))
 
@@ -105,8 +106,9 @@ change_df <-
   clim_df %>%
   pivot_longer(all_of(names(bio))) %>%
   # split based on underscore using tidyvrse
-  separate(name, into = c("name", "var"), sep = "_") %>%
-  left_join(paleokey_split, by = c("name" ="id")) %>%
+  separate(name, into = c("name", "var", "varn"), sep = "_") %>%
+  mutate(var = paste(var, varn, sep = "_")) %>%
+  left_join(paleokey_split, by = c("name" = "id")) %>%
   pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
   drop_na(time) %>%
   left_join(pop_df)
@@ -114,7 +116,7 @@ change_df <-
 mean_change <-
   change_df %>%
   group_by(time, pop, var) %>%
-  summarize(value = mean(value, na.rm =TRUE)) %>%
+  summarize(value = mean(value, na.rm = TRUE)) %>%
   drop_na(time, pop, var) %>%
   # scale value between min and max of smcpp y
   group_by(var) %>%
