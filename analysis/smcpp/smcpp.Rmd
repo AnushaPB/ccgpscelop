@@ -55,7 +55,7 @@ ggplot(filter(smcpp, T == 2 | T == 3, !is.na(pop))) +
   scale_x_continuous(trans = "log10") +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2")) +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2")) +
   ylab("Ne") +
   xlab("years")
 ```
@@ -75,10 +75,10 @@ biovals <- extract(bio, coords, ID = FALSE)
 clim_df <- bind_cols(coords, biovals)
 
 pop_df <- 
-  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k7") %>%
+  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
   map(~{
     pop <- read_lines(.x)
-    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k7_pop", "", .))
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k9_pop", "", .))
     return(pop_df)
   }) %>%
   bind_rows() %>%
@@ -89,7 +89,7 @@ paleokey_split <-
   filter(id != "mis19") %>%
   mutate(time = 
     case_when(
-      period == "Current" ~ "1.979-2.013 ka", 
+      period == "Current" ~ "0 ka", 
       .default = time
       )
     ) %>%
@@ -121,7 +121,6 @@ mean_change <-
   mutate(value = scale(value)) %>%
   group_by(pop, var) %>%
   mutate(value = scales::rescale(value, to = c(1e5, 1e6)))
-# IDEA PLOT THE TIME POINTS OUT (LOOK AT SDM)
 
 all_mean_change <- 
   change_df %>%
@@ -132,6 +131,15 @@ all_mean_change <-
   group_by(var) %>%
   mutate(value = scale(value)) %>%
   mutate(value = scales::rescale(value, to = c(21259.24, 2004553)))
+
+color_df <- 
+  pop_df %>%
+  st_as_sf() %>%
+  bind_cols(st_coordinates(.)) %>%
+  st_drop_geometry() %>%
+  group_by(pop) %>%
+  summarize(pop_color = mean(Y))
+smcpp <- left_join(smcpp, color_df, by = "pop")  
 
 plt1 <-
   ggplot(data = filter(smcpp, T == 2, !is.na(pop))) +
@@ -151,11 +159,10 @@ plt1 <-
   scale_y_continuous(trans = "log10") +
   facet_wrap(~factor(pop)) +
   theme_classic() +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
   ylab("Ne") +
   xlab("years") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
-
 
 # plot of population assignments
 plt2 <- 
@@ -163,7 +170,7 @@ plt2 <-
   geom_sf(data = ca) +
   geom_sf(data = st_as_sf(pop_df), aes(col = pop)) +
   labs(col = "Population") +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan"))  +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan"))  +
   theme_void() +
   theme(
     legend.position = c(0.8, 0.75),
@@ -192,7 +199,8 @@ plt1 <-
   scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
+  #scale_color_viridis_c() +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
   ylab("Ne") +
   xlab("years") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
@@ -226,4 +234,60 @@ plt1 <-
 pdf(here("analysis", "smcpp", "smcpp3.pdf"), width = 25, height = 10)
 plt1
 dev.off()
+```
+
+```{r}
+
+gg_df <- 
+  filter(smcpp, T == 2, !is.na(pop)) %>%
+  mutate(color_group = 
+    case_when(
+      pop %in% c(3,6:9) ~ "Group 1",
+      pop %in% c(1,5) ~ "Group 2", 
+      pop == 2 ~ "Group 3", 
+      pop == 4 ~ "Group 4")
+    )
+
+pop_df2 <- left_join(pop_df, distinct(select(gg_df, pop, color_group)))
+
+# plot of population assignments
+plt2 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = st_as_sf(pop_df2), aes(col = color_group)) +
+  labs(col = "Population") +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan"))  +
+  theme_void() +
+  theme(
+    legend.position = c(0.8, 0.75),
+    legend.key.size = unit(0.8, "cm"), # Increase the size of the legend keys
+    legend.text = element_text(size = 14), # Increase the size of the legend text
+    legend.title = element_text(size = 16) # Increase the size of the legend title
+  ) 
+
+plt1 <-
+  ggplot(data = gg_df) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
+  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(color_group), group = pop), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  facet_wrap(~color_group) +
+  #scale_color_viridis_c() +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
+  ylab("Ne") +
+  xlab("years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+pdf(here("analysis", "smcpp", "smcpp4.pdf"), width = 18, height = 7)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
+dev.off()
+ 
 ```
