@@ -21,7 +21,7 @@ for K in 1 2 3 4 5 6 7 8 9 10; do admixture --cv $PREFIX.bed $K | tee $PREFIX.${
 mv *58-Sceloporus* outputs
 
 # Quickly retrieve CV scores for output
-grep -h CV outputs/PREFIX*.out
+grep -h CV outputs/*.out
 
 # Two individuals will be removed subsequently: single individual in Mojave: IW1426 (Scelocci_IW1426); 
 # individual that has seemingly incorrect coords: CHI1382 (Scelocci_CHI1382_DAW5-46-21)

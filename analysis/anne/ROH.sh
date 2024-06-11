@@ -2,7 +2,8 @@
 # Do the following in the analysis/anne directory
 
 VCF="../../data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz" # n=164 inds, not LD-pruned
-FAI="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
+#FAI="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
+FAI="../../data/58-Sceloporus.QC.fai"
 
 # ROH ------------------------------------------------------------------------------
 
