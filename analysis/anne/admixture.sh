@@ -24,7 +24,7 @@ mv *58-Sceloporus* outputs
 grep -h CV outputs/*.out
 
 # Two individuals will be removed subsequently: single individual in Mojave: IW1426 (Scelocci_IW1426); 
-# individual that has seemingly incorrect coords: CHI1382 (Scelocci_CHI1382_DAW5-46-21)
+# individual that has seemingly incorrect coords: Scelocci_BUR76
 
 # Run admixture.Rmd which will generate files with individuals assigned to each cluster and
 # save them as e.g., K5_pop1.txt, K5_pop2.txt, etc.

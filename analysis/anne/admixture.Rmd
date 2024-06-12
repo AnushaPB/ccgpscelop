@@ -11,8 +11,7 @@ knitr::opts_chunk$set(
   echo = TRUE,
   message = FALSE,
   warning = FALSE,
-  result = FALSE
-)
+  result = FALSE)
 library(here)
 library(tidyverse)
 library(cowplot)
@@ -55,7 +54,7 @@ theme_custom <-
 
 ```{r, include = FALSE}
 # get coordinates 
-coords <- read_tsv(here("analysis", "anne", "outputs", "58-Sceloporus.coords.txt"), col_names = FALSE) %>% 
+coords <- read_tsv(here("data", "58-Sceloporus.coords.txt"), col_names = FALSE) %>% 
   rename(SampleID = X1, x = X2, y = X3)
 ```
 
@@ -93,8 +92,10 @@ df <-
  st_as_sf(coords = c("x", "y")) %>%
  st_set_crs(st_crs(4326)) # 4326 or 3310
 
-# Plot, faceting by K-value and remove outlier sample (likely incorrect locality)
-ggplot(df %>% filter(K != 1) %>% filter(SampleID != "Scelocci_CHI1382_DAW5-46-21")) +
+# Plot, faceting by K-value and remove outlier sample
+ggplot(df %>% 
+         filter(K != 1) %>% 
+         filter(SampleID != "Scelocci_BUR76")) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 2) +
@@ -109,10 +110,10 @@ barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x,
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
-Build maps and barplots for specific K values. Based on the CV error, let's look at K=5-7.
+Build maps and barplots for specific K values. Based on the CV error, let's look at K=5-6.
 
 ```{r, fig.width = 13, fig.height = 6}
-ggplot(df %>% filter(K %in% 5:7) %>% filter(SampleID != "Scelocci_CHI1382_DAW5-46-21")) +
+ggplot(df %>% filter(K %in% 5:6) %>% filter(SampleID != "Scelocci_BUR76")) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 1) +
@@ -130,19 +131,19 @@ do.call(ggarrange, c(barplots, ncol = 1))
 Save Q-values to file. `cluster` is the final cluster assignment for SampleID given max Q.
 
 ```{r save}
-Kval = 5
+Kval = 6
 
 pops <- paste0("X", 1:Kval)
 Q %>% 
   filter(K == Kval) %>% 
-  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>% 
+  filter(SampleID != "Scelocci_BUR76") %>% 
   filter(PopGroup %in% pops) %>% 
   write_tsv(paste0(here("analysis", "anne", "outputs"), "/Q", Kval, ".txt"), col_names = TRUE)
 
 # Write out samples in each population for ROH calculations
 Q %>%
   filter(K == Kval) %>%
-  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>% 
+  filter(SampleID != "Scelocci_BUR76") %>% 
   # only keep the pop group corresponding to the cluster
   mutate(PopGroup = as.numeric(gsub("X", "", PopGroup))) %>%
   filter(cluster == PopGroup) %>%
@@ -166,7 +167,7 @@ krig_raster <- raster::aggregate(CA_env[[1]], fact = 6)
 qmat <- get_Q(K = Kval,
               output_dir = here("analysis", "anne", "outputs"),
               prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60") %>% 
-  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21" | SampleID != "")
+  filter(SampleID != "Scelocci_BUR76" | SampleID != "")
 
 df <-
  left_join(qmat, coords[ ,c("x", "y", "SampleID")], by = "SampleID")
