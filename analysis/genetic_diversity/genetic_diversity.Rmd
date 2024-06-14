@@ -55,17 +55,8 @@ coords <-
 ggplot(coords) + 
   geom_sf(data = ca) +
   geom_sf(aes(fill = Ho), col = "#00000087", pch = 21, cex = 3) +
-  scale_fill_viridis_c(option = "inferno") +
+  scale_fill_viridis_c(option = "mako") +
   theme_void()
-
-ggplot(coords) +
- geom_sf() +
- geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
- geom_sf(aes(geometry = geometry, col = Ho), pch = 16, cex = 3) +
- scale_color_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
- scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
- theme_void()
-
 ```
 
 ```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
@@ -88,12 +79,15 @@ krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
 # Apply a mask to the kriging result
 count_mask <- resample(window_Ho$sample_count, krig_Ho)
 mask_Ho <- mask_gd(krig_Ho, ca_proj)
-#mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 1)
+mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 0.1)
 
 # Plot masked kriging result
-ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100)) +
-  labs(fill = "Ho") +
-  scale_fill_viridis_c(labels = scales::scientific, option = "magma")
+ggplot_gd(mask_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "Ho")
+
+
+ggplot_gd(window_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "Ho")
 ```
 
 # ROH
@@ -110,6 +104,20 @@ ggplot(roh) +
  geom_sf(data = ca) +
  geom_sf(aes(geometry = geometry, fill = log(froh + 1e-6)), col = "#00000087", pch = 21, cex = 2.5) +
  scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = froh0), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ labs(fill = "FROH") +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = log(froh0 + 1e-6)), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ labs(fill = "log(FROH + 1e-6)") +
  theme_void()
 
 ggplot(roh) +
