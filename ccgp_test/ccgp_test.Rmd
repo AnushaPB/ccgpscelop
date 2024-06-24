@@ -196,21 +196,14 @@ mod_df <-
   pivot_wider(names_from = rank, values_from = name) %>%
   left_join(lm_df) %>%
   filter(var == "bio_1", timeperiod == "dif_lig") %>%
-  drop_na(`Pr...t..`) 
+  drop_na(`Pr...t..`) %>%
+  mutate(significant = `Pr...t..` < 0.05)
 
-mod_df %>%
-  mutate(significant = `Pr...t..` < 0.05) %>%
-  group_by(kingdom) %>%
-  summarize(proportion = mean(significant, na.rm = TRUE)) 
+anova(lm(significant ~ phylum + class, data = mod_df))
 
-ggplot(summarize(group_by(mod_df, kingdom), proportion = mean(`Pr...t..` < 0.05, na.rm = TRUE))) +
-  geom_bar(aes(x = kingdom), stat = "count") 
 ggplot(summarize(group_by(mod_df, phylum), proportion = mean(`Pr...t..` < 0.05, na.rm = TRUE))) +
-  geom_bar(aes(x = phylum), stat = "count") 
-ggplot(summarize(group_by(mod_df, order), proportion = mean(`Pr...t..` < 0.05, na.rm = TRUE))) +
-  geom_col(aes(y = order, x =proportion))
-ggplot(summarize(group_by(mod_df, class), proportion = mean(`Pr...t..` < 0.05, na.rm = TRUE))) +
-  geom_col(aes(y = class, x =proportion))
+  geom_col(aes(y = phylum, x = proportion)) +
+  xlim(0, 1)
 
 writeLines(paste0(round(mean(sig1$sig, na.rm = TRUE), 2)*100, "% of the relationships were significant"))
 writeLines(paste0(round(mean(direction$neg, na.rm = TRUE), 2)*100, "% of significant relationships were negative"))
@@ -293,7 +286,6 @@ csi_df <- data.frame(csi_vals, df)
 names(csi_df)
 ```
 
-
 ```{r}
 # check for significant correlations
 possibly_cor <- possibly(cor, NA)
@@ -336,8 +328,14 @@ result %>%
 ```
 
 ```{r}
-csi_long <- csi_df %>% pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "csi")
-csi_ls <- csi_long %>% group_by(project) %>% group_split()
+csi_long <-  
+  csi_df %>% 
+  pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "csi") 
+
+csi_ls <- 
+  csi_long %>% 
+  group_by(project) %>% 
+  group_split()
 
 plts <- map(csi_ls, ~{
   if (all(is.na(.x$csi))) return(NULL)
@@ -427,4 +425,45 @@ mutate(var = row.names(.)) %>%
 filter(!grepl("project", var)) %>%
 filter(`Pr...t..` < 0.05)
 
+ggplot(big_env, aes(x = cur_bio_1, y = Ho)) +
+  geom_point(aes(col = project)) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  theme(legend.position = "none")
+
+ggplot(big_env, aes(x = NDVI, y = Ho)) +
+  geom_point(aes(col = project)) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+
+### wingen
+```{r}
+library("wingen")
+
+coords <- st_as_sf(df, coords = c("x", "y"), crs = 4326)
+
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Convert coordinates to a raster layer with 10km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+run_wingen <- function(project){
+  coords_proj <- coords_proj %>% filter(project == !!project)
+  # Calculate windowed mean of Ho
+  window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+  return(window_Ho)
+}
+
+possibly_wingen <- possibly(run_wingen, NULL)
+wingen_maps <- map(unique(df$project), ~possibly_wingen(.x), .progress = TRUE)
+
+# Plot masked kriging result
+ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100)) +
+  labs(fill = "Ho") +
+  scale_fill_viridis_c(labels = scales::scientific, option = "magma")
 ```
