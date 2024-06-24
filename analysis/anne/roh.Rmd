@@ -1,0 +1,81 @@
+---
+title: "roh"
+author: "Anne Chambers"
+date: "2024-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+library(tidyverse)
+library(cowplot)
+library(sf)
+library(terra)
+library(algatr)
+library(wingen)
+library(viridis)
+library(vcfR)
+library(tigris)
+devtools::load_all()
+theme_set(theme_cowplot())
+
+source(here("general_functions.R"))
+```
+
+# 1. Import data
+
+```{r, include = FALSE}
+# Get coordinates 
+coords <- read_tsv(here("data", "58-Sceloporus.coords.txt"), col_names = FALSE) %>% 
+  rename(SampleID = X1, x = X2, y = X3)
+```
+
+```{r, include = FALSE}
+# Get froh data
+froh_files <- list.files(path = here("analysis", "anne", "outputs"), pattern = "*.froh")
+
+froh <-
+  1:length(froh_files) %>% 
+  lapply(function(x) {
+    dat <- read_tsv(paste0(here("analysis", "anne", "outputs"), "/", froh_files[x]), col_names = FALSE) %>% 
+      rename(SampleID = X1, froh = X2) %>% 
+      mutate(filename = froh_files[x]) %>% 
+      separate_wider_delim(cols = filename, delim = "_", names = c("Kvalue", "PopGroup")) %>% 
+      mutate_all(~gsub("pop|.froh", "", .))
+    return(dat)
+    }) %>% 
+  bind_rows()
+
+froh$froh <- as.numeric(froh$froh)
+
+# Load the U.S. state boundaries data
+ca <- get_ca()
+
+# Combine coords with froh data
+df <-
+ left_join(froh, coords[,c("x", "y", "SampleID")], by = "SampleID") %>%
+ st_as_sf(coords = c("x", "y")) %>%
+ st_set_crs(st_crs(4326)) # 4326 or 3310
+```
+
+# 2. Visualize fROH results per population
+
+```{r, include = FALSE}
+froh %>% 
+  mutate(BioinformaticsID = fct_reorder(SampleID, froh)) %>% 
+  ggplot(aes(x = BioinformaticsID, y = froh)) +
+  geom_point(aes(color = PopGroup)) +
+  theme(axis.text.x = element_text(angle = 90, size = 6, hjust = 1)) +
+  ylab("Fraction of inbreeding (fROH)") +
+  xlab(NULL)
+```
+
+```{r, include = FALSE}
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = froh)) +
+  scale_color_gradient2(high = "#E4460AFF", mid = "lightskyblue") +
+  theme_void()
+```

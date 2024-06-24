@@ -26,7 +26,7 @@ format_het <- function(path, callable_sites){
 
 get_pops <- function(){
   map(paste0("pop", 1:5), ~{
-    read.table(here("analysis", "admixture", "outputs", paste0(.x, ".txt")), header = FALSE) %>%
+    read.table(here("analysis", "admixture", "outputs", paste0("k5_", .x, ".txt")), header = FALSE) %>%
     mutate(pop = .x) %>%
     rename(SampleID = V1)
   }) %>% bind_rows()
@@ -40,7 +40,7 @@ get_roh <- function(){
   roh <-
     map(paste0("pop", 1:5), ~{
       poproh <- 
-        read_table(here("analysis", "genetic_diversity", "outputs", paste0(.x, ".froh")), col_names = FALSE) %>%
+        read_table(here("analysis", "genetic_diversity", "outputs", paste0("K5_", .x, ".froh")), col_names = FALSE) %>%
         rename(SampleID = X1, froh = X2) %>%
         right_join(filter(coords, pop == .x)) %>%
         # missing froh values indicates no roh greater than the minimum size were found

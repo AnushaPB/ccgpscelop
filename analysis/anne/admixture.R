@@ -27,7 +27,7 @@ get_cv <- function(output_dir, prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsa
     }
   })
 
-  df <- data.frame(K = factor(1:length(cv_errors)+1, levels = 1:length(cv_errors)+1), cv_error = cv_errors)
+  df <- data.frame(K = factor(1:length(cv_errors), levels = 1:length(cv_errors)), cv_error = cv_errors)
 
   return(df)
 }
