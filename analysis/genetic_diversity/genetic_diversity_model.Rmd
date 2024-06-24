@@ -34,6 +34,8 @@ wget https://gis.data.cnra.ca.gov/api/download/v1/items/d5ab2f9c5f7c45e682fd7e9a
 
 wget https://gaftp.epa.gov/EPADataCommons/ORD/Ecoregions/ca/ca_eco_l3.zip
 
+wget https://gaftp.epa.gov/EPADataCommons/ORD/Ecoregions/ca/ca_eco_l4.zip
+
 Ecoregions: https://www.epa.gov/eco-research/ecoregion-download-files-state-region-9#pane-04
 
 Making resistance layer based on elevation + removing central valley
@@ -79,7 +81,7 @@ points(coords_sf)
 
 # Calculate resistance distance
 # COME BACK AND COMPARE TO BIO2 AND EACH OTHER
-lyr <- aggregate(connectivity_mask, 5, fun = mean, na.rm = TRUE)
+lyr <- aggregate(connectivity_mask, 6, fun = mean, na.rm = TRUE)
 plot(lyr, col = viridis::inferno(100))
 # we know the central valley was a barrier
 #lyr <- aggregate(connectivity, 5, fun = mean, na.rm = TRUE)
