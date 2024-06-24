@@ -1,8 +1,8 @@
-get_smcpp <- function(folder = "outputs"){
+get_smcpp <- function(folder = "outputs", K = 6){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
   
-  result <- map(1:7, ~safe_csv(here("analysis", "smcpp", paste0("pop", .x), paste0("pop", .x, ".csv")))) 
+  result <- map(1:K, ~safe_csv(here("analysis", "smcpp", "outputs", paste0("k", K), paste0("pop", .x), paste0("pop", .x, ".csv")))) 
   
   # drops anything NULL
   result <- compact(result)
