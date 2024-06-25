@@ -1,8 +1,8 @@
-get_smcpp <- function(folder = "outputs"){
+get_smcpp <- function(folder = "outputs", K = 6){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
   
-  result <- map(1:7, ~safe_csv(here("analysis", "smcpp", paste0("pop", .x), paste0("pop", .x, ".csv")))) 
+  result <- map(1:K, ~safe_csv(here("analysis", "smcpp", folder, paste0("pop", .x), paste0("pop", .x, ".csv")))) 
   
   # drops anything NULL
   result <- compact(result)
@@ -18,6 +18,7 @@ get_smcpp <- function(folder = "outputs"){
   # smc++ plot "$output_path/smcpp_plot.pdf" "$output_path/model.final.json" -c -g 1
   # smc++ plot "$output_path/smcpp_plot.pdf" "$output_path/model.final.json" -c -g 2
   # (first two x are identical, third x is doubled, y stays the same in all cases)
+  # generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
   result <- 
     result %>%
     mutate(years1 = x, years2 = x*2, years3 = x*3) %>% 
