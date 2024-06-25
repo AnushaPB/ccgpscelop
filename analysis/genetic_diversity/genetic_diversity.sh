@@ -7,6 +7,34 @@ GENOME="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSce
 # PLINK -----------------------------
 # PLINK is a whole-genome association analysis toolset, designed to perform a range of basic, large-scale analyses in a computationally efficient manner.
 
+
+# ROH -----------------------------
+
+# Define an array with your population identifiers
+POPS_PATH="../admixture/outputs"
+POPS=("pop1" "pop2" "pop3" "pop4" "pop5", "pop6")
+# Loop through each population in parallel
+for POP in "${POPS[@]}"; do
+    (
+        # Split by population
+        bcftools view -S $POPS_PATH/k6_${POP}.txt $VCF -Oz -o ${POP}.vcf.gz
+
+        # Calculate ROH
+        bcftools roh --threads 10 -G30 --AF-dflt 0.4 --estimate-AF GT,- -O z -o ${POP}.roh.gz ${POP}.vcf.gz
+        zgrep RG ${POP}.roh.gz > ${POP}.rg.roh
+
+        # Calculate fROH
+        python -c "from roh import calc_roh; calc_roh('${POP}.rg.roh', '$GENOME', '${POP}.froh')"
+
+        # Get maximum ROH length
+        Rscript -e "print(max(read.table('${POP}.rg.roh')\$V6))"
+
+        # Move data into output directory
+        mkdir -p outputs
+        mv *${POP}* outputs/
+    ) &
+done
+wait
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
 # FID: Family ID
@@ -31,29 +59,3 @@ mv *.fam outputs
 # note: calculated the same as https://www.cell.com/current-biology/pdfExtended/S0960-9822(21)00548-0: 
 # "we define heterozygosity as the fraction of heterozygous genotypes out of all
 # called genotypes (including invariant sites) within an individual"
-
-# ROH -----------------------------
-
-# Define an array with your population identifiers
-POPS_PATH="../admixture/outputs"
-POPS=("pop1" "pop2" "pop3" "pop4" "pop5", "pop6")
-
-# Loop through each population
-for POP in "${POPS[@]}"; do
-    # Split by population
-    bcftools view -S $POPS_PATH/k6_${POP}.txt $VCF -Oz -o ${POP}.vcf.gz
-
-    # Calculate ROH
-    bcftools roh --threads 10 -G30 --AF-dflt 0.4 --estimate-AF GT,- -O z -o ${POP}.roh.gz ${POP}.vcf.gz
-    zgrep RG ${POP}.roh.gz > ${POP}.rg.roh
-
-    # Calculate fROH
-    python -c "from roh import calc_roh; calc_roh('${POP}.rg.roh', '$GENOME', '${POP}.froh')"
-    
-    # Get maximum ROH length
-    Rscript -e "print(max(read.table('${POP}.rg.roh')\$V6))"
-
-    # Move data into output directory
-    mkdir -p outputs
-    mv *${POP}* outputs/
-done

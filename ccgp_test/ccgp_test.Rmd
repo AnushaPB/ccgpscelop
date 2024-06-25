@@ -17,38 +17,29 @@ library("sf")
 library("gridExtra")
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+source(here("ccgp_test", "get_ccgp_data.R"))
 ca <- get_ca()
 ```
 
 # Get heterozygosity Data
 ```{r}
-# Get a list of all .het files in the current directory
-het_files <- list.files(here("ccgp_test", "data"), pattern = "\\.het$")
+het <- get_ccgp_het()
+coords <- get_ccgp_coords()
 
-# Extract the species names from the file names
-projects <- gsub("\\..*", "", het_files)
+df <- 
+  inner_join(het, coords, by = c("project", "SampleID")) %>%
+  drop_na(project, SampleID)
 
-# Construct the file paths for the .coords and .het files
-coords_files <- paste0(projects, ".coords.txt")
-het_files <- paste0(projects, ".het")
-
-
-df <-
-  map(projects, ~{
-    het <- read_table(here("ccgp_test", "data", paste0(.x, ".het")))
-    if ("INDV" %in% names(het)) het <- het %>% rename(SampleID = INDV)
-    if ("IID" %in% names(het)) het <- het %>% rename(SampleID = IID) %>% mutate(note = "OLD")
-    if ("N(NM)" %in% names(het)) het$Ho <- (het$`N(NM)` - het$`O(HOM)`)/het$`N(NM)`
-    if ("N_SITES" %in% names(het)) het$Ho <- (het$N_SITES - het$`O(HOM)`)/het$N_SITES
-    coords <- read_table(here("ccgp_test", "data", paste0(.x, ".coords.txt")), col_names = FALSE)
-    df <- 
-      coords %>% 
-      rename(SampleID = X1, x = X2, y = X3) %>% 
-      left_join(het, by = "SampleID") %>%
-      mutate(project = .x)
-    return(df)
-  }) %>% bind_rows()
-
+taxa_df <- 
+  data.frame(project = df$project) %>%
+  mutate(genus = gsub("[^A-Za-z]", "", project)) %>%
+  distinct()
+a <- taxize::classification(taxa_df$genus, db = "itis")
+b <- map(1:length(a), ~a[[.x]])
+names(b) <- taxa_df$project
+taxa_df <- 
+  bind_rows(b, .id = "project") %>%
+  filter(rank %in% c("kingdom", "phylum", "class", "order", "family"))
 ```
 
 # Paleoclim
@@ -70,7 +61,8 @@ env_stack_vals <- extract(env_stack, df[,c("x", "y")], ID = FALSE)
 env_stack_vals <- bind_cols(df, env_stack_vals)
 
 ggplot(env_stack_vals) +
-  geom_point(aes(x = lgm_16, y = Ho, col = project))
+  geom_point(aes(x = lig_bio_1, y = Ho, col = project)) +
+  theme(legend.position = "none")
 ```
 
 ## running linear models
@@ -86,39 +78,40 @@ env_df_vals <- c(env_df_vals, diff_vals)
 names(env_df_vals) <- c(names(env_list), paste0("dif_", diff_vars))
 
 # check for strong correlations
-cor_result <- imap(env_df_vals, \(x, idx){
-  possibly_cor <- possibly(cor, NA)
-  result <- 
-    x %>%
-    group_by(project) %>%
-    summarise(across(starts_with("bio"), ~possibly_cor(Ho, ., use = "complete.obs"))) %>% 
-    pivot_longer(contains("bio"), names_to = "var", values_to = "r") %>%
-    mutate(timeperiod = !!idx)
-}) %>% 
-bind_rows() %>%
-mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+cor_result <- 
+  imap(env_df_vals, \(x, idx){
+    possibly_cor <- possibly(cor, NA)
+    result <- 
+      x %>%
+      group_by(project) %>%
+      summarise(across(starts_with("bio"), ~possibly_cor(Ho, ., use = "complete.obs"))) %>% 
+      pivot_longer(contains("bio"), names_to = "var", values_to = "r") %>%
+      mutate(timeperiod = !!idx)
+  }) %>% 
+  bind_rows() %>%
+  mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
 
 cor_result %>% 
-  filter(abs(r) > 0.6) %>% 
+  filter(abs(r) > 0.4) %>% 
   group_by(var, timeperiod) %>% 
   count() %>% 
   arrange(desc(n)) %>%
-  mutate(n = n/length(unique(cor_result$project))) %>%
+  mutate(mean = n/length(unique(cor_result$project)), n = n) %>%
   head(n = 10)
 
-bio7 <- cor_result %>% filter(var == "bio_10")
-ggplot(bio7, aes(x = timeperiod, y = project, fill = r)) +
-  geom_tile() +
-  labs(col = "r") +
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  theme_minimal()
 
+gg_df <- 
+  env_df_vals[["dif_lig"]] %>%
+  group_by(project) %>%
+  mutate(Ho_scaled = scale(Ho)) %>%
+  bind_rows()
+
+ggplot(gg_df) +
+  geom_point(aes(x = bio_5, y = Ho, col = project), alpha = 0.5) +
+  geom_smooth(aes(x = bio_5, y = Ho), method = "lm") +
+  theme_classic() +
+  theme(legend.position = "none")
 ```
-
-```{r}
-
-```
-
 
 ```{r}
 run_lm <- function(project, timeperiod, env_df_vals){
@@ -126,29 +119,31 @@ run_lm <- function(project, timeperiod, env_df_vals){
   env_df <- env_df_vals[[timeperiod]] %>% filter(project == !!project)
 
   # test for collinearity and drop correlated vars as suggested
-  bio <- env_df %>% select(contains("bio")) %>% drop_na()
-  cormat <- cor(bio)
-  safe_cor <- possibly(caret::findCorrelation)
-  drop_vars <- safe_cor(cormat, cutoff = 0.6, names = TRUE, verbose = FALSE)
-  if (is.null(drop_vars)) return(NULL)
-  uncorrelated <- names(bio) %>% setdiff(drop_vars)
+  #bio <- env_df %>% select(contains("bio")) %>% drop_na()
+  #cormat <- cor(bio)
+  #safe_cor <- possibly(caret::findCorrelation)
+  #drop_vars <- safe_cor(cormat, cutoff = 0.6, names = TRUE, verbose = FALSE)
+  #if (is.null(drop_vars)) return(NULL)
+  #uncorrelated <- names(bio) %>% setdiff(drop_vars)
 
-  if (length(drop_vars) == 0) {
-    uncorrelated <- names(bio)
-    correlated <- data.frame(corvars = NA, var = uncorrelated, timeperiod = timeperiod, project = project)
-  } else {
-    cormat <- cor(bio)
-    correlated <- 
-      map(uncorrelated, ~ data.frame(corvars = names(which(abs(cormat[.x,]) > 0.5)), var = .x)) %>% 
-      bind_rows() %>%
-      mutate(timeperiod = timeperiod, project = project)
-  }
+  # if (length(drop_vars) == 0) {
+  #   uncorrelated <- names(bio)
+  #   correlated <- data.frame(corvars = NA, var = uncorrelated, timeperiod = timeperiod, project = project)
+  # } else {
+  #   cormat <- cor(bio)
+  #   correlated <- 
+  #     map(uncorrelated, ~ data.frame(corvars = names(which(abs(cormat[.x,]) > 0.5)), var = .x)) %>% 
+  #     bind_rows() %>%
+  #     mutate(timeperiod = timeperiod, project = project)
+  # }
 
   if (all(is.na(select(env_df, contains("bio"))))) {
-    return(NULL)
+     return(NULL)
   }
   
-  fHo <- formula(paste0("Ho ~", paste0(uncorrelated, collapse = " + ")))
+  #fHo <- formula(paste0("Ho ~", paste0(uncorrelated, collapse = " + ")))
+  fHo <- formula("Ho ~ bio_1")
+
   mod <- summary(lm(fHo, data=env_df))
 
   result <- 
@@ -156,7 +151,8 @@ run_lm <- function(project, timeperiod, env_df_vals){
     mutate(adj_rsqr = mod$adj.r.squared) %>%
     mutate(var = rownames(.)) %>% 
     filter(var != "(Intercept)") %>%
-    left_join(correlated, by = "var") 
+    mutate(project = project, timeperiod = timeperiod) #%>%
+    #left_join(correlated, by = "var") 
   return(result)
 }
 
@@ -174,22 +170,47 @@ lm_df <-
   compact() %>% 
   bind_rows()
 
-lm_df <- left_join(lm_df, cor_result)
 sigvars <- 
   lm_df %>% 
-  select(-corvars) %>% 
-  distinct() %>% 
   filter(`Pr...t..` < 0.05) %>% 
-  arrange(desc(adj_rsqr)) %>%
-  filter(adj_rsqr > 0.3 & abs(r) > 0.5) 
+  arrange(desc(adj_rsqr)) 
 
+lm_df %>% count(`Pr...t..` < 0.05)
 sigvars %>% group_by(timeperiod, var) %>% count() %>% arrange(desc(n)) %>% head()
-sigvars %>% group_by(var) %>% count() %>% arrange(desc(n)) %>% head()
+
+direction <- 
+  lm_df %>% 
+  filter(var == "bio_1") %>% 
+  filter(`Pr...t..` < 0.05)  %>% 
+  mutate(neg = Estimate < 0)
+
+sig1 <- 
+  lm_df %>% 
+  filter(var == "bio_1") %>%
+  mutate(sig = `Pr...t..` < 0.05) 
+
+mod_df <- 
+  taxa_df %>%
+  select(project, rank, name) %>%
+  distinct() %>%
+  pivot_wider(names_from = rank, values_from = name) %>%
+  left_join(lm_df) %>%
+  filter(var == "bio_1", timeperiod == "dif_lig") %>%
+  drop_na(`Pr...t..`) %>%
+  mutate(significant = `Pr...t..` < 0.05)
+
+anova(lm(significant ~ phylum + class, data = mod_df))
+
+ggplot(summarize(group_by(mod_df, phylum), proportion = mean(`Pr...t..` < 0.05, na.rm = TRUE))) +
+  geom_col(aes(y = phylum, x = proportion)) +
+  xlim(0, 1)
+
+writeLines(paste0(round(mean(sig1$sig, na.rm = TRUE), 2)*100, "% of the relationships were significant"))
+writeLines(paste0(round(mean(direction$neg, na.rm = TRUE), 2)*100, "% of significant relationships were negative"))
 
 ```
 
 ```{r}
-
 combos <- sigvars %>% select(var, project, timeperiod) %>% distinct()
 plts <-
 map(1:nrow(combos), ~ {
@@ -225,38 +246,33 @@ pdf(here("ccgp_test", "ccgp_test.pdf"), width = 5, height = 5)
 walk(plts, print)
 dev.off()
 
-
-dif_lh <- env_df_vals[["dif_lh"]]
-
-pdf(here("ccgp_test", "bio2_test.pdf"), width = 20, height = 20)
-ggplot(dif_lh, aes(bio_2, Ho)) +
-      geom_point(alpha = 0.7) +
-      facet_wrap(~project, scales = "free") +
-      #stat_regline_equation(
-      #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      #  formula = y ~ x
-      #) +
-      geom_smooth(method = "lm") +
-      stat_cor() +
-      theme_classic() +
-      ggtitle(title)
-dev.off()
-
-
-dif <- env_df_vals %>% bind_rows(.id = "timeperiod") %>% filter(project %in% filter(sigvars, adj_rsqr > 0.4 & `Pr...t..` < 0.05 & abs(r) > 0.5)$project)
-
-pdf(here("ccgp_test", "bio2_test.pdf"), width = 40, height = 40)
-ggplot(dif, aes(bio_2, Ho)) +
+dif_lig <- env_df_vals[["dif_lig"]]
+pdf(here("ccgp_test", "bio1_test.pdf"), width = 20, height = 20)
+ggplot(dif_lig, aes(bio_1, Ho)) +
   geom_point(alpha = 0.7) +
-  facet_wrap(~project+timeperiod, scales = "free") +
-      #stat_regline_equation(
-      #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      #  formula = y ~ x
-      #) +
-      geom_smooth(method = "lm") +
-      stat_cor() +
-      theme_classic() 
+  facet_wrap(~project, scales = "free") +
+  #stat_regline_equation(
+  #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+  #  formula = y ~ x
+  #) +
+  geom_smooth(method = "lm") +
+  stat_cor() +
+  theme_classic()
 dev.off()
+
+pdf(here("ccgp_test", "y_test.pdf"), width = 20, height = 20)
+ggplot(dif_lig, aes(y, Ho)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~project, scales = "free") +
+  #stat_regline_equation(
+  #  aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+  #  formula = y ~ x
+  #) +
+  geom_smooth(method = "lm") +
+  stat_cor() +
+  theme_classic()
+dev.off()
+
 ```
 
 # Stability
@@ -270,9 +286,8 @@ csi_df <- data.frame(csi_vals, df)
 names(csi_df)
 ```
 
-
 ```{r}
-# check for strong correlations
+# check for significant correlations
 possibly_cor <- possibly(cor, NA)
 result <- 
   csi_df %>%
@@ -287,17 +302,40 @@ ggplot(result, aes(x = model, y = project, fill = r)) +
     labs(col = "r") +
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
   theme_minimal()
-
-ggplot(result, aes(x = model, y = project, fill = abs(r))) +
-  geom_tile() +
-  scale_fill_viridis_c(option = "rocket", direction = -1) +
-  labs(fill = "|r|") +
-  theme_minimal()
 ```
 
 ```{r}
-csi_long <- csi_df %>% pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "csi")
-csi_ls <- csi_long %>% group_by(project) %>% group_split()
+sigcor <- function(x, y, use = "complete.obs") {
+  ct <- cor.test(x, y, use = use)
+  c(r = ct$estimate, p = ct$p.value)
+}
+
+possibly_sigcor <- possibly(sigcor, c(r.cor = NA, p = NA))
+result <- 
+  csi_df %>%
+  group_by(project) %>%
+  summarize(cor_results = list(possibly_sigcor(Ho, Past, use = "complete.obs"))) %>%
+  tidyr::unnest_wider(cor_results, names_sep = "_") %>%
+  rename(r = cor_results_r.cor, p = cor_results_p) 
+
+result %>%
+  mutate(significant = p < 0.05) %>%
+  count(significant)
+
+result %>%
+  filter(p < 0.05) %>%
+  count(r > 0)
+```
+
+```{r}
+csi_long <-  
+  csi_df %>% 
+  pivot_longer(c("Past", starts_with("SSP")), names_to = "model", values_to = "csi") 
+
+csi_ls <- 
+  csi_long %>% 
+  group_by(project) %>% 
+  group_split()
 
 plts <- map(csi_ls, ~{
   if (all(is.na(.x$csi))) return(NULL)
@@ -387,4 +425,45 @@ mutate(var = row.names(.)) %>%
 filter(!grepl("project", var)) %>%
 filter(`Pr...t..` < 0.05)
 
+ggplot(big_env, aes(x = cur_bio_1, y = Ho)) +
+  geom_point(aes(col = project)) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  theme(legend.position = "none")
+
+ggplot(big_env, aes(x = NDVI, y = Ho)) +
+  geom_point(aes(col = project)) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  theme(legend.position = "none")
+```
+
+
+### wingen
+```{r}
+library("wingen")
+
+coords <- st_as_sf(df, coords = c("x", "y"), crs = 4326)
+
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Convert coordinates to a raster layer with 10km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+run_wingen <- function(project){
+  coords_proj <- coords_proj %>% filter(project == !!project)
+  # Calculate windowed mean of Ho
+  window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+  return(window_Ho)
+}
+
+possibly_wingen <- possibly(run_wingen, NULL)
+wingen_maps <- map(unique(df$project), ~possibly_wingen(.x), .progress = TRUE)
+
+# Plot masked kriging result
+ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100)) +
+  labs(fill = "Ho") +
+  scale_fill_viridis_c(labels = scales::scientific, option = "magma")
 ```

@@ -100,11 +100,21 @@ process_contig() {
 # Define constants and file paths
 BASE_PATH="../.."
 
+# MUTATION RATE OPTION 1:
 # mutation rate per site per year of 5.60 × 10 −10 , which was previously estimated for glass lizards (Anguidae Ophisaurus; Perry et al., 2018) .
 # https://www.researchgate.net/publication/327964019_Molecular_Adaptations_for_Sensing_and_Securing_Prey_and_Insight_into_Amniote_Genome_Diversity_from_the_Garter_Snake_Genome
 # from paper: 5.60 × 10^−10 per site per year , generation time: 2-3 years
 # converted to generation time: 5.60 × 10^−10 * 2 years = 11.2 x 10^-10 = 1.12e-9
-MUTATION_RATE=1.12e-9
+
+# MUTATION RATE OPTION 2 (average across reptiles):
+#  doi: 10.1038/s41586-023-05752-y
+# "On average, mutation rates per generation are higher in reptiles (average of all species 1.17 × 10−8, 95% CI of the mean = 5.34 × 10−9 to 1.80 × 10−8)""
+# AVERAGE MUTATION RATE: 1.17 × 10−8 per site per generation
+
+# From Bouzid et al:
+# generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
+# Note: Bouzid et al. used a a human mutation rate of 1.0 × 10−8 substitutions per site per generation
+MUTATION_RATE=1.17e-8
 
 # Files
 VCF_FILE="${BASE_PATH}/data/processed_data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz"
@@ -130,20 +140,25 @@ CONTIGS=("${CONTIGS_ALL[@]:0:10}")
 echo ${CONTIGS[@]}
 
 # Process each population
-for i in {1..7}
+for i in {1..6}
 do
-  eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k7_pop$i.txt" | paste -sd, -)
-  pop="inds_pop${i}"
-  process_population "pop${i}" "${!pop}" 2> pop$i.stderr &
+    (eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k6_pop$i.txt" | paste -sd, -)
+    pop="inds_pop${i}"
+    process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
 done
 wait
+
+# Run all populations together
+# Combine all populations into one
+combined_pop=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop"{1..9}".txt" | paste -sd, -)
+process_population "pop_all" "${combined_pop}" 2> pop_all.stderr
 
 # Check the status of the background jobs
 jobs
 # Move files into outputs
 mv *bed* outputs
 mv *stderr outputs
-for i in {1..7}
+for i in {1..9}
 do
   mv pop$i/ outputs/pop$i
 done

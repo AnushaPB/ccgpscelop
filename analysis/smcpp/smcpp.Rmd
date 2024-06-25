@@ -23,9 +23,6 @@ knitr::opts_chunk$set(
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
-#log_years <- smcpp %>% filter(GenusSpecies == "Rallus limicola") %>% filter(T ==1) %>% pull(years) %>% log()
-#inc <- log_years[2] - log_years[3]
-#vira_start = exp(log_years[2] - inc)
 smcpp <- 
   get_smcpp(folder = "outputs/k6", K = 6) %>%
   group_by(pop) %>%
@@ -63,10 +60,10 @@ biovals <- extract(bio, coords, ID = FALSE)
 clim_df <- bind_cols(coords, biovals)
 
 pop_df <- 
-  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
+  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k6") %>%
   map(~{
     pop <- read_lines(.x)
-    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k9_pop", "", .))
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k6_pop", "", .))
     return(pop_df)
   }) %>%
   bind_rows() %>%
@@ -169,7 +166,7 @@ plt2 <-
   geom_sf(data = ca) +
   geom_sf(data = st_as_sf(pop_df), aes(col = pop)) +
   labs(col = "Population") +
-  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan"))  +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta"))  +
   theme_void() +
   theme(
     legend.position = c(0.8, 0.75),
@@ -199,8 +196,7 @@ plt1 <-
   scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
-  #scale_color_viridis_c() +
-  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan")) +
+  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
   ylab("Ne") +
   xlab("years") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
@@ -209,6 +205,7 @@ pdf(here("analysis", "smcpp", "smcpp2.pdf"), width = 12, height = 5)
 cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
 dev.off()
  
+
 
 plt1 <-
   ggplot(data = filter(smcpp, years != 0)) +
@@ -236,8 +233,99 @@ plt1
 dev.off()
 ```
 
-```{r}
+# K9
 
+```{r, fig.width = 13, fig.height = 6}
+smcpp <- 
+  get_smcpp(folder = "k9", K = 9) %>%
+  group_by(pop)
+```
+
+```{r}
+ca <- get_ca()
+coords <- get_coords(sf = TRUE)
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+paleokey <- get_paleokey()
+
+pop_df <- 
+  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
+  map(~{
+    pop <- read_lines(.x)
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k9_pop", "", .))
+    return(pop_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords, by = "SampleID") 
+
+paleokey_split <- 
+  get_paleokey() %>%
+  filter(id != "mis19") %>%
+  mutate(time = 
+    case_when(
+      period == "Current" ~ "1.979-2.013 ka", 
+      .default = time
+      )
+    ) %>%
+  separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
+  mutate(across(c(start_time, end_time), ~ case_when(
+    # Only end_time has the unit for some and start_time has unit for others
+    str_detect(end_time, "ka") | str_detect(start_time, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
+    str_detect(end_time, "Ma") | str_detect(start_time, "Ma")  ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
+    TRUE ~ as.numeric(.x)
+  )))
+
+# get values
+change_df <- 
+  clim_df %>%
+  pivot_longer(all_of(names(bio))) %>%
+  # split based on underscore using tidyvrse
+  separate(name, into = c("name", "var", "varn"), sep = "_") %>%
+  mutate(var = paste(var, varn, sep = "_")) %>%
+  left_join(paleokey_split, by = c("name" = "id")) %>%
+  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
+  drop_na(time) %>%
+  left_join(pop_df)
+
+
+# plot of population assignments
+plt2 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = st_as_sf(pop_df), aes(col = pop)) +
+  labs(col = "Population") +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta"))  +
+  theme_void() +
+  theme(
+    legend.position = c(0.8, 0.75),
+    legend.key.size = unit(0.8, "cm"), # Increase the size of the legend keys
+    legend.text = element_text(size = 14), # Increase the size of the legend text
+    legend.title = element_text(size = 16) # Increase the size of the legend title
+  )
+ 
+
+plt1 <-
+  ggplot(data = filter(smcpp, T == 2, !is.na(pop), years != 0)) +
+  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
+  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan", "")) +
+  ylab("Ne") +
+  xlab("years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+
+pdf(here("analysis", "smcpp", "smcpp_k9.pdf"), width = 12, height = 5)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
+dev.off()
+```
+
+```{r}
 gg_df <- 
   smcpp %>%
   mutate(color_group = 

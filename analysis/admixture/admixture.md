@@ -1,54 +1,12 @@
----
-title: "Admixture analysis"
-output:
-  github_document:
-    toc: TRUE
----
-```{r, include = FALSE}
-library(here)
-library(tidyverse)
-library(sf)
-library(terra)
-library(ggpubr)
-library(algatr)
-library(viridis)
-library(vcfR)
-library(hierfstat)
-library(tigris)
-source(here("analysis", "admixture", "admixture.R"))
-source(here("general_functions.R"))
-# Set global options for caching
-knitr::opts_chunk$set(
-  cache = TRUE,
-  echo = TRUE,
-  message = FALSE,
-  warning = FALSE,
-  result = FALSE
-)
-```
+Admixture analysis
+================
 
-```{r, echo = FALSE, message = FALSE, include=FALSE}
-# Load the U.S. state boundaries data
-ca <- get_ca()
-# make theme for plotting
-theme_custom <- 
-  theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    strip.text = element_text(size = 16, face = "italic")
-    )
-```
+  - [2. ADMIXTURE](#2-admixture)
+  - [Write out individuals](#write-out-individuals)
 
-```{r, include = FALSE}
-# get coordinates 
-coords <- get_coords()
-```
+# 2\. ADMIXTURE
 
-# 2. ADMIXTURE
-```{r}
+``` r
 cv <- get_cv()
 ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
   geom_point() +
@@ -56,7 +14,9 @@ ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
   theme_bw()
 ```
 
-```{r admixture, fig.width = 13, fig.height = 6}
+![](admixture_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->
+
+``` r
 # join with coords
 Kvals <- c(2:10)
 Q <-
@@ -80,24 +40,37 @@ ggplot(df) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(max(Kvals))) 
 dev.off()
-barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
-do.call(ggarrange, c(barplots, ncol = 1))
-
 ```
 
-```{r, fig.width = 13, fig.height = 6}
+    ## png 
+    ##   2
+
+``` r
+barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
+do.call(ggarrange, c(barplots, ncol = 1))
+```
+
+![](admixture_files/figure-gfm/admixture-1.png)<!-- -->
+
+``` r
 ggplot(filter(df, K %in% 3:7)) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 1) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(7))
+```
+
+![](admixture_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
+
+``` r
 barplots <- map(3:6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(7)))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
-```{r, fig.width = 13, fig.height = 6}
+![](admixture_files/figure-gfm/unnamed-chunk-5-2.png)<!-- -->
 
+``` r
 a <- filter(df, K == 6, PopGroup == "V1") %>% mutate(row = 1:nrow(.))
 ggplot(a) +
   geom_sf(data = ca) +
@@ -106,28 +79,31 @@ ggplot(a) +
   facet_wrap(~K, nrow = 1) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(6))
+```
 
+![](admixture_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
+
+``` r
 filter(a, row == 45) %>% pull(SampleID)
+```
+
+    ## [1] "Scelocci_CCGPMC_MW01-3-14"
+
+``` r
 barplots <- map(6, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(6)))
 do.call(ggarrange, c(barplots, ncol = 1))
 ```
 
-```{r}
+![](admixture_files/figure-gfm/unnamed-chunk-6-2.png)<!-- -->
+
+``` r
 # FOR LINEAR MODELS: 
 # Write out Q files for K = 6
 # cluster = final cluster assignment for SampleID given max Q
 # PopGroup = Q values for each cluster
 Q %>% 
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 6) %>%
+  filter(K == 6) %>% 
   write_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
-
-Q %>% 
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 9) %>%
-  write_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
 
 # write out Q values for the assigned population for Q = 6
 Q %>%
@@ -142,7 +118,7 @@ Q %>%
   iwalk(\(x, idx) write(x, here("analysis", "admixture", "outputs", paste0("pop", idx, ".txt"))))
 ```
 
-```{r, fig.width = 13, fig.height = 6}
+``` r
 # Check for consistency
 # simplified df with only cluster assignments and not Q values
 simplified_df <- 
@@ -177,8 +153,11 @@ ggplot(same_summarize_df) +
   scale_color_viridis_c(option = "plasma")
 ```
 
+![](admixture_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+
 # Write out individuals
-```{r}
+
+``` r
 library(here)
 library(tidyverse)
 library(sf)
@@ -221,3 +200,5 @@ pop_df <-
 ggplot(pop_df) +
   geom_sf(aes(col = pop))
 ```
+
+![](admixture_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
