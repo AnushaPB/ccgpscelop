@@ -48,8 +48,6 @@ df <-
       mutate(project = .x)
     return(df)
   }) %>% bind_rows()
- 
-
 
 ```
 
