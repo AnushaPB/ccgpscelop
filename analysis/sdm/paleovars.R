@@ -1,4 +1,4 @@
-get_paleovars <- function(cache = TRUE){
+get_paleovars <- function(cache = TRUE, process = TRUE){
   ca <- get_ca()
   paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
   # download data
@@ -13,12 +13,20 @@ get_paleovars <- function(cache = TRUE){
   file_paths <- here("data", "env", "paleoclim", file_names)
 
   # Load and process the data using purrr
-  env_list <- purrr::map(file_paths, ~ {
-    data <- rpaleoclim::load_paleoclim(.x)
-    data <- terra::crop(data, ca)
-    data <- terra::mask(data, ca)
-    data
+  if (process) {
+    env_list <- purrr::map(file_paths, ~ {
+      data <- rpaleoclim::load_paleoclim(.x)
+      data <- terra::crop(data, ca)
+      data <- terra::mask(data, ca)
+      data
   })
+  } else {
+    env_list <- purrr::map(file_paths, ~ {
+      data <- rpaleoclim::load_paleoclim(.x)
+      data
+    })
+  }
+ 
   names(env_list) <- paleovars
 
   # export

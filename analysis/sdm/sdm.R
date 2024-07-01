@@ -216,7 +216,7 @@ pc_var_selection <- function(envlayers, coords = NULL){
   top_vars_names <- rownames(loadings)[top_vars_indices]
 
   # Extract values of top variables at given coordinates
-  cur_vals <- extract(envlayers, coords)
+  cur_vals <- terra::extract(envlayers, coords)
 
   # Remove duplicate names if present, assuming order matters and first occurrence is priority
   top_vars_names <- unique(top_vars_names)

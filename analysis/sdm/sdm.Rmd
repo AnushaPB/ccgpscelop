@@ -1,0 +1,302 @@
+
+# SDM
+BIOMOD: https://biomodhub.github.io/biomod2/articles/examples_1_mainFunctions.html
+```{r}
+library(countrycode)
+library(CoordinateCleaner)
+library(rgbif)
+library(sp)
+library(here)
+library(raster)
+library(dismo)
+library(tidyverse)
+library(viridis)
+library(biomod2)
+library(sf)
+library(terra)
+library(ggpubr)
+# devtools::install_github('adamlilith/enmSdm', dependencies=TRUE)
+library(enmSdm)
+library(RStoolbox)
+source(here("analysis", "sdm", "bias.R"))
+source(here("analysis", "sdm", "sdm.R"))
+source(here("analysis", "sdm", "get_coords.R"))
+source(here("analysis", "sdm", "paleovars.R"))
+source(here("general_functions.R"))
+
+# set maxent path
+# put maxent.jar in your working directory (what you get when you run getwd()) or set manually: https://rdrr.io/cran/biomod2/man/BIOMOD_ModelingOptions.html
+Sys.setenv(JAVA_HOME='/usr/lib/jvm/java-11-openjdk-amd64')
+
+```
+```{r}
+# get paleoclim data
+env_list <- get_paleovars()
+env_list_agg <- map(env_list, ~aggregate(.x, 2))
+cur <- env_list[["cur"]]
+lig <- env_list[["lig"]]
+
+# get current env data
+env_data <- rast(here("data", "env", "california_env_stack.tif"))
+```
+
+```{r}
+# get coordinates
+occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "both", occ_limit = 10000, cache = TRUE)
+
+# get or create bias background layer
+bias_class <- get_bias("Sceloporus occidentalis", rank = "class", limit = 10000, n = 10000, cache = TRUE)
+```
+
+```{r}
+# select uncorrelated variables
+bioclim_selected_vars <- pc_var_selection(cur)
+bioclim <- cur[[bioclim_selected_vars]]
+
+# run SDM
+sdm_bioclim <- 
+  sdm(
+    coordinates = occ_coords,
+    envlayers = bioclim, 
+    biasdat = bias_class, 
+    models = "RF", 
+    BIOMOD_name = "BIOMOD_CLIM", 
+    tune = FALSE
+    )
+
+# Write out raster
+bioclim_raster <- sdm_bioclim$raster
+writeRaster(bioclim_raster, here("analysis", "sdm", "outputs", "sdm_bioclim.tif"), overwrite = TRUE)
+bioclim_raster <- rast(here("analysis", "sdm", "outputs", "sdm_bioclim.tif"))
+plot(bioclim_raster, col = viridis::mako(100), axes = FALSE, box = FALSE)
+
+# Convert to binary layer
+cutoff <- 
+  sdm_bioclim$eval %>% 
+  filter(metric.eval == "TSS") %>% 
+  pull(cutoff) 
+  
+bin_raster <- bioclim_raster
+bin_raster[bin_raster > cutoff/1000] <- 1
+bin_raster[bin_raster <= cutoff/1000] <- 0
+plot(bin_raster)
+
+# Hindcast SDMs
+hindcast_sdms <- 
+  map(
+    env_list[c("lig", "lgm", "lh", "cur")],
+   ~hindcast(sdm_bioclim$myBiomodModelOut, new_env = .x[[selected_vars]])
+   )
+hindcast_sdms <- rast(hindcast_sdms)
+writeRaster(hindcast_sdms, here("analysis", "sdm", "outputs", "hindcast_bioclim_sdms.tif"), overwrite = TRUE)
+hindcast_sdms <- rast(here("analysis", "sdm", "outputs", "hindcast_bioclim_sdms.tif"))
+
+# calculate change and stability
+cur_sdm <- bioclim_raster
+dif_lh_sdm <- cur_sdm - hindcast_sdms[["lh"]]
+dif_lgm_sdm <- cur_sdm - hindcast_sdms[["lgm"]]
+dif_lig_sdm <- cur_sdm - hindcast_sdms[["lig"]]
+
+hindcast_subset <- subset(hindcast_sdms, c("lig", "lgm", "lh", "cur"))
+stability <- app(hindcast_subset, mean, na.rm =TRUE)
+variability <- app(hindcast_subset, sd, na.rm =TRUE)
+
+par(mfrow = c(1, 5))
+plot(stability, col = mako(100))
+plot(variability, col = mako(100))
+plot(dif_lh_sdm, col = viridis(100))
+plot(dif_lgm_sdm, col = viridis(100))
+plot(dif_lig_sdm, col = viridis(100))
+par(mfrow = c(1,1))
+
+trend <- global(hindcast_subset, mean, na.rm = TRUE)
+trend <- data.frame(mean = trend, tp = rownames(trend)) %>% mutate(tp = factor(tp, levels = names(hindcast_subset)))
+ggplot(trend) + geom_line(aes(x = tp, y = mean, group = 1))
+
+# compare to genetic diversity
+source("analysis/genetic_diversity/genetic_diversity.R")
+het <- get_het()
+#roh <- get_roh()
+#coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
+coords <- get_coords(sf = TRUE) %>% left_join(het)
+lh_dif_vals <- extract(dif_lh_sdm, coords, ID = FALSE)
+lgm_dif_vals <- extract(dif_lgm_sdm, coords, ID = FALSE)
+lig_dif_vals <- extract(dif_lig_sdm, coords, ID = FALSE)
+stability_vals <- extract(stability, coords, ID = FALSE)
+cur_vals <- extract(cur_sdm, coords, ID = FALSE)
+
+# df <- data.frame(cur = cur_vals, coords)
+df <- 
+  data.frame(
+    lh_dif = lh_dif_vals[,1],
+    lgm_dif = lgm_dif_vals[,1],
+    lig_dif = lig_dif_vals[,1],
+    stability = stability_vals[,1],  
+    cur = cur_vals[,1], 
+    Ho = coords$Ho
+  )
+ggdf <- df %>% pivot_longer(-Ho)
+
+ggplot(ggdf, aes(x = value, y = Ho)) +
+  geom_point() +
+  stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  facet_wrap(~name, scales = "free") +
+  theme_classic()
+
+```
+
+```{r}
+# presentation plots
+ggplot(as.data.frame(sdm_raster, xy = TRUE)) +
+  geom_sf(data = ca, fill = "darkgray") +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(sdm_raster)[1]]])) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Suitability") +
+  theme_void()
+
+ggplot(as.data.frame(stability, xy = TRUE)) +
+  geom_sf(data = ca, fill = "darkgray") +
+  geom_raster(aes(x = x, y = y, fill = .data[[names(stability)[1]]])) +
+  scale_fill_viridis_c(option = "mako", limits =c(0,1)) +
+  labs(fill = "Stability") +
+  theme_void()
+```
+
+```{r}
+# is stability correlated with change in bio1
+dif_bio1 <- env_list[["cur"]][["bio_1"]] -  env_list[["lig"]][["bio_1"]]
+dif_vals <- extract(dif_bio1, coords, ID = FALSE)
+df$change_bio1 <- dif_vals[,1]
+
+# check correlations with Ho
+cor(df$change_bio1, df$Ho, use = "pairwise.complete.obs")
+cor(df$stability, df$Ho, use = "pairwise.complete.obs")
+
+# correlated, but not strongly
+cor(df$change_bio1, df$stability, use = "pairwise.complete.obs")
+
+# check for statistical suppression/whether both variables are significant when both are included
+mod1 <- lm(Ho ~ change_bio1, data = df)
+summary(mod1)
+mod2 <- lm(Ho ~ stability, data = df)
+summary(mod2)
+mod3 <- lm(Ho ~ stability + change_bio1, data = df)
+summary(mod3)
+# stability is no longer significant when bio1 is included (but it is close...)
+```
+
+```{r}
+# is sdm current value correlated with change in bio1
+df <- coords
+dif_bio1 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
+df$change_bio1 <-  extract(dif_bio1, coords, ID = FALSE)[,1]
+df$sdm_vals <- extract(hindcast_sdms[["cur"]], coords, ID = FALSE)[,1]
+
+# confirm correlations with Ho
+cor(df$change_bio1, df$Ho, use = "pairwise.complete.obs")
+cor(df$sdm_vals, df$Ho, use = "pairwise.complete.obs")
+
+# correlated, but not strongly (-0.42)
+cor(df$change_bio1, df$sdm_vals, use = "pairwise.complete.obs")
+
+# check for statistical suppression/whether both variables are significant when both are included
+mod1 <- lm(Ho ~ change_bio1, data = df)
+summary(mod1)
+mod2 <- lm(Ho ~ sdm_vals, data = df)
+summary(mod2)
+mod3 <- lm(Ho ~ sdm_vals + change_bio1, data = df)
+summary(mod3)
+# sdm value is not significant when bio1 is included or by itself
+```
+
+# SDM with all environmental data
+```{r}
+# select uncorrelated variables
+selected_vars <- pc_var_selection(env_data)
+env_data_selected <- env_data[[selected_vars]]
+
+# remove all symbols from raster names (BIOMOD2 doesn't like them)
+names(env_data_selected) <- gsub("[[:punct:]]", "", names(env_data_selected))
+
+# transform into WGS84
+env_data_selected <- project(env_data_selected, "epsg:4326")
+
+# aggregate
+env_data_selected <- aggregate(env_data_selected, 4)
+
+# run SDM
+sdm_env <- 
+  sdm(
+    coordinates = occ_coords,
+    envlayers = env_data_selected, 
+    biasdat = bias_class, 
+    models = "RF", 
+    BIOMOD_name = "SDM_ENV", 
+    tune = FALSE
+    )
+
+# Write out raster
+sdm_raster <- sdm_env$raster
+writeRaster(sdm_raster, here("analysis", "sdm", "outputs", "sdm_env.tif"), overwrite = TRUE)
+sdm_raster <- rast(here("analysis", "sdm", "outputs", "sdm_env.tif"))
+
+plot(sdm_raster, col = mako(100), axes = FALSE, box = FALSE)
+```
+
+```{r}
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+source("general_functions.R")
+
+coords <- get_coords(sf = TRUE) %>% st_transform(st_crs(sdm_raster))
+sdm_env_vals <- terra::extract(sdm_raster, coords, ID = FALSE)[,1]
+
+coords_buffer <- 
+  get_coords(sf = TRUE) %>% 
+  st_buffer(10*1000) %>% 
+  st_transform(st_crs(sdm_raster))
+sdm_env_vals_buffer <- terra::extract(sdm_raster, coords_buffer, fun = mean, na.rm = TRUE, ID = FALSE)[,1]
+
+mod_df <-
+  get_coords() %>%
+  left_join(get_het()) %>%
+  left_join(get_roh()) %>%
+  mutate(sdm_env = sdm_env_vals, sdm_buffer = sdm_env_vals_buffer) 
+
+
+summary(lm(Ho ~ sdm_env, data = mod_df))
+summary(lm(froh0 ~ sdm_env, data = mod_df))
+
+
+summary(lm(Ho ~ sdm_buffer, data = mod_df))
+summary(lm(froh0 ~ sdm_buffer, data = mod_df))
+
+par(mfrow = c(2,2))
+plot(mod_df$sdm_env, mod_df$Ho)
+plot(mod_df$sdm_env, mod_df$froh0)
+plot(mod_df$sdm_buffer, mod_df$Ho)
+plot(mod_df$sdm_buffer, mod_df$froh0)
+
+gg_df <- 
+  mod_df %>%
+  pivot_longer(c("sdm_env", "sdm_buffer"), names_to = "variable", values_to = "value") %>%
+  pivot_longer(c("Ho", "froh0"), names_to = "metric", values_to = "metric_value")
+
+ggplot(gg_df, aes(x = value, y = metric_value)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(~metric + variable, scales = "free") +
+  theme_classic()
+
+ca <- get_ca()
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = value)) +
+  facet_wrap(~variable) +
+  scale_color_viridis_c(option = "mako") +
+  theme_void()
+```

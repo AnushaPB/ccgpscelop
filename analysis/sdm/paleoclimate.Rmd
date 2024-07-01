@@ -16,6 +16,7 @@ library("rpaleoclim")
 source("general_functions.R")
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 source(here("analysis", "sdm", "paleovars.R"))
+library("MuMIn")
 ca <- get_ca()
 pdfpath <- here("analysis", "sdm", "pdfs")
 ```
@@ -244,14 +245,19 @@ plts <-
 
 ```
 
-## PC-based linear models
+## PC-based variable selection
 
 ```{r}
 # PCA of all variables split by change or single timeperiod variables
 timeperiods = c("cur", "lh", "lgm", "lig", "dif_lh", "dif_lig", "dif_lgm")
+
+# Only use tmean, tmax, and tmin related variables
+# BIO1 = Annual Mean Temperature
+# BIO5 = Max Temperature of Warmest Month
+# BIO6 = Min Temperature of Coldest Month
 env_wide <- 
   bind_rows(env_df_vals, .id = "timeperiod") %>% 
-  dplyr::select("Ho", contains("bio"), "timeperiod") %>%
+  dplyr::select("Ho", "bio_1", "bio_5", "bio_6", "timeperiod") %>%
   drop_na("Ho") %>%
   filter(timeperiod %in% timeperiods) %>%
   # Filter out rows where all bio values are NA
@@ -262,286 +268,7 @@ env_wide <-
   drop_na(contains("bio"))
 ```
 
-Change PCA:
-```{r}
-# Get just change variables
-pca_change <- prcomp(env_wide %>% dplyr::select(contains("dif")), scale = TRUE)
-plot(pca_change)
-
-# calculate when 90% of the variance is explained
-varexp <- cumsum(pca_change$sdev^2) / sum(pca_change$sdev^2)
-npcs <- which(varexp > 0.8)[1]
-  
-# Run lm with PCs
-pcs_change <- data.frame(pca_change$x[,1:npcs])
-mod <- summary(lm(env_wide$Ho ~ ., pcs_change))
-mod_df <- - data.frame(mod$coefficients) 
-adj_rsq <- mod$adj.r.squared
-
-# Get loadings for significant PCs
-sigpcs <- 
-  mod_df %>% 
-  filter(`Pr...t..` < 0.05) %>%
-  mutate(var = row.names(.)) %>% 
-  filter(var != "(Intercept)") %>%
-  pull(var)
-
-ggdf <-
-  data.frame(pcs_change, Ho = env_wide$Ho) %>%
-  pivot_longer(contains("PC")) %>%
-  filter(name %in% sigpcs)
-
-ggplot(ggdf, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-loadings <- data.frame(pca_change$rotation[,1:npcs], var = row.names(pca_change$rotation))
-
-important_vars <-  map(sigpcs, ~{
-  # Get loadings for the PC
-  subloadings <- loadings %>% dplyr::select(all_of(.x), var)
-
-  # Identify the variable with the highest loading
-  bigvar <- loadings %>% arrange(desc(.x)) %>% head(1) %>% pull(var)
-
-  # Get variables correlated with the bigvar
-  bigcor <- 
-    env_wide %>% 
-    dplyr::select(contains("dif")) %>%
-    cor(use = "complete.obs") %>% 
-    .[bigvar,] 
-    
-  bigcorvars <- names(which(abs(bigcor) > 0.7))
-}) %>% unlist() %>% unique()
-
-
-important_df <- 
-  env_wide %>% 
-  dplyr::select(contains("dif")) %>%
-  pivot_longer(contains("dif")) %>% 
-  filter(name %in% important_vars) %>%
-  mutate(splitname = name) %>%
-  separate(splitname, into = c("prefix", "timeperiod", "bio", "bion"), sep = "_") %>%
-  mutate(bio = paste0("bio_", bion)) 
-
-ggplot(important_df, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-biokey <- get_biokey()
-count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
-count(count_df, vartype)
-count(count_df, bio) %>% arrange(desc(n))
-```
-```{r}
-# Get just single timeperiod variables
-pca_single <- prcomp(env_wide %>% dplyr::select(-contains("dif"), -Ho), scale = TRUE)
-plot(pca_single)
-
-# calculate when 90% of the variance is explained
-varexp <- cumsum(pca_single$sdev^2) / sum(pca_single$sdev^2)
-npcs <- which(varexp > 0.8)[1]
-  
-# Run lm with PCs
-pcs_single <- data.frame(pca_single$x[,1:npcs])
-mod <-summary(lm(env_wide$Ho ~ ., pcs_single))
-mod_df <- - data.frame(mod$coefficients) 
-adj_rsq <- mod$adj.r.squared
-
-# Get loadings for significant PCs
-sigpcs <- 
-  mod_df %>% 
-  filter(`Pr...t..` < 0.05) %>%
-  mutate(var = row.names(.)) %>% 
-  filter(var != "(Intercept)") %>%
-  pull(var)
-
-ggdf <-
-  data.frame(pcs_single, Ho = env_wide$Ho) %>%
-  pivot_longer(contains("PC")) %>%
-  filter(name %in% sigpcs)
-
-ggplot(ggdf, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-loadings <- data.frame(pca_single$rotation[,1:npcs], var = row.names(pca_single$rotation))
-
-important_vars <-  map(sigpcs, ~{
-  # Get loadings for the PC
-  subloadings <- loadings %>% dplyr::select(all_of(.x), var)
-
-  # Identify the variable with the highest loading
-  bigvar <- loadings %>% arrange(desc(.x)) %>% head(1) %>% pull(var)
-
-  # Get variables correlated with the bigvar
-  bigcor <- 
-    env_wide %>% 
-    dplyr::select(-contains("dif"), -Ho) %>%
-    cor(use = "complete.obs") %>% 
-    .[bigvar,] 
-    
-  bigcorvars <- names(which(abs(bigcor) > 0.7))
-}) %>% unlist() %>% unique()
-
-
-important_df <- 
-  env_wide %>% 
-  dplyr::select(-contains("dif"), -Ho) %>%
-  pivot_longer(contains("bio")) %>% 
-  filter(name %in% important_vars) %>%
-  mutate(splitname = name) %>%
-  separate(splitname, into = c("timeperiod", "bio", "bion"), sep = "_") %>%
-  mutate(bio = paste0("bio_", bion)) 
-
-ggplot(important_df, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-biokey <- get_biokey()
-count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
-count(count_df, vartype)
-count(count_df, bio) %>% arrange(desc(n))
-```
-
-Combining PCs
-```{r}
-# Testing for correlations between change and single PCs
-cor(pcs_single, pcs_change)
-# There are strong correlations between PC1 and PC2 for both, but drops off after that
-
-# Use dredge to determine what combination of pcs is best
-# Load the necessary library
-library(MuMIn)
-
-# Fit a full (global) model first (using first two PCs)
-names(pcs_single) <- paste0("single_", names(pcs_single))
-names(pcs_change) <- paste0("change_", names(pcs_change))
-mod_df <- data.frame(pcs_single[,1:2], pcs_change[,1:2], Ho = env_wide$Ho)
-full_model <- lm(Ho ~ ., data = mod_df, na.action = na.fail)
-
-# Use dredge for model selection
-model_set <- dredge(full_model)
-
-# Select the best models based on ΔAIC < 2
-best_models <- get.models(model_set, subset = delta < 2)
-
-# There is one best model
-mod <- best_models[["14"]]
-mod_summary <- - data.frame(summary(mod)$coefficients) 
-adj_rsq <- mod$adj.r.squared
-
-# Get loadings for significant PCs
-sigpcs <- 
-  mod_summary %>% 
-  filter(`Pr...t..` < 0.05) %>%
-  mutate(var = row.names(.)) %>% 
-  filter(var != "(Intercept)") %>%
-  pull(var)
-
-ggdf <-
-  data.frame(mod_df) %>%
-  pivot_longer(contains("PC")) %>%
-  filter(name %in% sigpcs)
-
-ggplot(ggdf, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-# Get variables strongly correlated with each PC
-important_vars <-  map(sigpcs, ~{
-  # Get variables correlated with the PC
-  cor_results <- 
-    map(names(env_wide)[-1], \(column) {
-      cor.test(env_wide[[column]], mod_df[, .x])
-    })  
-
-  data.frame(
-    r = map_dbl(cor_results, "estimate"),
-    p = map_dbl(cor_results, "p.value"),
-    PC = .x,
-    var = names(env_wide)[-1]
-  ) %>%
-  filter(p < 0.05) 
-
-}) %>% bind_rows()
-
-vars <- important_vars %>% pull(var) %>% unique()
-
-important_df <- 
-  env_wide %>% 
-  dplyr::select(-Ho) %>%
-  pivot_longer(contains("bio")) %>% 
-  filter(name %in% vars) %>%
-  mutate(splitname = name) %>%
-  mutate(splitname = gsub("dif_", "dif-", splitname)) %>%
-  separate(splitname, into = c("timeperiod", "bio", "bion"), sep = "_") %>%
-  mutate(bio = paste0("bio_", bion)) 
-
-# Calculate correlation of each var with Ho
-Ho_cors <- 
-  env_wide %>% 
-  select(Ho, all_of(vars)) %>%
-  cor(use = "complete.obs") %>% 
-  .["Ho", -1] %>%
-  bind_rows() %>%
-  pivot_longer(everything(), names_to = "var", values_to = "r_Ho") %>%
-  arrange(desc(abs(r_Ho))) %>%
-  left_join(important_vars, by = "var")
-
-ggplot(important_df, aes(value, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~name, scales = "free") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-biokey <- get_biokey()
-count_df <- left_join(important_df, biokey) %>% dplyr::select(-value) %>% distinct()
-count(count_df, vartype)
-count(count_df, bio) %>% arrange(desc(n))
-```
-
-PCS WITH ALL Variables
+PCA with all variables
 ```{r}
 # Get just single timeperiod variables
 pca <- prcomp(env_wide %>% dplyr::select(-Ho), scale = TRUE)
@@ -564,7 +291,7 @@ model_set <- dredge(full_model)
 # Select the best models based on ΔAIC < 2
 best_models <- get.models(model_set, subset = delta < 2)
 
-# There are four best models 
+# There are two best models 
 length(best_models)
 sapply(best_models, AIC)
 
@@ -617,14 +344,12 @@ vars <- important_vars %>% pull(var) %>% unique()
 
 important_df <- 
   env_wide %>% 
-  dplyr::select(-Ho) %>%
   pivot_longer(contains("bio")) %>% 
   filter(name %in% vars) %>%
   mutate(splitname = name) %>%
   mutate(splitname = gsub("dif_", "dif-", splitname)) %>%
   separate(splitname, into = c("timeperiod", "bio", "bion"), sep = "_") %>%
   mutate(bio = paste0("bio_", bion)) 
-
 
 ggplot(important_df, aes(value, Ho)) +
   geom_point() +
@@ -695,7 +420,7 @@ mod_result <- data.frame(summary(best_mod)$coefficients) %>% filter(`Pr...t..` <
 # The best mod is dif_lh_bio_2 and dif_lig_bio_2
 
 # Get variables strongly correlated with each of the significant variables from the best model
-cor_df <- data.frame(cor(env_wide, env_wide[,row.names(mod_result)]))
+cor_df <- data.frame(cor(env_wide, select(env_wide, any_of(row.names(mod_result)))))
 cor_df$var <- row.names(cor_df)
 cor_df %>% 
   pivot_longer(-var) %>% 
@@ -703,18 +428,12 @@ cor_df %>%
   filter(value != 1) %>%
   # get remaining vars
   filter(abs(value) > 0.7)
-# The only correlation is dif_lh_bio_2 with dif_lig_bio_1
-# Check which is the better model based on AIC
-AIC(lm(Ho ~ dif_lh_bio_2 , data = env_wide))
-AIC(lm(Ho ~ dif_lig_bio_1, data = env_wide))
-# Based on AIC, dif_lh_bio_2 is better
 
-# Plot all three important variables :dif_lh_bio_2, dif_lig_bio_1, and dif_lig_bio_2
+# Plot all the important variables
 ggdf <- 
   env_wide %>% 
-  dplyr::select(Ho, dif_lh_bio_2, dif_lig_bio_1, dif_lig_bio_2) %>%
+  dplyr::select(Ho, all_of(cor_df$var)) %>%
   pivot_longer(-Ho) 
-
 
 pdf("Rplots.pdf", width =10)
 ggplot(ggdf, aes(value, Ho)) +
@@ -730,14 +449,15 @@ ggplot(ggdf, aes(value, Ho)) +
 dev.off()
 
 ```
-## Showing off BIO2
+
+## Showing off BIO1
 ```{r}
-mod_df <- env_df_vals[["dif_lh"]]
+mod_df <- env_df_vals[["dif_lig"]]
 plt2 <-
   ggplot(mod_df) +
     geom_sf(data = ca) +
-    geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
-    labs(color = "Change\nin mean\ndiurnal\nrange") +
+    geom_point(aes(x = x, y = y, color = bio_1), cex = 2) +
+    labs(color = "Change\nin annual temp") +
     scale_color_viridis_c(option = "magma", direction = -1) +
     theme_void() 
 
@@ -756,183 +476,40 @@ plt1 <-
     aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
     formula = y ~ x
   ) +
-  xlab("Change in mean diurnal range") +
+  xlab("Change in annual temp") +
   stat_cor(label.y = 0) +
   xlim(-7.5, NA) +
   theme_classic()
 
-pdf(here(pdfpath, "bio2.pdf"), width = 15, height = 5)
+pdf(here(pdfpath, "lig_bio1.pdf"), width = 15, height = 5)
 grid.arrange(plt1, plt2, plt3, nrow = 1)
-dev.off()
-```
-
-Notes on residuals:
-- Lower genetic diversity than expected in very isolated sample
-- Higher genetic diversity than expected in transverse ranges (contact/admixture zone?)
-```{r}
-# plot residuals
-no_na <- mod_df %>% drop_na(Ho)
-mod <- lm(Ho ~ bio_2, no_na)
-no_na$residuals <- residuals(mod)
-
-resid <- left_join(get_coords(sf = TRUE), no_na, by = "SampleID")
-
-ggplot(resid) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = residuals), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-```
-
-
-### Evaluating BIO2 in other time periods
-```{r}
-mega_df <- 
-  bind_rows(env_df_vals, .id = "timeperiod") %>% 
-  mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
-
-mega_df2 <- 
-  mega_df %>% 
-  filter(grepl("dif", timeperiod)) %>%
-  mutate(id = gsub("dif_", "", timeperiod)) %>%
-  left_join(paleokey) %>%
-  mutate(dif = paste0("Current to ", period, "\n(", time, ")")) %>%
-  mutate(dif = factor(dif, levels = unique(dif)))
-
-ggplot(mega_df2, aes(bio_2, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  facet_wrap(~dif, scales = "free", nrow = 2) +
-  xlab("Change in mean diurnal range") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-```
-
-### Evaluating variables correlated with bio2
-```{r}
-wide_df <- 
-  mega_df %>% 
-  # drop MI19 because of missing values
-  filter(!grepl("mis19", timeperiod)) %>%
-  # note: pivot wider requires rows be uniquely identified (so sampleID is included here)
-  dplyr::select(timeperiod, Ho, SampleID, contains("bio")) %>%
-  pivot_wider(names_from = "timeperiod", values_from = contains("bio"))
-
-bio2_cors <- cor(wide_df %>% dplyr::select(contains("bio")), use = "complete.obs")[,"bio_2_dif_lh"]
-bio2_cors_names <- names(bio2_cors[abs(bio2_cors) > 0.6])
-#bio1 - mean annual temperature
-#bio6 - min temperature of coldest month (bio6)
-#bio5 - max temperature of warmest month (bio5)
-#bio7 - temperature annual range (bio5-bio6)
-#bio2 - mean diurnal range (mean of monthly (max temp - min temp)
-#bio12 - annual precipitation
-#bio13 - precipitation of wettest month
-
-gg_df <- 
-  wide_df %>% 
-  pivot_longer(all_of(bio2_cors_names)) %>%
-  left_join(get_coords())
-
-plt1 <- 
-  ggplot(gg_df, aes(value, Ho)) +
-    geom_point() +
-    geom_smooth(method = "lm") +
-    stat_regline_equation(
-      aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-      formula = y ~ x
-    ) +
-    facet_wrap(~name, scales = "free") +
-    stat_cor(label.y = 0) +
-    theme_classic() +
-    xlab("value")
-
-plt_list <- 
-  gg_df %>%
-  split(.$name) %>%
-  map(~ {
-    limit <- max(abs(.x[["value"]])) * c(-1, 1)
-    ggplot(.x) +
-        geom_sf(data = ca, fill = "darkgray") +
-        labs(color = "value") +
-        geom_point(aes(x = x, y = y, color = value), cex = 2) +
-        scale_color_distiller(type = "div", limit = limit) +
-        facet_wrap(~name) +
-        theme_void()}
-        )
-
-plt3 <-
-  ggplot(gg_df) +
-    geom_sf(data = ca) +
-    geom_point(aes(x = x, y = y, color = Ho)) +
-    ggtitle("E. Genetic diversity") +
-    theme_void() +
-    scale_color_viridis_c(option = "magma")  
-
-pdf(here(pdfpath, "correlated_vars.pdf"), width = 10, height = 10)
-print(plt1)
-do.call(grid.arrange, c(c(plt_list), nrow = 3))
-print(plt3)
-dev.off()
-```
-
-### Evaluationg all diff_vals
-```{r}
-# Calculate the difference between all unique combinations of env_list
-coords <- get_coords()
-combos <- data.frame(t(combn(names(env_list), 2)))
-dif_vals <- map2(combos[,1], combos[,2], ~{
-  diff <- env_list[[.x]] - env_list[[.y]]
-  names(diff) <- unique(c(names(env_list[[.x]]), names(env_list[[.y]])))
-  vals <- extract(diff, coords[,c("x", "y")], ID = FALSE)
-  df <- data.frame(vals, comparison = paste0(.x, "_", .y), SampleID = coords$SampleID)
-  return(df)
-}) %>% bind_rows()
-
-dif_ls <- left_join(dif_vals, get_het()) %>% group_by(comparison) %>% group_split()
-dif_vals <- left_join(dif_vals, get_het()) %>% pivot_longer(contains("bio"), names_to = "bioclim")
-cor_vals <- 
-  map(dif_ls, ~ {
-    cordf <- .x %>% dplyr::select(Ho, contains("bio")) %>% drop_na(Ho)
-    res <- cor(cordf, use = "complete.obs")["Ho", -1]
-  }) 
-names(cor_vals) <- unique(dif_vals$comparison)
-
-cor_df <- 
-  cor_vals %>% 
-  bind_rows(.id = "timeperiod") %>% 
-  pivot_longer(contains("bio")) %>%
-  mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
-
-# WARNING I THINK LABELS OF TIMEPERIODS/BIOCLIMS ARE OFF FIX THIS
-pdf(here(pdfpath, "all_comparisons.pdf"), width = 13, height = 10)
-ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
-  geom_tile() +
-  labs(fill = expression(r[Ho])) +
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  theme_minimal()
-
-ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
-  geom_tile() +
-  scale_fill_viridis_c(option = "rocket", direction = -1) +
-  labs(fill = expression(r[Ho])) +
-  theme_minimal()
 dev.off()
 ```
 
 ### Evaluating variance in variables 
 ```{r}
+mega_df <- 
+  bind_rows(env_df_vals, .id = "timeperiod") %>% 
+  mutate(timeperiod = factor(timeperiod, levels = names(env_df_vals)))
+
 var_df <- 
   mega_df %>%
+  filter(timeperiod %in% c("cur", "lh", "lgm", "lig")) %>%
+  select(SampleID, bio_1, bio_5, bio_6, Ho) %>%
   group_by(SampleID) %>%
-  mutate(across(contains("bio"), ~ var(., na.rm =TRUE))) 
+  summarise(across(contains("bio"), ~ var(., na.rm =TRUE))) %>%
+  ungroup() 
+cor(drop_na(dplyr::select(var_df, contains("bio"))), use = "complete.obs")
+
+# bio 1 is not significant
+coords <- get_coords() %>% left_join(get_het())
+var_df$Ho <- coords$Ho
+mod <- lm(Ho ~ bio_1, var_df)
+summary(mod)
 
 var_df_long <- 
   var_df %>%
-  pivot_longer(contains("bio"))
+  pivot_longer(c(bio_1))
 
 pdf(here(pdfpath, "var.pdf"), width = 13, height = 10)
 ggplot(var_df_long, aes(value, Ho)) +
@@ -949,217 +526,108 @@ ggplot(var_df_long, aes(value, Ho)) +
 dev.off()
 ```
 
-### big lazy model
+### Looking at change over time
 ```{r}
-# NOTE: this way does not work well, results in low R^2 (PCS)
-no_na_df <- wide_df %>% drop_na(contains("bio"), Ho)
-pca <- prcomp(drop_na(dplyr::select(no_na_df, contains("bio"))))
-pcs <- pca$x[,1:10]
-#make a screeplot
-screeplot(pca, type="lines", main="Screeplot of PCA")
+# create start and end times (approx) for each period
+paleokey_split <- 
+  get_paleokey() %>%
+  filter(id != "mis19") %>%
+  mutate(time = 
+    case_when(
+      # 1950 is usually the reference point for "present", so since the CHELSA data is 1979-2013
+      # We will call that -29 - (-63) or -0.029 - -0.063 ka years ago which is approximately 0
+      period == "Current" ~ "0 ka", 
+      .default = time
+      )
+    ) %>%
+  separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
+  mutate(across(c(start_time, end_time), ~ case_when(
+    # Only end_time has the unit for some and start_time has unit for others
+    str_detect(end_time, "ka") | str_detect(start_time, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
+    str_detect(end_time, "Ma") | str_detect(start_time, "Ma")  ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
+    TRUE ~ as.numeric(.x)
+  )))
 
-mod_df_pca <- data.frame(Ho = no_na_df$Ho, pcs)
-summary(lm(Ho ~ . , data = mod_df_pca))
 
-all_cors <- cor(no_na_df %>% dplyr::select(contains("bio")))
+# Create timeline
+gg_timeline <- 
+  paleokey_split %>% 
+  mutate(
+    start_time = case_when(start_time == 0 ~ 100, TRUE ~ start_time),
+    end_time = case_when(is.na(end_time) ~ start_time + 4, TRUE ~ end_time)
+  ) %>%
+  filter(start_time < 1e6) 
 
-# get variables with biggest PCA contributions to PC1, 2, and 3
-# NOTE: this way does not work well, results in low R^2 (Variables selection based on PCs)
-vars <- 
-  as.data.frame(pca$rotation[,1:10]) %>%
-  mutate(var = rownames(.)) %>%
-  pivot_longer(-var, names_to = "PC", values_to = "loading") %>%
-  group_by(PC) %>%
-  filter(loading == max(loading)) %>%
-  pull(var)
-f <- formula(paste("Ho ~", paste(vars, collapse = " + ")))
-summary(lm(f, data = no_na_df))
-```
+ggplot(gg_timeline) +
+  geom_rect(aes(xmin = end_time, xmax = start_time, ymin = 0, ymax = 10, fill = period), alpha = 0.5) +
+  scale_x_log10() 
 
-```{r}
-# THIS DOESN"T WOKR
-# get all cors and get absolute value (has to be absolute for clustering!)
-all_cors <- abs(cor(dplyr::select(no_na_df, contains("bio"))))
 
-# Convert the correlation matrix to a distance matrix (1 - |correlation|)
-dist_matrix <- as.dist(1 - all_cors)
+gg_timeline2 <- 
+  paleokey_split %>% 
+  mutate(
+    start_time = case_when(start_time == 0 ~ 100, TRUE ~ start_time),
+    end_time = case_when(is.na(end_time) ~ start_time + 100, TRUE ~ end_time)
+  ) %>%
+  filter(id %in% c("cur", "lh", "mh", "eh", "lgm", "lig"))
 
-# Perform hierarchical clustering using the distance matrix
-hc <- hclust(dist_matrix)
+change_df <- 
+  mega_df %>%
+  left_join(gg_timeline2, by = c("timeperiod" ="id")) %>%
+  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
+  drop_na(time) %>%
+  group_by(time) %>%
+  summarize(bio_1 = mean(bio_1, na.rm =TRUE)) 
 
-# Cut the dendrogram to create clusters, using a height that corresponds to the correlation threshold
-# The height for cutting is 1 - threshold because the distance is 1 - correlation
-clusters <- cutree(hc, h = 1 - 0.6)
+ggplot(gg_timeline2) +
+  geom_rect(aes(xmin = end_time, xmax = start_time, ymin = 0, ymax = 1, fill = period), alpha = 1) +
+  geom_vline(aes(xintercept = end_time, col = period), lwd =1) +
+  geom_vline(aes(xintercept = 0, col = "Current"), lwd = 1) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(breaks = seq(0, max(gg_timeline2$start_time), by = 20000), labels = scales::comma, expand = c(0.01,0.01)) +
+  labs(y = "Years before present", col = "Timeperiod", fill = "Timeperiod") +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.background = element_rect(fill = "azure1"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line.x = element_line(color = "azure4", size = 2))
 
-# Group the variable names based on the clustering result
-grouped_vars <- split(names(clusters), clusters)
+ggplot(gg_timeline2) +
+  geom_rect(aes(xmin = end_time, xmax = start_time, ymin = 0, ymax = Inf, fill = period), alpha = 1) +
+  geom_vline(aes(xintercept = end_time, col = period), lwd =1) +
+  geom_vline(aes(xintercept = 0, col = "Current"), lwd = 1) +
+  geom_line(data = change_df, aes(x = time, y = bio_1), col = "#0b1b26", lwd = 1, lty = "dashed") +
+  scale_y_continuous(expand = c(0,0)) +
+  #scale_x_log10(breaks = seq(0, max(gg_timeline2$start_time), by = 20000), labels = scales::comma, expand = c(0.01,0.01)) +
+  scale_x_continuous(breaks = seq(0, max(gg_timeline2$start_time), by = 20000), labels = scales::comma, expand = c(0.01,0.01)) +
+  labs(x = "Years before present", y = "Temperature", col = "Timeperiod",  fill = "Timeperiod") +
+  theme(panel.background = element_rect(fill = "azure1"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line.x = element_line(color = "azure4", size = 2))
 
-# Get the var from each group with the strongest correlation with Ho
-selected_vars <- 
-  map_chr(grouped_vars, ~ {
-    if (length(.x) == 1) return(.x)
-    vars <- no_na_df %>% dplyr::select(all_of(.x))
-    # find var with strongest correlation with Ho
-    Ho_cor <- cor(vars, no_na_df$Ho, use = "complete.obs")
-    var <- row.names(Ho_cor)[which.max(abs(Ho_cor))]
-    return(var)
-  }) %>% as.vector()
+# get values
+change_df <- 
+  mega_df %>%
+  left_join(paleokey_split, by = c("timeperiod" ="id")) %>%
+  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
+  drop_na(time)
 
-cor(no_na_df$bio_3_dif_ba, no_na_df$bio_7_dif_lig)
-grouped_vars[map_lgl(grouped_vars, ~"bio_3_dif_ba" %in% .x)]
-grouped_vars[map_lgl(grouped_vars, ~"bio_7_dif_lig" %in% .x)]
+mean_change <-
+  change_df %>%
+  group_by(time) %>%
+  summarize(bio_1 = mean(bio_1, na.rm =TRUE)) %>%
+  drop_na(time)
 
-# check that all cors are below 0.6
-check_df <- dplyr::select(no_na_df, all_of(selected_vars))
-check_cor <- cor(check_df, use = "complete.obs")
-diag(check_cor) <- 0
-all(abs(check_cor) < 0.6)
-max(check_cor)
-
-# run model
-mod_df_no_cor <- no_na_df %>% dplyr::select(all_of(selected_vars), Ho)
-mod <- lm(Ho ~ ., data = mod_df_no_cor)
-summary(mod)
-df <- data.frame(predicted = mod$fitted.values, observed = mod_df_no_cor$Ho)
-
-ggplot(df, aes(x = observed, y = predicted)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 0) +
+ggplot() +
+  geom_line(data = change_df, aes(x = time, y = bio_1, group = SampleID, col = "Samples"), alpha = 0.3) +
+  geom_line(data = mean_change, aes(x = time, y = bio_1, col = "Mean"), lwd = 2) +
+  scale_color_manual(values = c("#007c8f", "darkgray")) + 
+  labs(col = "") +
+  scale_x_log10()  +
   theme_classic()
-```
-
-```{r}
-# get all cors and get absolute value 
-all_cors <- abs(cor(dplyr::select(no_na_df, contains("bio"))))
-
-# for each variable get the variables it is correlated with
-cor_vars <- 
-  map(1:nrow(all_cors), ~ {
-    cor_vars <- names(which(all_cors[.x,] > 0.6))
-    return(cor_vars)
-  })
-
-#define a function to merge overlapping vectors
-merge_overlaps <- function(lst) {
-  for (i in seq_along(lst)) {
-    for (j in seq_along(lst)) {
-      if (i != j && any(lst[[i]] %in% lst[[j]])) {
-        # Merge i and j and remove j from the list
-        lst[[i]] <- unique(c(lst[[i]], lst[[j]]))
-        lst <- lst[-j]
-        # Recursively call the function until there are no overlaps left
-        return(merge_overlaps(lst))
-      }
-    }
-  }
-  # Return the list if there are no overlaps left
-  lst
-}
-
-# Use the function to merge overlaps
-lst <- merge_overlaps(cor_vars)
-
-summary(lm(Ho ~ bio_2_dif_lh + bio_8_dif_lig + bio_2_dif_lig, no_na_df))
-```
-
-```{r}
-# Playing around with vars
-mod_df <- data.frame(wide_df, var = var_df$bio_1) %>% drop_na(Ho, var, bio_2_dif_lh, bio_9_dif_lh, bio_19_dif_lig, bio_2_hs1, bio_3_dif_lh)
-mod <- (lm(Ho ~ var + bio_2_dif_lh + bio_9_dif_lh + bio_19_dif_lig + bio_9_dif_lh + bio_2_hs1 + bio_3_dif_lh, data = mod_df))
-summary(mod)
-df <- data.frame(predicted = mod$fitted.values, observed = mod_df$Ho)
-
-ggplot(df, aes(x = observed, y = predicted)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 0) +
-  theme_classic()
-```
-
-```{r}
-mod <- lm(wide_df$Ho ~ ., data = select(wide_df, contains("bio")))
-library(MuMIn)
-library(glmnet)
-
-no_na_df <- wide_df %>% drop_na()
-# Fit Elastic Net model (alpha = 0.5 combines Ridge and Lasso)
-x = as.matrix(select(no_na_df, contains("bio")))
-y = no_na_df$Ho
-elastic_net_model <- cv.glmnet(x, y, alpha = 0.5, standardize = TRUE)
-
-# Plot the cross-validated mean squared error
-plot(elastic_net_model)
-
-# Get the best lambda (penalty parameter)
-best_lambda <- elastic_net_model$lambda.min
-print(best_lambda)
-
-# Fit the model with the best lambda
-final_model <- glmnet(x, y, alpha = 0.5, lambda = best_lambda)
-
-# Get the coefficients of the final model
-coef(final_model)
-
-# Extract the indices of the selected variables
-coefs <- coef(final_model) 
-coefs <- as.vector(coef(final_model))
-names(coefs) <- rownames(coef(final_model))
-selected_vars <- names(which(coefs != 0))
-selected_vars <- selected_vars[selected_vars != "(Intercept)"]
-print(selected_vars)
-
-summary(lm(wide_df$Ho ~ ., data = select(wide_df, all_of(selected_vars))))
-```
-
-### Testing for effects of population structure
-```{r}
-source(here("analysis", "admixture", "admixture.R"))
-admix <- get_Q(K = 5)
-head(admix)
-coords <- get_coords()
-mod_df <- left_join(mod_df, admix)
-
-# bio2 is still significant after controling for clusters
-summary(lm(Ho ~ cluster + bio_2, data = mod_df))
-# nothing is significant once an interaction term is added but I think that is due to low power
-summary(lm(Ho ~ cluster + bio_2, data = mod_df))
-
-# look at heterozygosity by cluster and remove largest cluster
-mod_df %>% group_by(cluster) %>% summarise(mean = mean(Ho, na.rm = TRUE)) %>% arrange(desc(mean))
-# when you remove the southern pop with really high genetic diversity (cluster 3), the pattern still exists (albeit weaker)
-plt1 <- ggplot(mod_df[mod_df$cluster != 3, ], aes(bio_2, Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-plt2 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = bio_2), cex = 2) +
-  labs(color = "bio_2") +
-  theme_void() +
-  scale_color_viridis_c(option = "magma", direction = -1)
-
-plt3 <- ggplot(mod_df[mod_df$cluster != 3, ]) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, color = Ho), cex = 2) +
-  theme_void() +
-  scale_color_viridis_c(option = "magma")
-
-grid.arrange(plt1, plt2, plt3, nrow = 1)
 ```
 
 ### Checking with bouzid data
@@ -1181,14 +649,14 @@ ggplot(df) +
   scale_color_viridis_c(option = "magma") +
   theme_void()
 
-lh <- load_paleoclim(here("data", "env", "LH_v1_2_5m.zip"))
+lig <- load_paleoclim(here("data", "env", "LIG_v1_2_5m.zip"))
 cur <- load_paleoclim(here("data", "env", "CHELSA_cur_V1_2B_r2_5m.zip"))
-dif <- cur - lh
-lh_vals <- extract(dif, df[,c("x", "y")], ID = FALSE)
+dif <- cur - lig
+lig_vals <- extract(dif, df[,c("x", "y")], ID = FALSE)
 
-mod_df <- data.frame(df, lh_vals)
+mod_df <- data.frame(df, lig_vals)
 
-ggplot(mod_df, aes(bio_2, Ho)) +
+ggplot(mod_df, aes(bio_1, Ho)) +
     geom_point(alpha = 0.7) +
     stat_regline_equation(
       aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
@@ -1200,871 +668,4 @@ ggplot(mod_df, aes(bio_2, Ho)) +
 
 #bio5 (max temperature of warmest month)
 #bio6 (min temperature of coldest month)
-```
-
-### Testing for current environment effects
-```{r}
-df <-
- mega_df %>% 
- filter(timeperiod %in% c("dif_lh", "cur"))%>% 
- dplyr::select("Ho", "bio_2", "timeperiod", "SampleID") %>% 
- pivot_wider(names_from = timeperiod, values_from = bio_2) %>% 
- drop_na()
-
-summary(lm(Ho ~ cur + dif_lh, data = df))
-```
-
-
-### Looking at change over time
-```{r}
-# create start and end times (approx) for each period
-paleokey_split <- 
-  paleokey %>%
-  filter(id != "mis19") %>%
-  mutate(time = 
-    case_when(
-      period == "Current" ~ "1.979-2.013 ka", 
-      .default = time
-      )
-    ) %>%
-  separate(time, into = c("start_time", "end_time"), sep = "-", convert = TRUE, fill = "right") %>%
-  mutate(across(c(start_time, end_time), ~ case_when(
-    str_detect(.x, "ka") ~ as.numeric(str_remove(str_remove(.x, "ka"), "ca.")) * 1000,
-    str_detect(.x, "Ma") ~ as.numeric(str_remove(str_remove(.x, "Ma"), "ca.")) * 1000000,
-    TRUE ~ as.numeric(.x)
-  )))
-
-# get values
-change_df <- 
-  mega_df %>%
-  left_join(paleokey_split, by = c("timeperiod" ="id")) %>%
-  pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
-  drop_na(time)
-
-mean_change <-
-  change_df %>%
-  group_by(time) %>%
-  summarize(bio_2 = mean(bio_2, na.rm =TRUE)) %>%
-  drop_na(time)
-
-ggplot() +
-  geom_line(data = change_df, aes(x = time, y = bio_2, group = SampleID, col = "Samples"), alpha = 0.3) +
-  geom_line(data = mean_change, aes(x = time, y = bio_2, col = "Mean"), lwd = 2) +
-  scale_color_manual(values = c("#007c8f", "darkgray")) + 
-  labs(col = "") +
-  scale_x_log10()  +
-  theme_classic()
-```
-
-
-# SDM
-
-BIOMOD: https://biomodhub.github.io/biomod2/articles/examples_1_mainFunctions.html
-
-```{r}
-library(countrycode)
-library(CoordinateCleaner)
-library(rgbif)
-library(sp)
-library(here)
-library(raster)
-library(dismo)
-library(tidyverse)
-library(viridis)
-library(biomod2)
-library(sf)
-library(terra)
-library(ggpubr)
-# devtools::install_github('adamlilith/enmSdm', dependencies=TRUE)
-library(enmSdm)
-library(RStoolbox)
-source(here("analysis", "sdm", "bias.R"))
-source(here("analysis", "sdm", "sdm.R"))
-source(here("analysis", "sdm", "get_coords.R"))
-source(here("analysis", "sdm", "paleovars.R"))
-source(here("general_functions.R"))
-
-# set maxent path
-# put maxent.jar in your working directory (what you get when you run getwd()) or set manually: https://rdrr.io/cran/biomod2/man/BIOMOD_ModelingOptions.html
-Sys.setenv(JAVA_HOME='/usr/lib/jvm/java-11-openjdk-amd64')
-
-# get env data
-env_list <- get_paleovars()
-env_list_agg <- map(env_list, ~aggregate(.x, 2))
-cur <- env_list[["cur"]]
-lh <- env_list[["lh"]]
-
-# pca
-selected_vars <- pc_var_selection(cur)
-```
-
-```{r}
-# get coordinates
-occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "both", occ_limit = 10000, cache = TRUE)
-
-# get or create bias background layer
-bias_class <- get_bias("Sceloporus occidentalis", rank = "class", limit = 10000, n = 10000, cache = TRUE)
-
-envlayers <- cur[[selected_vars]]
-envlayers <- rast(here("data", "env", "CLEANED_ENVDATA_NOCOR.tif"))
-
-# run SDM
-sdm_mod <- 
-  sdm(
-    coordinates = occ_coords,
-    envlayers = envlayers, 
-    biasdat = bias_class, 
-    models = "RF", 
-    BIOMOD_name = "BIOMOD", 
-    tune = FALSE
-    )
-
-sdm_raster <- sdm_mod$raster
-#writeRaster(sdm_raster, here("analysis", "sdm", "outputs", "sdm.tif"))
-sdm_raster <- rast(here("analysis", "sdm", "outputs", "sdm.tif"))
-
-cutoff <- 
-  sdm_mod$eval %>% 
-  filter(metric.eval == "TSS") %>% 
-  pull(cutoff) 
-  
-bin_raster <- sdm_raster
-bin_raster[bin_raster > cutoff/1000] <- 1
-bin_raster[bin_raster <= cutoff/1000] <- 0
-plot(bin_raster)
-
-# hindcast SDMs
-hindcast_sdms <- 
-  map(
-    env_list[c("lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")],
-   ~hindcast(sdm_mod$myBiomodModelOut, new_env = .x[[selected_vars]])
-   )
-hindcast_sdms <- rast(hindcast_sdms)
-writeRaster(hindcast_sdms, here("outputs", "hindcast_sdms.tif"))
-
-# calculate change and stability
-# TODO: PLAY AROUND WITH TIMEPERIOD USED TO CALCULATE DIF_SDM AND STABILITY
-cur_sdm <- sdm_mod$raster 
-dif_sdm <- cur_sdm - hindcast_sdms[["lh"]]
-
-hindcast_subset <- subset(hindcast_sdms, c("hs1", "ba", "yds", "eh", "mh", "lh", "cur"))
-stability <- app(hindcast_subset, mean, na.rm =TRUE)
-variability <- app(hindcast_subset, sd, na.rm =TRUE)
-plot(stability, col = mako(100))
-plot(variability, col = mako(100))
-plot(dif_sdm, col = viridis(100))
-
-trend <- global(hindcast_subset, mean, na.rm = TRUE)
-trend <- data.frame(mean = trend, tp = rownames(trend)) %>% mutate(tp = factor(tp, levels = names(hindcast_subset)))
-ggplot(trend) + geom_line(aes(x = tp, y = mean, group = 1))
-
-# compare to genetic diversity
-het <- get_het()
-roh <- get_roh()
-coords <- get_coords(sf = TRUE) %>% left_join(het) %>% left_join(roh)
-change_vals <- extract(dif_sdm, coords, ID = FALSE)
-stability_vals <- extract(stability, coords, ID = FALSE)
-cur_vals <- extract(cur_sdm, coords, ID = FALSE)
-# df <- data.frame(cur = cur_vals, coords)
-df <- data.frame(change = change_vals[,1], stability = stability_vals[,1],  cur = cur_vals[,1], coords)
-ggplot(df, aes(x = change, y = Ho)) +
-  geom_point() +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(df, aes(x = stability, y = Ho)) +
-  geom_point() +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(df, aes(x = cur, y = Ho)) +
-  geom_point() +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(df, aes(x = change, y = froh0)) +
-  geom_point() +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(df, aes(x = cur, y = froh0)) +
-  geom_point() +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-# grouped
-df_group <- 
-  df %>% 
-  mutate(stability = stability > 3) %>%
-  drop_na(stability)
-
-# play around with this:
-ggplot(df_group) +
-  geom_boxplot(aes(x = stability, y = froh0))
-```
-
-```{r}
-# presentation plots
-ggplot(as.data.frame(sdm_raster, xy = TRUE)) +
-  geom_sf(data = ca, fill = "darkgray") +
-  geom_raster(aes(x = x, y = y, fill = .data[[names(sdm_raster)[1]]])) +
-  scale_fill_viridis_c(option = "mako") +
-  labs(fill = "Suitability") +
-  theme_void()
-
-ggplot(as.data.frame(stability, xy = TRUE)) +
-  geom_sf(data = ca, fill = "darkgray") +
-  geom_raster(aes(x = x, y = y, fill = .data[[names(stability)[1]]])) +
-  scale_fill_viridis_c(option = "mako", limits =c(0,1)) +
-  labs(fill = "Stability") +
-  theme_void()
-```
-
-```{r}
-# is stability correlated with change in bio2
-dif_bio2 <- env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
-dif_vals <- extract(dif_bio2, coords, ID = FALSE)
-df$change_bio2 <- dif_vals[,1]
-
-# check correlations with Ho
-cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
-cor(df$stability, df$Ho, use = "pairwise.complete.obs")
-
-# correlated, but not strongly
-cor(df$change_bio2, df$stability, use = "pairwise.complete.obs")
-
-# check for statistical suppression/whether both variables are significant when both are included
-mod1 <- lm(Ho ~ change_bio2, data = df)
-summary(mod1)
-mod2 <- lm(Ho ~ stability, data = df)
-summary(mod2)
-mod3 <- lm(Ho ~ stability + change_bio2, data = df)
-summary(mod3)
-# stability is no longer significant when bio2 is included
-```
-
-```{r}
-sdm_vals <- extract(hindcast_sdms, coords, ID = FALSE)
-df <- 
-  data.frame(sdm_vals, coords) %>% 
-  pivot_longer(names(sdm_vals)) %>%
-  mutate(name = factor(name, levels = names(sdm_vals)))
-
-ggplot(df, aes(x = value, y = Ho)) +
-  geom_point() +
-  facet_wrap(~name) +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(filter(df, name %in% c("ba", "eh", "mh", "lh", "cur")), aes(x = value, y = Ho)) +
-  geom_point() +
-  facet_wrap(~name) +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-ggplot(filter(df, name %in% c("lh", "cur")), aes(x = value, y = froh0)) +
-  geom_point() +
-  facet_wrap(~name) +
-  stat_regline_equation(
-      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
-      formula = y ~ x
-    ) +
-  geom_smooth(method = "lm") +
-  stat_cor(label.y = 0) +
-  theme_classic()
-```
-
-```{r}
-# is sdm current value correlated with change in bio2
-df <- coords
-dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
-df$change_bio2 <-  extract(dif_bio2, coords, ID = FALSE)[,1]
-df$sdm_vals <- extract(hindcast_sdms[["cur"]], coords, ID = FALSE)[,1]
-
-# confirm correlations with Ho
-cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
-cor(df$sdm_vals, df$Ho, use = "pairwise.complete.obs")
-
-# correlated, but not strongly (-0.42)
-cor(df$change_bio2, df$sdm_vals, use = "pairwise.complete.obs")
-
-# check for statistical suppression/whether both variables are significant when both are included
-mod1 <- lm(Ho ~ change_bio2, data = df)
-summary(mod1)
-mod2 <- lm(Ho ~ sdm_vals, data = df)
-summary(mod2)
-mod3 <- lm(Ho ~ sdm_vals + change_bio2, data = df)
-summary(mod3)
-# sdm value is not significant when bio2 is included or by itself
-```
-
-
-```{r}
-# is sdm ba value correlated with change in bio2 (noticed a correlation)
-df <- coords
-dif_bio2 <-env_list[["cur"]][["bio_2"]] -  env_list[["lh"]][["bio_2"]]
-df$change_bio2 <-  extract(dif_bio2, coords, ID = FALSE)[,1]
-df$sdm_vals <- extract(hindcast_sdms[["cur"]], coords, ID = FALSE)[,1]
-
-# confirm correlations with Ho
-cor(df$change_bio2, df$Ho, use = "pairwise.complete.obs")
-cor(df$sdm_vals, df$Ho, use = "pairwise.complete.obs")
-
-# correlated, but not strongly (-0.42)
-cor(df$change_bio2, df$sdm_vals, use = "pairwise.complete.obs")
-
-# check for statistical suppression/whether both variables are significant when both are included
-mod1 <- lm(Ho ~ change_bio2, data = df)
-summary(mod1)
-mod2 <- lm(Ho ~ sdm_vals, data = df)
-summary(mod2)
-mod3 <- lm(Ho ~ sdm_vals + change_bio2, data = df)
-summary(mod3)
-# sdm value is close to significant when bio2 is included
-```
-
-# Recent climate
-Download PRISM max temperature data from historical data: https://prism.oregonstate.edu/historical/
-```{r}
-caladapt <- map(list.files(here("data", "env", "caladapt"), pattern = ".tif", full.names = TRUE), rast) %>% rast()
-
-names(caladapt)
-
-caladapt1950 <- caladapt[["livneh_year_Tmax_clip_15Oct2014.1950"]]
-caladapt2013 <- caladapt[["livneh_year_Tmax_clip_15Oct2014.2013"]]
-dif <- caladapt2013 - caladapt1950
-plot(dif)
-```
-
-```{r}
-# Function to calculate yearly average from monthly files
-coords <- get_coords(sf = TRUE)
-year = 1895
-calculate_yearly_avg <- function(year  = 1895, type = "historical", output = "df") {
-  if (type == "historical") directory_path <- here::here("data", "env", "prism", "PRISM_tmax_stable_4kmM3_189501_198012_bil")
-  if (type == "current") directory_path <- here::here("data", "env", "prism", "PRISM_tmax_stable_4kmM3_198101_202308_bil")
-  monthly_files <- list.files(directory_path, pattern = "*.bil.bil$", full.names = TRUE)
-  monthly_files <- monthly_files[grepl(paste0("PRISM_tmax_stable_4kmM3_", year), monthly_files)]
-  if (length(monthly_files) > 0) {
-    rasters <- purrr::map(monthly_files, terra::rast)
-    rasters <- terra::rast(rasters)
-    if (output == "raster"){
-      rasters <- mean(rasters, na.rm = TRUE)
-      rm(rasters)
-      gc()
-    } else {
-      vals <- terra::extract(rasters, st_transform(coords, st_crs(rasters)))
-      annual_avg <- rowMeans(vals, na.rm = TRUE)
-      return(data.frame(year = year, tmax = annual_avg, SampleID = coords$SampleID))
-      rm(rasters)
-      gc()
-    }
-    
-  } else {
-    return(NULL)
-  }
-}
-
-# Loop over the years of interest
-years <- 1895:1925 # Update this to the range of years you have data for
-tmax_his <- map(1895:1925, ~calculate_yearly_avg(.x, type = "historical"), .progress =TRUE) %>% bind_rows()  
-tmax_his <- tmax_his %>% group_by(SampleID) %>% summarise(tmax_his = mean(tmax, na.rm = TRUE))
-tmax_cur <- map(1986:2016, ~calculate_yearly_avg(.x, type = "current"), .progress =TRUE) %>% bind_rows()  
-tmax_cur <- tmax_cur %>% group_by(SampleID) %>% summarise(tmax_cur = mean(tmax, na.rm = TRUE))
-tmax <- 
-  left_join(tmax_his, tmax_cur) %>% 
-  mutate(dif = tmax_cur - tmax_his) %>%
-  right_join(coords) %>% 
-  st_as_sf()
-
-ggplot(tmax) +
-  geom_sf(data = ca) +
-  geom_sf(aes(color = dif)) +
-  scale_color_viridis_c(option = "magma", direction = -1) +
-  theme_void()
-
-tmax_df <- left_join(tmax, get_het())
-
-# Difference not signif by itself
-summary(lm(Ho ~ dif, data =tmax_df))
-
-# But once you add cur, it is significant and ahs a negative relationsihp
-summary(lm(Ho ~ dif + tmax_cur, data = tmax_df))
-# Close also for tmax_his, but note tmax_cur+tmax_his are super correlated
-summary(lm(Ho ~ dif + tmax_his, data = tmax_df))
-
-# Both tmax_cur and tmax_his are significant alone
-summary(lm(Ho ~ tmax_his, data =tmax_df))
-summary(lm(Ho ~ tmax_cur, data =tmax_df))
-
-# Check with BIO2
-source(here("analysis", "sdm", "paleovars.R"))
-paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
-bio2_dif <- paleovars$cur_bio_2 - paleovars$lh_bio_2
-bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
-bio2_dif_df <- data.frame(SampleID = coords$SampleID, bio2_dif = bio2_dif_vals)
-
-# dif is no longer significant once you account for bio2_dif, but tmax_his and tmax_cur still are significant
-# ...likely just a elevation affect idk
-tmax_df <- left_join(tmax_df, bio2_dif_df)
-summary(lm(Ho ~ bio2_dif + dif + tmax_cur, data = tmax_df))
-summary(lm(Ho ~ bio2_dif + dif + tmax_his, data = tmax_df))
-# They aren't strongly correlated so it is likely not a suppression effect
-cor(tmax_df$bio2_dif, tmax_df$dif)
-
-plot(tmax_df$dif, tmax_df$Ho)
-```
-
-```{r}
-# Compute the long-term average from 1895 to 1925
-long_term_avg <- app(stack(annual_averages), mean)
-```
-
-```{r}
-tmax_his <- map(1895:1925, ~calculate_yearly_avg(.x, type = "historical", output = "raster"), .progress =TRUE) %>% rast()  
-tmax_cur <- map(1986:2016, ~calculate_yearly_avg(.x, type = "current"), .progress =TRUE) %>% bind_rows()  
-```
-
-# pastclimate
-
-This data is not high enough resolution but keeping it here in case I want it in the future
-
-```{r}
-library("pastclim")
-library("here")
-set_data_path(path_to_nc = here("data", "env", "pastclim"))
-
-# downloads all variables (annual) by default
-download_dataset(dataset = "Beyer2020", annual = TRUE)
-```
-
-It is possible to also load a time series of rasters with the function region_series. In this case, the function returns a SpatRasterDataset, with each variable as a sub-dataset:
-```{r}
-ca <- get_ca()
-climate_region <- region_series(
-  time_bp = list(min = -120000, max = 0),
-  bio_variables = c("bio05", "biome"),
-  dataset = "Beyer2020",
-  crop = ca
-)
-
-climate_region
-```
-
-Note that terra stores dates in years as AD, not BP. You can inspect the times in years BP with:
-```{r}
-time_bp(climate_region)
-```
-
-We can then plot the time series of a given variable (we relabel the plots to use years bp):
-```{r}
-terra::plot(climate_region$bio05[[1:5]], main = time_bp(climate_region))
-```
-
-To plot all climate variables for a given time step, we can slice the time series:
-```{r}
-slice_10k <- slice_region_series(climate_region, time_bp = -10000)
-terra::plot(slice_10k)
-```
-
-Get ice sheets:
-```{r}
-terra::plot(climate_region$biome[[1]], main = time_bp(climate_region))
-ice_id <- get_biome_classes("Beyer2020") %>% filter(category == "Land ice") %>% pull(id)
-
-# check if there is any ice
-prop_ice <- map(1:nlyr(climate_region$biome), ~global(climate_region$biome[[.x]] == ice_id, mean, na.rm = TRUE)) %>% bind_rows()
-prop_ice
-which_ice <- which(prop_ice$mean > 0)
-
-ice <- climate_region$biome*0
-ice[climate_region$biome == ice_id] <- 1
-
-ice_df <- 
-  as.data.frame(ice[[which_ice]], xy = TRUE, ID = FALSE) %>%
-  dplyr::select(-ID)
-names(ice_df) <- c("x", "y", time_bp(ice[[which_ice]]))
-ice_long <- 
-  pivot_longer(ice_df, -c("x", "y")) %>% 
-  mutate(name = factor(name, levels = time_bp(ice))) %>%
-  mutate(value = case_when(value == 1 ~ "ice", value == 0 ~ "no ice", .default = NA))
-
-ggplot(ice_long) +
-  geom_raster(aes(x = x, y = y, fill = value)) +
-  facet_wrap(~name) +
-  scale_fill_manual(values = c("#d5d5d5", "#009969"), na.value = NA) +
-  theme_void()
-
-# unfortunately the resolution is not very high for ca
-
-# combine ice layers
-ice_mean <- mean(ice[[which_ice]], na.rm = TRUE)
-names(ice_mean) <- "ice"
-plot(ice_mean)
-```
-
-
-# Look at future climate change
-
-To download all bioclim data:
-Generate envidatS3paths.txt file here: https://envicloud.wsl.ch/#/?prefix=chelsa%2Fchelsa_V2%2FGLOBAL%2Fclimatologies%2F
-wget --no-host-directories --force-directories --input-file=envidatS3paths.txt
-
-```{r}
-# Get current climate
-paleovars <- get_paleovars()
-cur <- paleovars[["cur"]]
-cur <- crop(cur, ca)
-cur <- mask(cur, ca)
-
-# Get BIO1 and convert
-cur <- cur[["bio_1"]]/1000
-
-# Get future climate
-future2 <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1.tif"))
-# Get future climate
-future <- rast(here("data", "env", "future", "CHELSA_bio1_2041-2070_gfdl-esm4_ssp585_V.2.1.tif"))
-future <- crop(future, ca)
-future <- mask(future, ca)
-
-future <- crop(future, ca)
-future <- mask(future, ca)
-
-# Convert future to same extent as cur
-future <- resample(future, cur)
-
-# Calculate climate change
-cc <- future - cur
-
-ggplot(as.data.frame(cc, xy = TRUE)) +
-  geom_sf(data = ca) +
-  geom_raster(aes(x = x, y = y, fill = .data[[names(cc)[1]]])) +
-  labs(fill = "Future change\nin temperature")
-  scale_fill_viridis_c(option = "magma", na.value = NA) +
-  theme_void()
-```
-
-
-# FINAL LM MODELS
-
-## Look at change in climate in regions that were glaciated
-```{r}
-# get current/lh climate
-paleovars <- get_paleovars()
-cur <- paleovars[["cur"]]
-lh <- paleovars[["lh"]]
-dif <- cur - lh
-ice_resamp <- terra::resample(ice_mean, dif, method = "max")
-dif_resamp <- terra::resample(dif, ice_mean)
-ice_vect <- st_as_sf(as.polygons(ice_resamp))
-ice_vect <- ice_vect[ice_vect$ice == 1, ]
-
-df <- 
-  cbind(as.data.frame(dif, ID = FALSE, xy =TRUE), as.data.frame(ice_resamp, ID = FALSE)) %>%
-  pivot_longer(names(dif)) %>%
-  mutate(ice = case_when(ice == 1 ~ "ice", ice == 0 ~ "no ice", .default = NA)) %>%
-  drop_na(ice)
-
-ggplot(filter(df, name %in% c("bio_1", "bio_2", "bio_5"))) +
-  geom_boxplot(aes(x = ice, y = value, fill = ice)) +
-  facet_wrap(~name, scales = "free")
-
-df_resamp <- 
-  cbind(as.data.frame(dif_resamp, ID = FALSE, xy =TRUE), as.data.frame(ice_mean, ID = FALSE)) %>%
-  pivot_longer(names(dif)) %>%
-  mutate(ice = case_when(ice == 1 ~ "ice", ice == 0 ~ "no ice", .default = NA)) %>%
-  drop_na(ice)
-
-ggplot(filter(df_resamp, name %in% c("bio_1", "bio_2", "bio_5"))) +
-  geom_boxplot(aes(x = ice, y = value, fill = ice)) +
-  facet_wrap(~name, scales = "free")
-
-ggplot(filter(df_resamp, name == "bio_2")) +
-  geom_raster(aes(x = x, y = y, fill = value)) +
-  geom_sf(data = ice_vect, fill = NA, col = "black", lty = "dashed", lwd = 1) +
-  scale_fill_viridis_c(option = "magma", na.value = NA) +
-  theme_void()
-
-```
-
-## Adding Q-values
-```{r}
-# cluster = final cluster assignment for SampleID given max Q
-# PopGroup = Q values for each cluster
-mod_df <- env_df_vals[["dif_lh"]]
-q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
-q <- 
-  q %>%
-  # only keep the pop group corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup) 
-
-# plot residuals
-no_na <- 
-  mod_df %>% 
-  drop_na(Ho) %>%
-  left_join(q, by = "SampleID")
-
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = Q), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_viridis_c()
-
-# Use the Q of the identified cluster (the max Q) to represent admixture (idea: lower max Q = more admixture)
-mod_q <- lm(Ho ~ bio_2 + Q, no_na)
-
-# Q is significant
-summary(mod_q)
-
-# Plot Ho vs Q
-ggplot(no_na, aes(x = 1/Q, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  stat_regline_equation(
-    aes(label =  paste(..eq.label.., ..adj.rr.label.., sep = "~~~~")),
-    formula = y ~ x
-  ) +
-  stat_cor(label.y = 0) +
-  theme_classic()
-
-no_na$residuals <- residuals(mod_q)
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = residuals), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-# create null model
-no_na$null <- 1
-mod_null <- lm(Ho ~ null, no_na)
-no_na$residuals_null <- residuals(mod_null)
-ggplot(no_na) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = residuals_null), cex = 3, color = "#00000087", pch = 21) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-mod_bio2 <- lm(Ho ~ bio_2, no_na)
-no_na$residuals_bio2 <- residuals(mod_bio2)
-
-mod_q <- lm(Ho ~ Q, no_na)
-no_na$residuals_q <- residuals(mod_q)
-
-mod_q_bio2 <- lm(Ho ~ Q + bio_2, no_na)
-no_na$residuals_q_bio2 <- residuals(mod_q_bio2)
-
-no_na$delta_residuals_q <- abs(no_na$residuals_bio2) - abs(no_na$residuals_q_bio2)
-no_na$delta_residuals_bio2 <- abs(no_na$residuals_q) -  abs(no_na$residuals_q_bio2)
-
-ggdf <-
-  no_na %>%
-  pivot_longer(c("delta_residuals_bio2", "delta_residuals_q")) 
-ggplot(ggdf) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
-  facet_wrap(~name) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-
-ggdf <-
-  no_na %>%
-  pivot_longer(c("residuals_bio2", "residuals_q", "residuals_q_bio2")) 
-ggplot(ggdf) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, fill = value), cex = 3, color = "#00000087", pch = 21) +
-  facet_wrap(~name) +
-  theme_void() +
-  scale_fill_gradient2(low = "#0086a7", mid = "beige", high = "#f9900d", midpoint = 0)
-```
-
-## EVERYTHING
-```{r}
-elev <- get_dem()
-coords <- get_coords(sf = TRUE)
-
-# Climate data
-paleovars <- get_paleovars()
-bio2_dif <- paleovars$cur$bio_2 - paleovars$lh$bio_2
-bio2_dif_vals <- terra::extract(bio2_dif, coords, ID = FALSE)[,1]
-clim <- data.frame(SampleID = coords$SampleID, bio_2 = bio2_dif_vals)
-
-# Q data
-q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
-q <- 
-  q %>%
-  # only keep the pop group corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup) 
-
-# Glacier data
-lgm_glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "LGM_maxextent.shp"))
-# Note: have to first intersect and then transform otherwise you get a node error
-lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_glaciers)))
-lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
-# Add a new column to coords indicating whether each point is inside the lgm shapefile
-coords <- get_coords(sf = TRUE)
-glacier <- 
-  coords %>%
-  mutate(glacier = lengths(st_within(coords, lgm_glaciers)) > 0) %>%
-  mutate(glacier = ifelse(glacier, "Inside", "Outside")) %>%
-  mutate(glacier = factor(glacier, levels = c("Inside", "Outside")))
-
-# make model df
-mod_df <- 
-  get_coords() %>%
-  left_join(get_het()) %>%
-  left_join(glacier) %>%
-  left_join(clim) %>% 
-  left_join(q) %>%
-  left_join(elev) %>%
-  drop_na(Ho, glacier, Q, bio_2) 
-
-mod_df_elev <- 
-  mod_df %>%
-  drop_na(elev)
-
-mod <- lm(Ho ~ bio_2 + Q + glacier + elev, mod_df_elev)
-
-# Confirm: elev is not significant after adding bio2 and based on AIC bio2 alone is about the same
-summary(lm(Ho ~ elev, mod_df_elev))
-summary(lm(Ho ~ bio_2 + elev, mod_df_elev))
-AIC(lm(Ho ~ elev, mod_df_elev))
-AIC(lm(Ho ~ bio_2 + elev, mod_df_elev))
-AIC(lm(Ho ~ bio_2, mod_df_elev))
-
-mod <- lm(Ho ~ bio_2 + Q + glacier, mod_df)
-print(summary(mod)$adj.r.squared)
-result <- summary(mod)$coefficients
-
-# Plot predicted vs observed values
-qplt1 <- 
-  ggplot(mod_df) +
-  geom_point(aes(x = predict(mod), y = Ho, col = Q)) +
-  geom_abline(intercept = 0, slope = 1) +
-  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
-  theme_classic() +
-  labs(x = "Predicted", y = "Observed") +
-  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
-
-gplt1 <- 
-  ggplot(mod_df) +
-  geom_point(aes(x = predict(mod), y = Ho, col = glacier)) +
-  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
-  theme_classic() +
-  labs(x = "Predicted", y = "Observed") +
-  scale_color_manual(values = c("skyblue2", "lightgray"))
-
-bio2plt1 <-
-  ggplot(mod_df) +
-  geom_point(aes(x = predict(mod), y = Ho, col = bio_2)) +
-  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
-  geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
-  theme_classic() +
-  labs(x = "Predicted", y = "Observed") +
-  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
-
-# Plot values across california
-qplt2 <-
-  ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, col = Q)) +
-  theme_void() +
-  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
-
-gplt2 <-
-  ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, col = glacier)) +
-  theme_void() +
-  scale_color_manual(values = c("skyblue2", "gray"))
-
-bio2plt2 <-
-  ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, col = bio_2)) +
-  theme_void() +
-  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
-
-# Plot Ho vs variable
-qplt3 <-
-  ggplot(mod_df, aes(x = Q, y = Ho, col = Q)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  scale_color_viridis_c(option = "viridis", end = 0.1, begin = 0.9)
-
-
-gplt3 <- 
-  ggplot(mod_df) +
-  geom_boxplot(aes(x = glacier, y = Ho, fill = glacier)) +
-  geom_jitter(aes(x = glacier, y = Ho), alpha = 0.5) +
-  theme_classic() +
-  scale_fill_manual(values = c("skyblue2", "lightgray"))
-
-bio2plt3 <-
-  ggplot(mod_df, aes(x = bio_2, y = Ho, col = bio_2)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  scale_color_viridis_c(option = "inferno", end = 0.1, begin = 0.9)
-
-# use cowplot to combine plots
-pdf(here("analysis", "sdm", "pdfs", "linear_model_plot.pdf"), width = 13, height = 10)
-cowplot::plot_grid(qplt2, gplt2, bio2plt2,  qplt3, gplt3, bio2plt3, qplt1, gplt1, bio2plt1, ncol = 3)
-dev.off() 
-
-# Plot Ho
-
-mod_df <-
-   mod_df %>% 
-   mutate(explain =
-    case_when(
-      glacier == "Inside" ~ "Inside glaciated region",
-      Q < 0.8 ~ "High admixture"
-    )
-   )
-
-ggplot(mod_df) + 
-  geom_sf(data = ca) +
-  geom_point(data = filter(mod_df, is.na(explain)), aes(x = x, y = y, fill = Ho), col = "black", pch = 21, cex = 3) +
-  geom_point(data = drop_na(mod_df, explain), aes(x = x, y = y, fill = Ho, col = explain), pch = 21, cex = 3, stroke = 1) +
-  scale_fill_viridis_c(option = "inferno") +
-  scale_color_manual(values = c("green", "skyblue2")) +
-  theme_void()
 ```
