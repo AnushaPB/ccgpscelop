@@ -32,10 +32,14 @@ paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
 
 # Get important var for change in climate (based on paleoclimate.Rmd)
 bio1_dif_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
+bio1_dif_lgm_lig <- paleovars$lgm_bio_1 - paleovars$lig_bio_1
+bio1_dif_cur_lgm <- paleovars$cur_bio_1 - paleovars$lgm_bio_1
 paleoclim_mod_df <- 
   data.frame(
     SampleID = coords$SampleID,
-    paleo_change = terra::extract(bio1_dif_lig, coords, ID = FALSE)[,1]
+    paleo_change = terra::extract(bio1_dif_lig, coords, ID = FALSE)[,1],
+    paleo_change_lgm = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
+    paleo_change_cur = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1]
     )
 
 # Plots of climate change
@@ -126,7 +130,9 @@ csi_df <-
   pivot_longer(-c(x, y), 
   names_to = "model", 
   values_to = "CSI")
+```
 
+```{r}
 ggplot(csi_df) +
   geom_sf(data = ca) +
   geom_raster(aes(x = x, y = y, fill = CSI)) +
@@ -177,12 +183,6 @@ csi_mod_df <- data.frame(csi = 1 - extract(csi_past, coords, ID = FALSE), coords
 # Hypothesis 3: Genetic diversity explained by admixture
 ```{r}
 q <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
-q <- read_table(here("analysis", "admixture", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60.9.Q"), col_names = FALSE)
-fam <- read_table(here("analysis", "admixture", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60.fam"), col_names = FALSE)
-
-# get max value of each row
-Q <- apply(q, 1, max)
-q <- data.frame(SampleID = fam$X2, Q = Q)
 
 q_mod_df <- 
   q %>%
@@ -195,7 +195,8 @@ gg_df <-
   get_coords(sf=TRUE) %>% 
   left_join(q_mod_df) %>%
   drop_na(Q)
-
+```
+```{r}
 ggplot(gg_df) +
   geom_sf(data = ca) +
   geom_sf(aes(col = Q)) +
@@ -240,6 +241,15 @@ coords <- get_coords(sf = TRUE)
 glacier_mod_df <- 
   coords %>%
   mutate(glacier = as.numeric((lengths(st_within(coords, lgm_glaciers)) > 0)))
+
+```
+```{r}
+ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = lgm_glaciers, fill = "cyan3", alpha = 0.3, lty = "solid", lwd = 0.7) + 
+  geom_sf(data = glacier_mod_df, aes(col = factor(glacier))) +
+  scale_color_manual(values = c("darkgray", "cyan4")) +
+  theme_void()
 ```
 
 # Hypothesis 6: Genetic diversity explained by recent climate change
@@ -286,7 +296,6 @@ tmean_his <- tmean_his %>% group_by(SampleID) %>% summarise(tmean_his = mean(tme
 tmean_cur <- map(2010:2020, ~get_prism(year = .x), .progress =TRUE) %>% bind_rows()  
 tmean_cur <- tmean_cur %>% group_by(SampleID) %>% summarise(tmean_cur = mean(tmean, na.rm = TRUE))
 
-
 tmean_his_r <- map(1895:1905, get_prism, .progress =TRUE, output= "raster") %>% rast() %>% mean()
 tmean_cur_r <- map(2010:2020, get_prism, .progress =TRUE, output= "raster") %>% rast() %>% mean()
 tmean_dif_r <- tmean_cur_r - tmean_his_r
@@ -301,7 +310,6 @@ tmean_mod_df <-
   dplyr::select(SampleID, tmean_dif)
 ```
 
-
 ```{r}
 env_list <- list(
   paleo_change = bio1_dif_lig, 
@@ -314,7 +322,7 @@ env_list <- list(
 
 # Models
 ```{r}
-mod_vars <- c("BurnDate", "NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif")
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur")
 
 mod_df <- 
   get_coords() %>% 
@@ -332,8 +340,9 @@ mod_df <-
   
 # Count NAs in each column
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
+have_nas
 
-# NDVI, gHM, resdist has some NA values (< 3), impute to the value of the closest sample
+# NDVI has some NA values (< 3), impute to the value of the closest sample
 mod_sf <- mod_df %>% st_as_sf() %>% st_transform(3310)
 close_impute <- function(var, mod_sf){
   map_dbl(1:nrow(mod_sf), \(i){ 
@@ -354,7 +363,9 @@ mod_df_imputed <- bind_cols(dplyr::select(mod_df, -all_of(vars)), bind_cols(mod_
 colSums(is.na(mod_df_imputed))[colSums(is.na(mod_df_imputed)) > 0]
 
 # Scale the variables (except glacier)
-mod_df_imputed_scaled <- mod_df_imputed %>% mutate(across(c(all_of(mod_vars), -glacier), scale))
+mod_df_imputed_scaled <- 
+  mod_df_imputed %>% 
+  mutate(across(c(all_of(mod_vars), -glacier), scale))
 
 # Convert to sf
 mod_sf <- st_as_sf(mod_df) %>% st_transform(3310)
@@ -380,7 +391,7 @@ high_corr_pairs
 ```{r}
 # Full model
 # Note: included both regular and poly gHM to see which was the better fit using dredge
-mod <- lm(Ho ~ BurnDate + NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
+mod <- lm(Ho ~  NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
 
 summary(mod)
 
@@ -419,7 +430,7 @@ model_df <-
   left_join(sws, by = "predictor") %>%
   rename(p = `Pr...z..`) 
 
-# For the model average, paleo_change, Q, and gHM are significant
+# For the model average, paleo_change, Q, and glacier are significant
 sigvars <-
   model_df %>% 
   filter(predictor != "(Intercept)") %>%
@@ -435,7 +446,7 @@ AIC(best_model)
 AIC(second_best_model)
 AIC(third_best_model)
 
-# Get the p-values (* for significant)
+# Get the p-values 
 summary(best_model) 
 summary(second_best_model)
 summary(third_best_model) 
@@ -443,6 +454,28 @@ summary(third_best_model)
 # Adj RSQ
 summary(best_model)$adj.r.squared
 
+plot(mod_df_imputed_scaled$paleo_change_lgm, mod_df_imputed_scaled$Ho)
+
+ggplot(mod_df_imputed_scaled, aes(x = paleo_change_lgm, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+
+ggplot(mod_df_imputed_scaled, aes(x = paleo_change_cur, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+  
+# plot paleo_change_cur across CA
+ggplot(mod_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = paleo_change_cur)) +
+  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
+  theme_void()
+
+ggplot(mod_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = paleo_change_lgm)) +
+  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
+  theme_void()
 ```
 
 ```{r}
@@ -477,20 +510,6 @@ ggplot(gg_df, aes(x = value, y = Ho)) +
   stat_cor(label.y = 0) +
   theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 
-# Make mixed corplot
-vars_df <- mod_df[,mod_vars]
-names(vars_df) <- map_chr(names(vars_df), ~make_pretty_names(.x))
-r <- cor(vars_df, use = "pairwise.complete.obs")
-corrplot::corrplot.mixed(
-  r,
-  lower = "number",
-  upper = "ellipse",
-  #tl.pos = c("d", "lt", "n"),
-  tl.pos = "lt",
-  #diag = c("n", "l", "u"),
-  diag = "n"
-  )
-
 # Plot all variables across CA
 gg_df <- 
   get_coords(sf = TRUE) %>%
@@ -506,7 +525,6 @@ plt <-
       theme_void() 
   })
 
-
 cowplot::plot_grid(plotlist = plt)
 ```
 
@@ -514,6 +532,7 @@ cowplot::plot_grid(plotlist = plt)
 # ggplot predicted vs observed for the best_model
 mod_df_imputed_scaled$predict <- predict(best_model)
 mod_df_imputed_scaled$residuals <- residuals(best_model)
+
 ggplot(mod_df_imputed_scaled, aes(x = predict, y = Ho)) +
   geom_point() +
   #geom_abline(intercept = 0, slope = 1) +
@@ -529,13 +548,7 @@ gg_df <-
     name == "predict" ~ "Predicted"
   ))
 
-ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(geometry = geometry, col = value)) +
-  facet_wrap(~name) +
-  theme_void() +
-  scale_color_viridis_c(option = "mako", begin = 0.05, end = 0.95)
-
+# Plot residuals
 ggplot(gg_df) +
   geom_sf(data = ca, fill = "#5b5b5b") +
   geom_sf(aes(geometry = geometry, col = residuals), cex = 2) +
@@ -575,7 +588,7 @@ best_model_table <-
   filter(term != "(Intercept)") %>%
   gt() %>%
   tab_header(title = "Best model") %>%
-  gtExtras::gt_hulk_col_numeric(columns = estimate, trim = TRUE, domain = c(-0.00008, 0.00008)) %>%
+  gtExtras::gt_hulk_col_numeric(columns = estimate, trim = TRUE, domain = c(-0.00011, 0.00011)) %>%
   fmt_scientific(
     columns = c("estimate", "std.error", "statistic", "p.value"),
     decimals = 2
@@ -595,10 +608,13 @@ sigvars <-
   mutate(var = row.names(.)) %>%
   filter(!(var %in% c("(Intercept)"))) %>%
   filter(`Pr...t..` < 0.05) %>%
+  filter(!grepl("glacier", var)) %>%
   pull(var)
 
 named_mod_vars <- mod_vars
 names(named_mod_vars) <- mod_vars
+# drop glacier
+named_mod_vars <- named_mod_vars[-which(named_mod_vars == "glacier")]
 Ho_r <- map_dbl(named_mod_vars, ~cor.test(mod_df$Ho, mod_df[[.x]])$p.value) < 0.05
 Ho_r <- Ho_r[Ho_r]
 
@@ -625,11 +641,11 @@ ggplot(gg_df2, aes(x = value, y = Ho)) +
   geom_smooth(method = "lm", se = TRUE) +
   stat_cor(label.y = 0) +
   theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
-
 ```
 
 
 ```{r}
+# Make pretty plots 
 mod <- best_model
 gg_df <- 
   left_join(mod_df, get_coords()) %>%
@@ -643,7 +659,7 @@ gg_df <-
       `Contemporary\ntemperature\nchange` = tmean_dif,
       `Glacier` = glacier) 
 
-vars <- c("Paleoclimate\ntemperature\nchange", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange", "Glacier")
+vars <- c("Paleoclimate\ntemperature\nchange", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange")
 varcols <- c("inferno", "rocket", "viridis", "rocket", "mako", "inferno")
 varcols <- rep("mako", length(vars))
 
@@ -680,16 +696,15 @@ plt3 <- map2(vars, varcols, ~{
     theme(legend.position = "none")
 })
 
-# Plot Ho in the different colors
+# Plot Ho
 plt4 <-
-  map2(vars, varcols, ~{
+  map(1:(length(vars)+1), ~{
     ggplot(gg_df) +
       geom_sf(data = ca) +
       geom_point(aes(x = x, y = y, col = Ho)) +
       theme_void() +
-      scale_color_viridis_c(option = .y, end = 0.1, begin = 0.9)
+      scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
 })
-
 
 # Make glacier plots
 plt2_glacier <-
@@ -698,7 +713,8 @@ plt2_glacier <-
     geom_sf(data = lgm_glaciers, col = "cyan3", fill = "cyan3", alpha = 0.3, lty = "solid", lwd = 0.7) + 
     geom_point(aes(x = x, y = y, col =  Glacier)) +
     scale_color_manual(values = c("darkgray", "cyan4")) +
-    theme_void() 
+    theme_void() +
+    theme(legend.position.inside = c(0, 0))
 
 plt1_glacier <-
   ggplot(gg_df) +
@@ -711,56 +727,129 @@ plt1_glacier <-
 
 plt3_glacier <- 
   ggplot(gg_df) +
-    geom_boxplot(aes(x = `Glacier`, y = Ho, fill = `Glacier`), alpha = 0.3) +
     geom_jitter(aes(x = `Glacier`, y = Ho, col = `Glacier`)) +
+    geom_boxplot(aes(x = `Glacier`, y = Ho, fill = `Glacier`), alpha = 0.3) +
     theme_classic() +
     labs(x = "Glacier", y = "Ho") +
     scale_color_manual(values = c("darkgray", "cyan4")) +
     scale_fill_manual(values = c("darkgray", "cyan3")) +
     theme(legend.position = "none")
 
+plt1 <- c(plt1, list(plt1_glacier))
+plt2 <- c(plt2, list(plt2_glacier))
+plt3 <- c(plt3, list(plt3_glacier))
+
 # use cowplot to combine plots
-pdf(here("analysis", "genetic_diversity", "linear_model_plot.pdf"), width = 11, height = 20)
+pdf(here("analysis", "genetic_diversity", "linear_model_plot1.pdf"), width = 11, height = 24)
 ordered_plts <- pmap(list(plt3, plt1, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
 ordered_plts <- pmap(list(plt3, plt2, plt4), ggpubr::ggarrange, nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
 dev.off()
+
+pdf(here("analysis", "genetic_diversity", "linear_model_plot.pdf"), width = 8.5, height = 24)
+ordered_plts <- pmap(list(plt3, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
+do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
+dev.off()
 ```
 
 # Evaluating Q
+
 ```{r}
-# with Q
-summary(lm(Ho ~ BurnDate + NDVI + bio2_dif_lig + paleo_change + elev + gHM + Q + glacier + resdist + tmean_dif, data = mod_df_imputed))
-# paleo_change, Q, and glacier are all significant
+# Full model
+# Note: included both regular and poly gHM to see which was the better fit using dredge
+mod <- lm(Ho ~  NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
 
-# without Q
-summary(lm(Ho ~ BurnDate + NDVI + bio2_dif_lig + paleo_change + elev + gHM + glacier + resdist + tmean_dif, data = mod_df_imputed))
-# paleo_change, Q, and glacier + bio2_dif_lig and BurnDate are all significant
+summary(mod)
 
-# Note how Q is predicted by BurnDateTRUE/bio2_dif_lig  which are the variables that drop out in the with Q model
-summary(lm(Q ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1  + paleo_change + elev + csi_past + glacier + resdist + tmean_dif, data = mod_df))
-# we may want to add Q models however to get models of predicted admixture
+# Use dredge for model selection
+dredge_result <- dredge(mod)
 
-plot(mod_df$gHM, mod_df$Ho)
-plot(mod_df$BurnDate, mod_df$Ho)
-plot(mod_df$CHELSA_bio1_1981.2010_V.2.1, mod_df$Ho)
+# Select the models with delta AIC < 2
+best_models <- get.models(dredge_result, subset = delta < 2)
 
-# Plot predicted vs observed values
-mod <- lm(Ho ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + paleo_change + elev + csi_past + glacier + resdist + Q  + tmean_dif, data = mod_df_imputed)
-mod_df$Ho_pred <- predict(mod)
-ggplot(mod_df, aes(x = Ho, y = Ho_pred)) +
+# Get a model average
+model_avg <- model.avg(best_models)
+model_avg_summary <- summary(model_avg)
+
+# Get coefficient and p-values
+coeffs <- 
+  model_avg_summary[["coefmat.subset"]] %>% 
+  data.frame(., predictor = rownames(.))
+
+# Get confidence intervals
+confints <-
+  confint(model_avg) %>% 
+  data.frame(., predictor = rownames(.))
+
+# Get sum of weights (relative importance)
+sws <- 
+  sw(model_avg_summary) %>% 
+  data.frame() %>%
+  t() %>%
+  data.frame() %>%
+  pivot_longer(everything(), names_to = "predictor", values_to = "Sum of weights") %>%
+  drop_na(`Sum of weights`)
+
+# Combine everything
+model_df <-
+  left_join(coeffs, confints, by = "predictor")%>%
+  left_join(sws, by = "predictor") %>%
+  rename(p = `Pr...z..`) 
+
+# For the model average, paleo_change, Q, and glacier are significant
+sigvars <-
+  model_df %>% 
+  filter(predictor != "(Intercept)") %>%
+  filter(p < 0.05)
+print(sigvars)
+
+# Look at the best models
+# Get the best model
+best_model <- get.models(dredge_result, subset = delta < 2)[[1]]
+second_best_model <- get.models(dredge_result, subset = delta < 2)[[2]]
+third_best_model <- get.models(dredge_result, subset = delta < 2)[[3]]
+AIC(best_model)
+AIC(second_best_model)
+AIC(third_best_model)
+
+# Get the p-values 
+summary(best_model) 
+summary(second_best_model)
+summary(third_best_model) 
+
+# Adj RSQ
+summary(best_model)$adj.r.squared
+```
+
+```{r}
+# Plot variables with non-zero Q
+gg_df <- 
+  filter(mod_df_imputed_scaled, Q > 0) %>%
+  pivot_longer(c(all_of(mod_vars), -Q)) 
+
+ggplot(gg_df, aes(x = value, y = Q)) +
   geom_point() +
-  geom_smooth(method = "lm") +
-  labs(x = "Observed Ho", y = "Predicted Ho")  
+  facet_wrap(~name, scales = "free_x") +
+  theme_classic() +
+  labs(x = "Value", y = "Q") +
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(label.y = 0) +
+  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 
-# Plot residuals on a map
-mod_sf$residuals <- residuals(mod)
-ggplot(mod_sf) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = residuals)) +
-  scale_color_viridis_c(option = "magma") +
-  theme_void()
+# Plot variables with zero Q
+gg_df <- 
+  mod_df %>%
+  pivot_longer(c(all_of(mod_vars), -Q)) 
+
+ggplot(gg_df, aes(x = value, y = Q)) +
+  geom_point() +
+  facet_wrap(~name, scales = "free_x") +
+  theme_classic() +
+  labs(x = "Value", y = "Q") +
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_cor(label.y = 0) +
+  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 ```
 
 # Spatial model
@@ -787,7 +876,7 @@ plot(nb, mod_sr[,c("X", "Y")], main = "Neighborhoods")
 # https://pages.cms.hu-berlin.de/EOL/gcg_quantitative-methods/Lab15_SpatialRegression.html 
 
 # Ordinary least squares model
-ols_model <- lm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q, data = mod_df)
+ols_model <- lm(Ho ~ paleo_change + factor(glacier) + Q, data = mod_df)
 # test for evidence of autocorrelation
 lm_tests <- lm.RStests(ols_model, listw, test = "all")
 lm_tests
@@ -797,10 +886,10 @@ lm_tests
 
 # lag model:
 # CAN'T INCLUDE RESDIST IN THIS MODEL SINCE IT IS CORRELATED WITH GEODIST
-slm_model <- lagsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q + glacier, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+slm_model <- lagsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
 # error model:
-sem_model <- errorsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q + glacier, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+sem_model <- errorsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
 # Compare AIC
 writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
@@ -1286,3 +1375,94 @@ ggplot(gg_df2, aes(x = value, y = froh0_log)) +
   theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 ```
 
+# Evaluating different change variables
+
+```{r}
+# Full model
+# Note: included both regular and poly gHM to see which was the better fit using dredge
+mod <- lm(Ho ~  NDVI + paleo_change + poly(paleo_change_cur, 2) + poly(paleo_change_lgm, 2) + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
+
+summary(mod)
+
+# Use dredge for model selection
+dredge_result <- dredge(mod)
+
+# Select the models with delta AIC < 2
+best_models <- get.models(dredge_result, subset = delta < 2)
+
+# Get a model average
+model_avg <- model.avg(best_models)
+model_avg_summary <- summary(model_avg)
+
+# Get coefficient and p-values
+coeffs <- 
+  model_avg_summary[["coefmat.subset"]] %>% 
+  data.frame(., predictor = rownames(.))
+
+# Get confidence intervals
+confints <-
+  confint(model_avg) %>% 
+  data.frame(., predictor = rownames(.))
+
+# Get sum of weights (relative importance)
+sws <- 
+  sw(model_avg_summary) %>% 
+  data.frame() %>%
+  t() %>%
+  data.frame() %>%
+  pivot_longer(everything(), names_to = "predictor", values_to = "Sum of weights") %>%
+  drop_na(`Sum of weights`)
+
+# Combine everything
+model_df <-
+  left_join(coeffs, confints, by = "predictor")%>%
+  left_join(sws, by = "predictor") %>%
+  rename(p = `Pr...z..`) 
+
+# For the model average, paleo_change, Q, and glacier are significant
+sigvars <-
+  model_df %>% 
+  filter(predictor != "(Intercept)") %>%
+  filter(p < 0.05)
+print(sigvars)
+
+# Look at the best models
+# Get the best model
+best_model <- get.models(dredge_result, subset = delta < 2)[[1]]
+second_best_model <- get.models(dredge_result, subset = delta < 2)[[2]]
+third_best_model <- get.models(dredge_result, subset = delta < 2)[[3]]
+AIC(best_model)
+AIC(second_best_model)
+AIC(third_best_model)
+
+# Get the p-values 
+summary(best_model) 
+summary(second_best_model)
+summary(third_best_model) 
+
+# Adj RSQ
+summary(best_model)$adj.r.squared
+
+plot(mod_df_imputed_scaled$paleo_change_lgm, mod_df_imputed_scaled$Ho)
+
+ggplot(mod_df_imputed_scaled, aes(x = paleo_change_lgm, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+
+ggplot(mod_df_imputed_scaled, aes(x = paleo_change_cur, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+  
+# plot paleo_change_cur across CA
+ggplot(mod_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = paleo_change_cur)) +
+  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
+  theme_void()
+
+ggplot(mod_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = paleo_change_lgm)) +
+  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
+  theme_void()
+```
