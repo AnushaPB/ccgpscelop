@@ -7,8 +7,11 @@ OLD_58-Sceloporus/
 BIOMOD/
 *.tif
 *.pdf
+*_allData*
+*BIOMOD*
+*.models.out
+*.html
 
-# Maxent
 maxent.jar
 
 # Files in analysis except scripts
