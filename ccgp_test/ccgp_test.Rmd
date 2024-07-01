@@ -449,21 +449,69 @@ coords <- st_as_sf(df, coords = c("x", "y"), crs = 4326)
 coords_proj <- st_transform(coords, 3310)
 ca_proj <- st_transform(ca, 3310)
 
-# Convert coordinates to a raster layer with 10km resolution
-lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+# Crop to California boundary
+coords_proj <- st_intersection(coords_proj, ca_proj)
+
+# Convert coordinates to a raster layer with 20km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 3, res = 10000)
+png("ccgp_test/preview.png")
+preview_gd(lyr, coords = coords_proj, wdim = 9)
+dev.off()
 
 run_wingen <- function(project){
-  coords_proj <- coords_proj %>% filter(project == !!project)
+  sub_coords_proj <- coords_proj %>% filter(project == !!project)
   # Calculate windowed mean of Ho
-  window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+  window_Ho <- window_general(sub_coords_proj$Ho, coords = sub_coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+  writeRaster(window_Ho, here("ccgp_test", "outputs", paste0(project, "_Ho.tif")), overwrite = TRUE)
   return(window_Ho)
 }
 
 possibly_wingen <- possibly(run_wingen, NULL)
-wingen_maps <- map(unique(df$project), ~possibly_wingen(.x), .progress = TRUE)
 
-# Plot masked kriging result
-ggplot_gd(mask_Ho, bkg = ca_proj, col = magma(100)) +
-  labs(fill = "Ho") +
-  scale_fill_viridis_c(labels = scales::scientific, option = "magma")
+future::plan("multisession", workers = 6)
+wingen_maps <- map(unique(df$project), ~possibly_wingen(.x), .progress = TRUE)
+future::plan("sequential")
+
+names(wingen_maps) <- unique(df$project)
+wingen_stack <- rast(map(compact(wingen_maps), ~.x[[1]]))
+
+prop_na <- map_dbl(as.list(wingen_stack), ~mean(values(is.na(.)))) < 0.90
+
+a <-app(scale(wingen_stack), mean, na.rm = TRUE)
+a <- mask(a, ca_proj)
+mins <- app(wingen_stack*0+1, sum, na.rm = TRUE)
+mins[mins < 5] <- NA
+a <- mask(a, mins)
+png("ccgp_test/preview_wingen.png", width = 800, height = 800)
+plot_gd(a, bkg = ca_proj, col = viridis::magma(100))
+plot(wingen_stack[[prop_na]])
+dev.off()
+
+library(terra)
+library(cluster)
+library(RStoolbox)
+library(FactoMineR)
+
+map_lgl(1:nlyr(wingen_stack), ~all(is.na(values(scale(wingen_stack)[[.x]]))))
+
+a <- scale(wingen_stack)
+#a[is.na(a)] <- 0
+pca <- rasterPCA(a)
+all(is.na(values(app(a, sum))))
+
+png("dump.png")
+plot(mask(pca$map[[2:3]], ca_proj), col = viridis::magma(20))
+dev.off()
+
+vals <- values(wingen_stack)
+r <- cor(vals, use = "pairwise.complete.obs")
+rownames(r) <- colnames(r) <- colnames(vals)
+
+# Identify pairs with correlations greater than 0.8
+pairs <- which(r > 0.6, arr.ind = TRUE)
+pairs <- pairs[pairs[,1] < pairs[,2],]
+# turn from number indexes into names
+pairs <- data.frame(var1 = colnames(r)[pairs[,1]], var2 = colnames(r)[pairs[,2]], r = r[pairs])
+
 ```
+
