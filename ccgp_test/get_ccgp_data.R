@@ -1,14 +1,14 @@
 
 get_ccgp_het <- function(){
   het_files <- list.files("~/ccgp/het", pattern = ".het", full.names = TRUE)
+  nsites <- read_csv("~/ccgp/het/bed_nsites.csv", col_names = c("project", "nsites"))
   het <- 
     purrr::map(het_files, ~{
       # Read in data
       het <- readr::read_table(.x)
 
-      # Calculate heterozygosity 
-      # TODO: CHANGE DENOMINATOR TO BED FILE LENGTH
-      het <- het %>% mutate(Ho = (`N(NM)` - `O(HOM)`)/`N(NM)`)
+      # Calculate number of homozygotes 
+      het <- het %>% mutate(Ho = (`N(NM)` - `O(HOM)`))
 
       if ("IID" %in% names(het)) het <- rename(het, SampleID = IID)
       if ("INDV" %in% names(het)) het <- rename(het, SampleID = IID)
@@ -20,10 +20,17 @@ get_ccgp_het <- function(){
 
     }) %>% 
     bind_rows()
+
+  # Add number of sites
+  het_df <- 
+    left_join(het, nsites, by = "project") %>%
+    mutate(Ho = Ho/nsites)
+
+  return(het_df)
 }
 
 
-get_ccgp_coords <- function(){
+get_ccgp_coords <- function(sf = TRUE){
   coords_files <- list.files("~/ccgp/coords", pattern = ".coords", full.names = TRUE)
   coords <- 
     purrr::map(coords_files, ~{
@@ -40,4 +47,8 @@ get_ccgp_coords <- function(){
 
     }) %>% 
     bind_rows()
+
+  if (sf) {
+    coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326) %>% st_transform(3310)
+  }
 }

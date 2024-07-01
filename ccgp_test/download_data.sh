@@ -64,3 +64,11 @@ do
   rsync -avz hgdownload.soe.ucsc.edu::ccgp/$species/QC/*coords.txt coords
 done
 
+mkdir -p bed
+# Download the bed files
+for species in `cat CCGP-module_species`
+do 
+  rsync -avz hgdownload.soe.ucsc.edu::ccgp/$species/*.bed bed
+done
+
+
