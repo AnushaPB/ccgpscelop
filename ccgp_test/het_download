@@ -1,8 +1,0 @@
-# get all het and coords files
-rsync -avz --include="*/" --include="*.het" --include="*coords*" --exclude="*" hgdownload.soe.ucsc.edu::ccgp/ .
-
-# extract files from folders
-find . -type f \( -name "*.het" -o -name "*coords*" \) -exec mv {} . \;
-
-# delete empty folders
-find . -type d -empty -delete
