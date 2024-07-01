@@ -24,10 +24,13 @@ knitr::opts_chunk$set(
 
 ```{r, fig.width = 13, fig.height = 6}
 smcpp <- 
-  get_smcpp(folder = "k6") %>%
-  group_by(pop)
+  get_smcpp(folder = "outputs/k6", K = 6) %>%
+  group_by(pop) %>%
+  # Generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
+  filter(T == 2) %>%
+  filter(!is.na(pop))
 
-ggplot(filter(smcpp, T == 3, !is.na(pop))) +
+ggplot(smcpp) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
   geom_vline(xintercept = 21e3) +
   geom_vline(xintercept = 130e3) +
@@ -38,21 +41,6 @@ ggplot(filter(smcpp, T == 3, !is.na(pop))) +
   #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "#575757")) +
   # added so that 10^2 is shown on the graph
   #geom_vline(xintercept = 100, alpha = 0) +
-  ylab("Ne") +
-  xlab("years")
-
-ggplot(filter(smcpp, T == 2 | T == 3, !is.na(pop))) +
-  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
-  geom_vline(xintercept = 21e3, lwd = 1, col = "gray") +
-  geom_vline(xintercept = 130e3, lwd = 1, col = "gray") +
-  annotate("text", x = 25e3, y = 1e8, label = "LGM", hjust = 0) +
-  annotate("text", x = 160e3, y = 1e8, label = "LIG", hjust = 0) +
-  annotate("text", x = 1.1e3, y = 1e8, label = "Holocene", hjust = 0) +
-  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop), lty = T)) +
-  scale_x_continuous(trans = "log10") +
-  scale_y_continuous(trans = "log10") +
-  theme_classic() +
-  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2")) +
   ylab("Ne") +
   xlab("years")
 ```
@@ -98,6 +86,14 @@ paleokey_split <-
     TRUE ~ as.numeric(.x)
   )))
 
+# Divergence 
+div_df <- 
+  data.frame(
+    split = c("Initial", "SCA", "PNW-WSN", "ESN-GB"),
+    year = c(7.5e6, 391e3, 95.2e3, 87.4e3)
+  ) %>%
+  filter(split != "Initial") 
+
 # get values
 change_df <- 
   clim_df %>%
@@ -141,10 +137,11 @@ color_df <-
 smcpp <- left_join(smcpp, color_df, by = "pop")  
 
 plt1 <-
-  ggplot(data = filter(smcpp, T == 2, !is.na(pop))) +
+  ggplot(data = smcpp) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
   geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   geom_line(data = all_mean_change, aes(x = time, y = value), col = "#596678", lty = "dashed", lwd = 0.8, alpha = 0.6) +
   #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#3b4657", cex = 0.5) +
   geom_line(data = mean_change, aes(x = time, y = value, col = factor(pop)), alpha = 0.7) +
@@ -185,10 +182,13 @@ dev.off()
 
 
 plt1 <-
-  ggplot(data = filter(smcpp, T == 2, !is.na(pop), years != 0)) +
+  ggplot(data = smcpp) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
   geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
   annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
   annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
   annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
@@ -204,12 +204,17 @@ plt1 <-
 pdf(here("analysis", "smcpp", "smcpp2.pdf"), width = 12, height = 5)
 cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
 dev.off()
+ 
+
 
 plt1 <-
-  ggplot(data = filter(smcpp, T == 3, !is.na(pop), years != 0)) +
+  ggplot(data = filter(smcpp, years != 0)) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
   geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
   annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
   annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
   annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
@@ -218,7 +223,7 @@ plt1 <-
   scale_y_continuous(trans = "log10") +
   theme_classic() +
   facet_wrap(~var) +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
   ylab("Ne") +
   xlab("years") +
   theme(legend.position = "none", panel.border = element_rect(colour = "black", fill = NA, size = 1))
@@ -322,7 +327,7 @@ dev.off()
 
 ```{r}
 gg_df <- 
-  filter(smcpp, T == 2, !is.na(pop)) %>%
+  smcpp %>%
   mutate(color_group = 
     case_when(
       pop %in% c(3,6:9) ~ "Group 1",
@@ -353,6 +358,7 @@ plt1 <-
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
   geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
   geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
   annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+

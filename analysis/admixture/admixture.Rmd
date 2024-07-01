@@ -118,8 +118,16 @@ do.call(ggarrange, c(barplots, ncol = 1))
 # cluster = final cluster assignment for SampleID given max Q
 # PopGroup = Q values for each cluster
 Q %>% 
-  filter(K == 6) %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 6) %>%
   write_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
+
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 9) %>%
+  write_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
 
 # write out Q values for the assigned population for Q = 6
 Q %>%

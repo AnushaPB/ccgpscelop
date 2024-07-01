@@ -8,6 +8,10 @@ library("terra")
 library("sf")
 library("gridExtra")
 library("rpaleoclim")
+library("spdep")
+library("spatialreg")
+library("MuMIn")
+
 source("general_functions.R")
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 source(here("analysis", "sdm", "paleovars.R"))
@@ -95,7 +99,6 @@ plt3 <-
 cowplot::plot_grid(plt1, plt2, plt3, nrow = 3)
 ```
 
-
 # Hypothesis 2: Genetic diversity explained by past climate stability
 
 ### Climate stability (CSI)
@@ -173,83 +176,39 @@ csi_mod_df <- data.frame(csi = 1 - extract(csi_past, coords, ID = FALSE), coords
 
 # Hypothesis 3: Genetic diversity explained by admixture
 ```{r}
-q <- read_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
+q <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
+q <- read_table(here("analysis", "admixture", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60.9.Q"), col_names = FALSE)
+fam <- read_table(here("analysis", "admixture", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60.fam"), col_names = FALSE)
+
+# get max value of each row
+Q <- apply(q, 1, max)
+q <- data.frame(SampleID = fam$X2, Q = Q)
+
 q_mod_df <- 
   q %>%
   dplyr::select(SampleID, Q) %>%
   # Do 1- to make the values more intuitive
   mutate(Q = 1 - Q)
+
+# Plot admixture
+gg_df <- 
+  get_coords(sf=TRUE) %>% 
+  left_join(q_mod_df) %>%
+  drop_na(Q)
+
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = Q)) +
+  theme_void() +
+  scale_color_viridis_c()
 ```
 
 # Hypothesis 4: Genetic diversity explained by current environment 
 ```{r}
 env_data <- rast(here("data", "env", "california_env_stack.tif"))
+env_data$BurnDate <- as.numeric(env_data$BurnDate > 0)
 env_mod_df <- data.frame(terra::extract(env_data, coords, ID = FALSE))
 env_mod_df$SampleID <- coords$SampleID
-env_mod_df$BurnDate <- as.numeric(env_mod_df$BurnDate > 0)
-```
-
-```{r}
-# Test buffering for gHM
-# Get buffered human modification layer values
-gHM_buffers <- map(c(0, 1000, 10000, seq(20000, 100000, 20000)), .progress = TRUE, ~{
-  coords_buffer <- st_buffer(coords, .x)
-  gHM_buffer <- extract(env_data[["gHM"]], coords_buffer, fun = mean, na.rm = TRUE)
-  return(data.frame(gHM = gHM_buffer$gHM, SampleID = coords$SampleID, buffer = .x))
-})
-
-# Make into df
-buffer_df <- 
-  bind_rows(gHM_buffers) %>%
-  left_join(get_het()) %>%
-  left_join(get_coords()) %>%
-  # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
-
-cor_df <-
-  buffer_df %>%
-  group_by(buffer) %>%
-  summarise(cor = cor(gHM, Ho, use = "pairwise.complete.obs"))
-
-ggplot(cor_df, aes(x = buffer, y = cor)) +
-  geom_line() +
-  theme_classic() +
-  labs(x = "Buffer distance (m)", y = "Correlation between gHM and Ho") 
-
-polymod <- 
-  buffer_df %>%
-  group_by(buffer) %>%
-  group_split() %>%
-  map(~{
-    mod_df <- drop_na(.x)
-    # Fit a quadratic model (parabola)
-    model <- lm(Ho ~ poly(gHM, 2), data = mod_df)
-    # Visualize the fitted model
-    mod_df$fitted <- predict(model, mod_df)
-    # Get model stats
-    mod_df$AIC_poly <- AIC(model)
-    mod_df$AIC <- AIC(lm(Ho ~ gHM, data = mod_df))
-    return(mod_df)
-  }) %>%
-  bind_rows()
-
-ggplot(polymod) +
-  geom_line(aes(x = buffer, y = AIC, col = "Regular")) +
-  geom_line(aes(x = buffer, y = AIC_poly, col = "Polynomial")) +
-  theme_classic() +
-  labs(x = "Buffer distance (m)", y = "AIC")
-
-best_mod_gHM <- polymod %>% filter(AIC_poly == min(AIC_poly))
-ggplot(best_mod_gHM) + 
-  geom_point(aes(x = gHM, y = Ho)) +
-  geom_line(aes(x = gHM, y = fitted), color = "blue") +
-  geom_smooth(aes(x = gHM, y = Ho), method = "lm", se = FALSE) +
-  ggtitle("Quadratic Fit to Sample Data") +
-  facet_wrap(~buffer, scales = "free_x") +
-  theme_classic() 
-unique(best_mod_gHM$AIC)
-unique(best_mod_gHM$AIC_poly)
-
 ```
 
 ```{r}
@@ -342,6 +301,17 @@ tmean_mod_df <-
   dplyr::select(SampleID, tmean_dif)
 ```
 
+
+```{r}
+env_list <- list(
+  paleo_change = bio1_dif_lig, 
+  csi_past = 1 - csi_past, 
+  env_data = env_data, 
+  glacier = lgm_glaciers, 
+  tmean_dif = tmean_dif_r
+  )
+```
+
 # Models
 ```{r}
 mod_vars <- c("BurnDate", "NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif")
@@ -408,8 +378,6 @@ high_corr_pairs
 
 # Model selection
 ```{r}
-library(MuMIn)
-
 # Full model
 # Note: included both regular and poly gHM to see which was the better fit using dredge
 mod <- lm(Ho ~ BurnDate + NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
@@ -665,6 +633,7 @@ ggplot(gg_df2, aes(x = value, y = Ho)) +
 mod <- best_model
 gg_df <- 
   left_join(mod_df, get_coords()) %>%
+  mutate(glacier = factor(glacier, levels = c(0, 1), labels = c("Outside", "Inside"))) %>%
   rename(
       Admixture = Q, 
       `Paleoclimate\ntemperature\nchange` = paleo_change, 
@@ -672,9 +641,9 @@ gg_df <-
       `Human\nmodification` = gHM,
       `Past climate\nstability` = csi_past,
       `Contemporary\ntemperature\nchange` = tmean_dif,
-      `Glacier\n(inside/outside)` = glacier) 
+      `Glacier` = glacier) 
 
-vars <- c("Paleoclimate\ntemperature\nchange", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange", "Glacier\n(inside/outside)")
+vars <- c("Paleoclimate\ntemperature\nchange", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange", "Glacier")
 varcols <- c("inferno", "rocket", "viridis", "rocket", "mako", "inferno")
 varcols <- rep("mako", length(vars))
 
@@ -696,7 +665,6 @@ plt2 <-
     ggplot(gg_df) +
       geom_sf(data = ca) +
       geom_point(aes(x = x, y = y, col = .data[[.x]])) +
-
       theme_void() +
       scale_color_viridis_c(option = .y, end = 0.1, begin = 0.9)
   })
@@ -722,6 +690,35 @@ plt4 <-
       scale_color_viridis_c(option = .y, end = 0.1, begin = 0.9)
 })
 
+
+# Make glacier plots
+plt2_glacier <-
+  ggplot(gg_df) +
+    geom_sf(data = ca) +
+    geom_sf(data = lgm_glaciers, col = "cyan3", fill = "cyan3", alpha = 0.3, lty = "solid", lwd = 0.7) + 
+    geom_point(aes(x = x, y = y, col =  Glacier)) +
+    scale_color_manual(values = c("darkgray", "cyan4")) +
+    theme_void() 
+
+plt1_glacier <-
+  ggplot(gg_df) +
+    geom_point(aes(x = predict(mod), y = Ho, col = Glacier)) +
+    geom_abline(intercept = 0, slope = 1) +
+    geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+    theme_classic() +
+    labs(x = "Predicted", y = "Observed") +
+    scale_color_manual(values = c("darkgray", "cyan4"))
+
+plt3_glacier <- 
+  ggplot(gg_df) +
+    geom_boxplot(aes(x = `Glacier`, y = Ho, fill = `Glacier`), alpha = 0.3) +
+    geom_jitter(aes(x = `Glacier`, y = Ho, col = `Glacier`)) +
+    theme_classic() +
+    labs(x = "Glacier", y = "Ho") +
+    scale_color_manual(values = c("darkgray", "cyan4")) +
+    scale_fill_manual(values = c("darkgray", "cyan3")) +
+    theme(legend.position = "none")
+
 # use cowplot to combine plots
 pdf(here("analysis", "genetic_diversity", "linear_model_plot.pdf"), width = 11, height = 20)
 ordered_plts <- pmap(list(plt3, plt1, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
@@ -742,7 +739,7 @@ summary(lm(Ho ~ BurnDate + NDVI + bio2_dif_lig + paleo_change + elev + gHM + gla
 # paleo_change, Q, and glacier + bio2_dif_lig and BurnDate are all significant
 
 # Note how Q is predicted by BurnDateTRUE/bio2_dif_lig  which are the variables that drop out in the with Q model
-summary(lm(Q ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + bio2_dif_lig + paleo_change + elev + csi_past + glacier + resdist + tmean_dif, data = mod_df))
+summary(lm(Q ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1  + paleo_change + elev + csi_past + glacier + resdist + tmean_dif, data = mod_df))
 # we may want to add Q models however to get models of predicted admixture
 
 plot(mod_df$gHM, mod_df$Ho)
@@ -750,7 +747,7 @@ plot(mod_df$BurnDate, mod_df$Ho)
 plot(mod_df$CHELSA_bio1_1981.2010_V.2.1, mod_df$Ho)
 
 # Plot predicted vs observed values
-mod <- lm(Ho ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + bio2_dif_lig + paleo_change + elev + csi_past + glacier + resdist + Q  + tmean_dif, data = mod_df_imputed)
+mod <- lm(Ho ~ BurnDate + NDVI + gHM + CHELSA_bio1_1981.2010_V.2.1 + paleo_change + elev + csi_past + glacier + resdist + Q  + tmean_dif, data = mod_df_imputed)
 mod_df$Ho_pred <- predict(mod)
 ggplot(mod_df, aes(x = Ho, y = Ho_pred)) +
   geom_point() +
@@ -770,14 +767,17 @@ ggplot(mod_sf) +
 ```{r}
 mod_sr <- bind_cols(mod_df, st_coordinates(mod_sf))
 
-library(spdep)
-library(spatialreg)
 # Build SER model
 # Create neighborhood using coordinates
-# 100 km distance
-nbdist <- 100000
+# m distance
+nbdist <- 130000
 nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
-listw <- nb2listw(nb, style = "W")
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Calculate Moran's I on residuals of best mod
+mod_df_imputed_scaled$residuals <- residuals(best_model)
+morans_i <- moran.test(mod_df_imputed_scaled$residuals, listw)
+print(morans_i)
 
 # plot neighbors
 plot(nb, mod_sr[,c("X", "Y")], main = "Neighborhoods")
@@ -787,7 +787,7 @@ plot(nb, mod_sr[,c("X", "Y")], main = "Neighborhoods")
 # https://pages.cms.hu-berlin.de/EOL/gcg_quantitative-methods/Lab15_SpatialRegression.html 
 
 # Ordinary least squares model
-ols_model <- lm(Ho ~ paleo_change + glacier + Q, data = mod_df)
+ols_model <- lm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q, data = mod_df)
 # test for evidence of autocorrelation
 lm_tests <- lm.RStests(ols_model, listw, test = "all")
 lm_tests
@@ -797,18 +797,97 @@ lm_tests
 
 # lag model:
 # CAN'T INCLUDE RESDIST IN THIS MODEL SINCE IT IS CORRELATED WITH GEODIST
-slm_model <- lagsarlm(Ho ~ paleo_change + glacier + Q, data = mod_df, listw = listw, na.action = "na.omit")
+slm_model <- lagsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q + glacier, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
 # error model:
-sem_model <- errorsarlm(Ho ~ paleo_change + glacier + Q, data = mod_df, listw = listw, na.action = "na.omit")
+sem_model <- errorsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q + glacier, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
 # Compare AIC
 writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
 writeLines(paste("AIC SEM:", round(AIC(sem_model), 2)))
 writeLines(paste("AIC SLM:", round(AIC(slm_model), 2)))
-# SLM is the best model based on AIC
+
+#SLM: Use when you believe that the dependent variable at a location is directly influenced by the dependent variable at neighboring locations.
+#SEM: Use when you believe that unobserved factors affecting the dependent variable are spatially autocorrelated, leading to spatially correlated errors (residuals)
+summary(sem_model)
+summary(slm_model)
 ```
 
+```{r}
+nb_test <- map(c(10000, 50000, 100000, 200000), ~{
+  nb <- dnearneigh(mod_sf, d1 = 0, d2 = .x)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+  slm_model <- lagsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+  sem_model <- errorsarlm(Ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q, data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+  return(data.frame(slm = AIC(slm_model), sem = AIC(sem_model), d2 = .x))
+}, .progress = TRUE) %>% bind_rows()
+
+ggplot(nb_test) +
+  geom_line(aes(x = d2, y = slm, col = "SLM")) +
+  geom_line(aes(x = d2, y = sem, col = "SEM")) +
+  theme_classic() +
+  labs(x = "Distance", y = "AIC") 
+
+nb_test %>% filter(slm == min(slm) | sem == min(sem))
+```
+
+```{r}
+
+nbdist <- 100000
+nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
+listw <- nb2listw(nb, style = "B", zero.policy = TRUE)
+# Assuming 'mod_df' is your data frame
+# Calculate spatial lag
+neighbor_ids <- nb2listw(nb, style = "B", zero.policy = TRUE)$neighbours
+
+# Find the southernmost point
+st_coords <- st_coordinates(mod_sf)
+southernmost <- which.max(st_coords[,2])
+
+# Create a graph
+library(igraph)
+g <- graph_from_adj_list(neighbor_ids)
+
+# Calculate shortest paths from the south to each point
+shortest_paths <- shortest_paths(g, from = southernmost)$vpath
+
+# Calculate total distance along the shortest path for each point
+distances_to_south <- map_dbl(shortest_paths, \(path) {
+  if (length(path) == 0) return(NA)
+  if (length(path) == 1) return(0)
+  path_points <- mod_sf[as.vector(path), ]
+  path_distances <- sapply(2:length(path), function(i) {
+    st_distance(path_points[i - 1, ], path_points[i, ])
+  })
+  sum(path_distances)
+}, .progress = TRUE)
+
+df <- mod_sf
+df$distances_to_south <- distances_to_south
+
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = distances_to_south)) +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+
+ggplot(df) +
+  geom_point(aes(x = distances_to_south, y = Ho)) +
+  geom_smooth(aes(x = distances_to_south, y = Ho), method = "lm") +
+  theme_classic() 
+
+ggplot(df) +
+  geom_point(aes(x = distances_to_south, y = paleo_change)) +
+  geom_smooth(aes(x = distances_to_south, y = paleo_change), method = "lm") +
+  theme_classic() 
+
+ggplot(df) +
+  geom_point(aes(x = distances_to_south, y = CHELSA_bio1_1981.2010_V.2.1)) +
+  geom_smooth(aes(x = distances_to_south, y = CHELSA_bio1_1981.2010_V.2.1), method = "lm") +
+  theme_classic() 
+
+summary(lm(Ho ~ distances_to_south + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + Q, data = df))
+```
 ```{r, fig.width = 8, fig.height = 6}
 # Plot residuals
 resids <- 
@@ -838,6 +917,133 @@ coeff_df <-
   filter(`Pr...z..` < 0.05) 
 
 coeff_df
+```
+# Moving window
+```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+library(wingen)
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(mod_sf, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Convert coordinates to a raster layer with 10km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+# Calculate windowed mean of Ho
+window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+
+
+ggplot_gd(window_Ho, col = viridis::mako(100, direction = -1), bkg = st_transform(ca, 3310))
+
+writeRaster(window_Ho, here("analysis", "genetic_diversity", "outputs", "Ho_window.tif"), overwrite = TRUE)
+window_Ho <- rast(here("analysis", "genetic_diversity", "outputs", "Ho_window.tif"))
+
+# Turn into a dataframe
+window_df <- 
+  window_Ho %>% 
+  as.data.frame(xy = TRUE)
+
+# Convert glacier to raster
+glacier <- st_transform(env_list$glacier, st_crs(window_Ho))
+glacier_r <- raster::rasterize(glacier, window_Ho)
+glacier_r[is.na(glacier_r)] <- 0
+env_list$glacier <- glacier_r
+
+# Read in Q raster
+admixture <- 1 - rast(here("data", "Scelop_bounds_K6_maxQ.tif"))
+env_list$admixture <- admixture
+
+# Extract env vals
+window_env <- 
+  imap(env_list, \(x, i){
+    r <- terra::project(x, crs(window_Ho))
+    if (nlyr(r) == 1) names(r) <- i
+    vals <- terra::extract(r, window_df[,c("x", "y")], ID = FALSE) 
+    data.frame(vals) 
+  }, .progress = TRUE) %>% 
+  bind_cols()
+
+mod_vars <- c("BurnDate", "NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "admixture")
+
+window_mod_df <- 
+  bind_cols(window_df, window_env) %>% 
+  # drop moving window NAs
+  drop_na(custom) %>%
+  # drop NA for predictors
+  drop_na(admixture, BurnDate, NDVI, gHM, paleo_change, CHELSA_bio1_1981.2010_V.2.1, csi_past, glacier, tmean_dif) %>%
+  rename(Ho = custom)
+
+# Count NAs in each column to confirm no NAs
+colSums(is.na(window_mod_df))
+
+# Run lm 
+mod <- lm(Ho ~ BurnDate + NDVI + gHM + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + csi_past + glacier + tmean_dif + admixture, data = window_mod_df, na.action = "na.fail")
+
+# Use dredge for model selection
+dredge_result <- dredge(mod)
+
+# Select the models with delta AIC < 2
+best_models <- get.models(dredge_result, subset = delta < 2)
+
+# Only one best model
+best_model <- get.models(dredge_result, subset = delta < 2)[[1]]
+
+# Get the p-values (* for significant)
+summary(best_model)
+
+# Run spatial models
+window_sf <- window_mod_df %>% st_as_sf(coords = c("x", "y"), crs = 3310)
+nbdist <- 90000
+nb <- dnearneigh(window_sf, d1 = 0, d2 = nbdist)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# OLS model:
+ols_model <- lm(Ho ~ BurnDate + NDVI + gHM + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + csi_past + glacier + tmean_dif + admixture, data = window_mod_df, na.action = "na.fail")
+
+# lag model:
+slm_model <- lagsarlm(Ho ~ BurnDate + NDVI + gHM + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + csi_past + glacier + tmean_dif + admixture, data = window_mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+# error model:
+sem_model <- errorsarlm(Ho ~ BurnDate + NDVI + gHM + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + csi_past + glacier + tmean_dif + admixture, data = window_mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+# Compare AIC
+writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
+writeLines(paste("AIC SEM:", round(AIC(sem_model), 2)))
+writeLines(paste("AIC SLM:", round(AIC(slm_model), 2)))
+
+# SLM is best model
+model_df <- 
+  slm_model %>%
+  broom::tidy() %>%
+  mutate(name = map_chr(term, ~make_pretty_names(.x))) %>%
+  filter(name != "(Intercept)")
+
+sigvars <- 
+  model_df %>% 
+  filter(p.value < 0.05) %>% 
+  filter(term != "rho") %>% 
+  pull(term)
+
+summary(slm_model)
+
+gg_df <-
+ window_mod_df %>% 
+ select(all_of(sigvars), Ho) %>%
+ pivot_longer(-Ho) %>%
+ mutate(name = map_chr(name, ~make_pretty_names(.x)))
+
+ggplot(gg_df, aes(x = value, y = Ho)) +
+  geom_point(alpha = 0.3, pch = 16) +
+  facet_wrap(~name, scales = "free_x") +
+  theme_classic() +
+  labs(x = "Value", y = "Ho") +
+  geom_smooth(method = "lm", se = TRUE) +
+  stat_regline_equation(
+        aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+        formula = y ~ x
+      ) +
+  stat_cor(label.y = 0) +
+  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
+
 ```
 
 # HTML Maps
@@ -932,7 +1138,6 @@ ggplot(future_ho, aes(x = 1 - csi, y = Ho, col = 1 - csi)) +
 
 # ROH models
 
-## Models
 ```{r}
 mod_df2 <- 
   mod_df_imputed_scaled %>% 
@@ -1080,3 +1285,4 @@ ggplot(gg_df2, aes(x = value, y = froh0_log)) +
   #ylim(0, NA) +
   theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 ```
+
