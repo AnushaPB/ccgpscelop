@@ -12,6 +12,7 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE,
   result = FALSE)
+
 library(here)
 library(tidyverse)
 library(cowplot)
@@ -23,6 +24,7 @@ library(viridis)
 library(vcfR)
 library(hierfstat)
 library(tigris)
+library(tidyterra)
 devtools::load_all()
 theme_set(theme_cowplot())
 
@@ -33,27 +35,17 @@ source(here("general_functions.R"))
 -   [1. Import metadata]
 -   [2. Import and visualize ADMIXTURE results]
 -   [3. Kriging ADMIXTURE results]
--   [4. Structure boundaries]
+-   [4. Distribution of ancestry coefficient values]
 
 # 1. Import metadata
 
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
 # Load the U.S. state boundaries data
 ca <- get_ca()
-# make theme for plotting
-theme_custom <- 
-  theme(
-    strip.background = element_rect(color = "gray", fill = "gray"),
-    panel.background = element_rect(color = "gray", fill = NA),
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    axis.title = element_blank(),
-    strip.text = element_text(size = 16, face = "italic")
-    )
 ```
 
 ```{r, include = FALSE}
-# get coordinates 
+# Get coordinates 
 coords <- read_tsv(here("data", "58-Sceloporus.coords.txt"), col_names = FALSE) %>% 
   rename(SampleID = X1, x = X2, y = X3)
 ```
@@ -113,14 +105,14 @@ do.call(ggarrange, c(barplots, ncol = 1))
 Build maps and barplots for specific K values. Based on the CV error, let's look at K=5-6.
 
 ```{r, fig.width = 13, fig.height = 6}
-ggplot(df %>% filter(K %in% 5:6) %>% filter(SampleID != "Scelocci_BUR76")) +
+ggplot(df %>% filter(K %in% 6) %>% filter(SampleID != "Scelocci_BUR76")) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   facet_wrap(~K, nrow = 1) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(7))
 
-barplots <- map(5:7, ~structure_plot(qmat = get_Q(K = .x, 
+barplots <- map(5:6, ~structure_plot(qmat = get_Q(K = .x, 
                                                   output_dir = here("analysis", "anne", "outputs"),
                                                   prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60",
                                                   qmat_only = TRUE)) + 
@@ -160,28 +152,90 @@ Q %>%
 algatr::load_algatr_example()
 # Get raster onto which we'll krige results
 krig_raster <- raster::aggregate(CA_env[[1]], fact = 6)
-# envdat <- reproject(coords %>% filter(species == speciesID), 
-#                     env = krig_raster,
-#                     crs_code = 3310)
 
 qmat <- get_Q(K = Kval,
               output_dir = here("analysis", "anne", "outputs"),
-              prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60") %>% 
-  filter(SampleID != "Scelocci_BUR76" | SampleID != "")
+              prefix = "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60")
 
 df <-
  left_join(qmat, coords[ ,c("x", "y", "SampleID")], by = "SampleID")
 
-coords <- df %>% 
-  dplyr::select(x, y) %>% 
-  st_as_sf(coords = c("x", "y")) %>%
-  st_set_crs(st_crs(4326))
-
 krig_admix <- algatr::tess_krig(qmat = qmat %>% 
-                                  dplyr::select(-c(cluster, K, SampleID, geometry)), 
-                                coords = qmat$geometry, 
-                                grid = envdat$env_proj)
+                                  dplyr::select(-c(cluster, SampleID)) %>% 
+                                  as.matrix(), 
+                                coords = df %>% dplyr::select(x, y), 
+                                grid = krig_raster)
 
-tess_ggplot(map, plot_method = "maxQ", ggplot_fill = scale_fill_manual(values = cols))
+tess_ggplot(krig_admix, plot_method = "maxQ", ggplot_fill = scale_fill_manual(values = viridis::turbo(7)))
+p <- tess_ggplot(krig_admix, plot_method = "allQ", ggplot_fill = scale_fill_manual(values = viridis::turbo(7))) # TODO it isn't outputting first item in list
+tess_ggplot(krig_admix, plot_method = "maxQ_poly")
+tess_ggplot(krig_admix, plot_method = "allQ_poly")
+tess_plot_allK(krig_admix)
 ```
-# 4. Structure boundaries
+
+```{r}
+## PROJECTED
+
+# # Reproject coords
+# coords <- df %>%
+#   dplyr::select(x, y) %>%
+#   sf::st_as_sf(coords = c("x", "y")) %>%
+#   st_set_crs(st_crs(4326)) # 4326 or 3310
+# env_proj <- raster::projectRaster(krig_raster, crs = 4326)
+# 
+# # Check projection
+# coords_crs <- st_crs(coords)
+# lyr_crs <- st_crs(env_proj)
+# coords_crs == lyr_crs # should be TRUE
+# 
+# krig_admix_proj <- algatr::tess_krig(qmat = qmat %>% 
+#                                   dplyr::select(-c(cluster, SampleID)) %>% 
+#                                   as.matrix(), 
+#                                 coords = coords, 
+#                                 grid = env_proj)
+```
+
+New kriging method
+
+```{r}
+new_krig_admix <- new_tess_krig(qmat = df %>%
+                                  dplyr::select(-c(cluster, SampleID, x, y)) %>%
+                                  as.matrix(),
+                                coords = df %>%
+                                  dplyr::select(x, y) %>%
+                                  as.matrix(),
+                                grid = krig_raster)
+
+tess_ggplot(new_krig_admix, 
+            ggplot_fill = scale_fill_manual(values = viridis::turbo(7)))
+```
+
+Export new kriged plots
+
+```{r}
+terra::writeRaster(new_krig_admix, paste0(here("analysis", "anne", "outputs"), "/kriged_K6.tif"))
+```
+
+# 4. Distribution of ancestry coefficient values
+
+```{r}
+# plot_q <- function(K, data) {
+#   plot <- ggplot(df %>%
+#                    filter(cluster == K)) +
+#     geom_sf(data = ca) +
+#     geom_point(aes(x = x, y = y, col = .data[[paste0("X", K)]])) +
+#     scale_color_gradientn(colours = rev(c("skyblue", "red")), 
+#                           na.value = "transparent",
+#                           breaks = c(0.5, 0.75, 1), 
+#                           limits = c(0.5, 1), 
+#                           name = "Q value") +
+#     theme_map() +
+#     ggtitle(paste0("K", K))
+#   return(plot)
+# }
+# 
+# ks <- 1:ncol(df %>% dplyr::select(-c(cluster, SampleID, x, y)))
+# 
+# qplots <- map(1:6, ~plot_q(K = .x, data = df))
+# do.call(ggarrange, c(qplots, nrow = 2))
+```
