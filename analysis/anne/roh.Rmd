@@ -24,6 +24,9 @@ theme_set(theme_cowplot())
 source(here("general_functions.R"))
 ```
 
+-   [1. Import data]
+-   [2. Visualize fROH results per population]
+
 # 1. Import data
 
 ```{r, include = FALSE}
