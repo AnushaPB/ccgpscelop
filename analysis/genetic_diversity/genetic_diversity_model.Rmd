@@ -1,6 +1,5 @@
 
 ```{r}
-library("rpaleoclim")
 library("here")
 library("tidyverse")
 library("ggpubr")
@@ -100,7 +99,7 @@ plt3 <-
   theme_void() +
   labs(fill = "Mean\nTemperature\nChange\n(scaled)")
 
-cowplot::plot_grid(plt1, plt2, plt3, nrow = 3)
+#cowplot::plot_grid(plt1, plt2, plt3, nrow = 3)
 ```
 
 # Hypothesis 2: Genetic diversity explained by past climate stability
@@ -130,30 +129,6 @@ csi_df <-
   pivot_longer(-c(x, y), 
   names_to = "model", 
   values_to = "CSI")
-```
-
-```{r}
-ggplot(csi_df) +
-  geom_sf(data = ca) +
-  geom_raster(aes(x = x, y = y, fill = CSI)) +
-  scale_fill_viridis_c(option = "magma", na.value = NA) + 
-  facet_wrap(~model, nrow = 1) +
-  theme_void() 
-
-ggplot(csi_df) +
-  geom_sf(data = ca) +
-  geom_raster(aes(x = x, y = y, fill = CSI)) +
-  scale_fill_stepsn(colours = viridis::magma(100), n.breaks = 20) +
-  facet_wrap(~model, nrow = 1) +
-  theme_void() 
-
-ggplot(filter(csi_df, model == "SSP 3-7.0")) +
-  geom_sf(data = ca) +
-  geom_raster(aes(x = x, y = y, fill = CSI)) +
-  labs(fill = "Future climate\nstability index\n(CSI)") +
-  scale_fill_viridis_c(option = "magma", na.value = "gray", limits = c(NA, 0.2)) +
-  facet_wrap(~model, nrow = 2) +
-  theme_void() 
 ```
 
 ```{r, fig.height = 4, fig.width = 4.5}
@@ -189,19 +164,6 @@ q_mod_df <-
   dplyr::select(SampleID, Q) %>%
   # Do 1- to make the values more intuitive
   mutate(Q = 1 - Q)
-
-# Plot admixture
-gg_df <- 
-  get_coords(sf=TRUE) %>% 
-  left_join(q_mod_df) %>%
-  drop_na(Q)
-```
-```{r}
-ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = Q)) +
-  theme_void() +
-  scale_color_viridis_c()
 ```
 
 # Hypothesis 4: Genetic diversity explained by current environment 
@@ -218,16 +180,6 @@ gHM_buffer <- extract(env_data[["gHM"]], coords_buffer, fun = mean, na.rm = TRUE
 
 env_mod_df$gHM <- gHM_buffer$gHM
 env_mod_df$buffer <- 10000
-
-gg_df <- left_join(select(env_mod_df, gHM, SampleID, buffer), get_coords())
-ggplot() +
-  geom_sf(data = ca) +
-  geom_sf(data = st_buffer(coords, unique(gg_df$buffer)), col = "#787878", fill = NA, alpha = 0.1) +
-  geom_point(data = gg_df, aes(x = x, y = y, col = gHM), cex = 2) +
-  theme_void() +
-  scale_color_viridis_c(option = "plasma", na.value = "gray") +
-  labs(col = "Human modification") +
-  facet_wrap(~buffer)
 ```
 
 # Hypothesis 5: Genetic diversity explained by glaciation
@@ -240,16 +192,7 @@ lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
 coords <- get_coords(sf = TRUE)
 glacier_mod_df <- 
   coords %>%
-  mutate(glacier = as.numeric((lengths(st_within(coords, lgm_glaciers)) > 0)))
-
-```
-```{r}
-ggplot() +
-  geom_sf(data = ca) +
-  geom_sf(data = lgm_glaciers, fill = "cyan3", alpha = 0.3, lty = "solid", lwd = 0.7) + 
-  geom_sf(data = glacier_mod_df, aes(col = factor(glacier))) +
-  scale_color_manual(values = c("darkgray", "cyan4")) +
-  theme_void()
+  mutate(glacier = as.numeric((lengths(st_within(coords, lgm_glaciers)) > 0))) 
 ```
 
 # Hypothesis 6: Genetic diversity explained by recent climate change
@@ -301,13 +244,12 @@ tmean_cur_r <- map(2010:2020, get_prism, .progress =TRUE, output= "raster") %>% 
 tmean_dif_r <- tmean_cur_r - tmean_his_r
 tmean_dif_r <- crop(tmean_dif_r, ca)
 tmean_dif_r <- mask(tmean_dif_r, st_transform(ca, st_crs(tmean_dif_r)))
-plot(tmean_dif_r, col = viridis::inferno(100))
 
 tmean_mod_df <- 
   left_join(tmean_his, tmean_cur) %>% 
   mutate(tmean_dif = tmean_cur - tmean_his) %>%
   right_join(coords) %>% 
-  dplyr::select(SampleID, tmean_dif)
+  dplyr::select(SampleID, tmean_dif, tmean_cur)
 ```
 
 ```{r}
@@ -322,7 +264,7 @@ env_list <- list(
 
 # Models
 ```{r}
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur")
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "CHELSA_bio12_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur", "x", "y")
 
 mod_df <- 
   get_coords() %>% 
@@ -391,7 +333,7 @@ high_corr_pairs
 ```{r}
 # Full model
 # Note: included both regular and poly gHM to see which was the better fit using dredge
-mod <- lm(Ho ~  NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif, data = mod_df_imputed_scaled, na.action = na.fail)
+mod <- lm(Ho ~  NDVI + paleo_change + poly(gHM, 2) + gHM + CHELSA_bio1_1981.2010_V.2.1 + CHELSA_bio12_1981.2010_V.2.1 + csi_past + factor(glacier) + Q + tmean_dif + x + y, data = mod_df_imputed_scaled, na.action = na.fail)
 
 summary(mod)
 
@@ -437,52 +379,23 @@ sigvars <-
   filter(p < 0.05)
 print(sigvars)
 
-# Look at the best models
-# Get the best model
+# Look at the best model
 best_model <- get.models(dredge_result, subset = delta < 2)[[1]]
-second_best_model <- get.models(dredge_result, subset = delta < 2)[[2]]
-third_best_model <- get.models(dredge_result, subset = delta < 2)[[3]]
 AIC(best_model)
-AIC(second_best_model)
-AIC(third_best_model)
 
 # Get the p-values 
 summary(best_model) 
-summary(second_best_model)
-summary(third_best_model) 
 
 # Adj RSQ
 summary(best_model)$adj.r.squared
-
-plot(mod_df_imputed_scaled$paleo_change_lgm, mod_df_imputed_scaled$Ho)
-
-ggplot(mod_df_imputed_scaled, aes(x = paleo_change_lgm, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
-
-ggplot(mod_df_imputed_scaled, aes(x = paleo_change_cur, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
-  
-# plot paleo_change_cur across CA
-ggplot(mod_sf) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = paleo_change_cur)) +
-  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
-  theme_void()
-
-ggplot(mod_sf) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = paleo_change_lgm)) +
-  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
-  theme_void()
 ```
 
 ```{r}
 make_pretty_names <- function(x){
   if (x == "BurnDate") return("Burned area (yes/no)")
   if (x == "paleo_change") return("Paleoclimate temperature change")
-  if (grepl("CHELSA", x)) return("Contemporary temperature")
+  if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
+  if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
   if (grepl("csi", x)) return("Past climate stability")
   if (grepl("gHM", x)) return("Human modification")
   if (grepl("glacier", x)) return("Glacier (inside/outside)")
@@ -706,6 +619,21 @@ plt4 <-
       scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
 })
 
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = Ho)) +
+  theme_void() +
+  scale_color_viridis_c(option ="mako", end = 0, begin = 0.9, direction = -1)
+
+pdf(here("analysis", "genetic_diversity", "ho.pdf"), width = 4.5, height = 4.5)
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = Ho)) +
+  theme_void() +
+  scale_color_viridis_c(option ="mako") +
+  theme(plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "mm"))
+dev.off()
+
 # Make glacier plots
 plt2_glacier <-
   ggplot(gg_df) +
@@ -751,6 +679,34 @@ pdf(here("analysis", "genetic_diversity", "linear_model_plot.pdf"), width = 8.5,
 ordered_plts <- pmap(list(plt3, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
 dev.off()
+```
+
+```{r}
+plot_resid <- function(x){
+  vars <- c("glacier", "paleo_change", "Q")
+  mod_vars <- vars[vars != x]
+  mod <- lm(formula(paste0("Ho ~ ", paste(mod_vars, collapse = " + "))), data = mod_df_imputed_scaled)
+  resids <- residuals(mod)
+
+  gg_df <- 
+    mod_df_imputed_scaled %>%
+    mutate(residuals = resids) %>%
+    pivot_longer(all_of(x))
+  return(gg_df)
+}
+
+resid_plts <- 
+  map(c("glacier", "paleo_change", "Q"), plot_resid) %>% 
+  bind_rows() %>%
+  mutate(name = map_chr(name, ~make_pretty_names(.x)))
+
+ggplot(resid_plts, aes(x = value, y = residuals)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  facet_wrap(~name, scales = "free") +
+  labs(x = "Variable", y = "Residual Ho") +
+  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
 ```
 
 # Evaluating Q
@@ -853,56 +809,10 @@ ggplot(gg_df, aes(x = value, y = Q)) +
 ```
 
 # Spatial model
+
 ```{r}
 mod_sr <- bind_cols(mod_df, st_coordinates(mod_sf))
 
-# Build SER model
-# Create neighborhood using coordinates
-# m distance
-nbdist <- 130000
-nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
-listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
-
-# Calculate Moran's I on residuals of best mod
-mod_df_imputed_scaled$residuals <- residuals(best_model)
-morans_i <- moran.test(mod_df_imputed_scaled$residuals, listw)
-print(morans_i)
-
-# plot neighbors
-plot(nb, mod_sr[,c("X", "Y")], main = "Neighborhoods")
-
-# Guides: 
-# https://www.emilyburchfield.org/courses/gsa/spatial_regression_lab#:~:text=To%20determine%20whether%20to%20estimate,are%20the%20same%2C%20go%20robust.
-# https://pages.cms.hu-berlin.de/EOL/gcg_quantitative-methods/Lab15_SpatialRegression.html 
-
-# Ordinary least squares model
-ols_model <- lm(Ho ~ paleo_change + factor(glacier) + Q, data = mod_df)
-# test for evidence of autocorrelation
-lm_tests <- lm.RStests(ols_model, listw, test = "all")
-lm_tests
-# Significant: RSerr, RSlag, SARMA, adjRSlag
-# Not significant: adjRSerr
-# because all are significant I am testing both an error and a lag model
-
-# lag model:
-# CAN'T INCLUDE RESDIST IN THIS MODEL SINCE IT IS CORRELATED WITH GEODIST
-slm_model <- lagsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
-
-# error model:
-sem_model <- errorsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
-
-# Compare AIC
-writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
-writeLines(paste("AIC SEM:", round(AIC(sem_model), 2)))
-writeLines(paste("AIC SLM:", round(AIC(slm_model), 2)))
-
-#SLM: Use when you believe that the dependent variable at a location is directly influenced by the dependent variable at neighboring locations.
-#SEM: Use when you believe that unobserved factors affecting the dependent variable are spatially autocorrelated, leading to spatially correlated errors (residuals)
-summary(sem_model)
-summary(slm_model)
-```
-
-```{r}
 nb_test <- map(c(10000, 50000, 100000, 200000), ~{
   nb <- dnearneigh(mod_sf, d1 = 0, d2 = .x)
   listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
@@ -922,6 +832,53 @@ nb_test %>% filter(slm == min(slm) | sem == min(sem))
 
 ```{r}
 
+build_spatial_models <- function(nbdist) {
+  # Assuming mod_sf, mod_df, and best_model are available in the environment
+  # Create neighborhood using coordinates
+  nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+  # Calculate Moran's I on residuals of best mod
+  mod_df_imputed_scaled$residuals <- residuals(best_model)
+  morans_i <- moran.test(mod_df_imputed_scaled$residuals, listw)
+  print(morans_i)
+
+  # plot neighbors - This will execute but not return in the function's output
+  plot(nb, mod_sr[,c("X", "Y")], main = "Neighborhoods")
+
+  # Ordinary least squares model
+  ols_model <- lm(Ho ~ paleo_change + factor(glacier) + Q, data = mod_df)
+  # test for evidence of autocorrelation
+  lm_tests <- lm.RStests(ols_model, listw, test = "all")
+  print(lm_tests)
+
+  # Spatial lag model
+  slm_model <- lagsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Spatial error model
+  sem_model <- errorsarlm(Ho ~ paleo_change + Q + factor(glacier), data = mod_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Compare AIC
+  writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
+  writeLines(paste("AIC SEM:", round(AIC(sem_model), 2)))
+  writeLines(paste("AIC SLM:", round(AIC(slm_model), 2)))
+
+  # Return a list of models
+  return(list(ols_model = ols_model, sem_model = sem_model, slm_model = slm_model))
+}
+
+
+sp50k <- build_spatial_models(50000)
+sp100k <- build_spatial_models(100000)
+
+# Compare AIC
+writeLines(paste("AIC OLS 50k:", round(AIC(sp50k$sem_model), 2)))
+writeLines(paste("AIC OLS 100k:", round(AIC(sp100k$sem_model), 2)))
+
+summary(sp50k$sem_model)
+summary(sp100k$sem_model)
+```
+```{r}
 nbdist <- 100000
 nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
 listw <- nb2listw(nb, style = "B", zero.policy = TRUE)
@@ -1007,6 +964,127 @@ coeff_df <-
 
 coeff_df
 ```
+
+# Spatial Model 2
+
+```{r}
+library(nlme)
+library(ape)
+```
+```{r}
+coords <- get_coords(sf = TRUE)
+dframe <- 
+  left_join(coords, get_het()) %>% 
+  left_join(paleoclim_mod_df) %>% 
+  left_join(q_mod_df) %>%
+  left_join(st_drop_geometry(glacier_mod_df)) %>%
+  drop_na(Ho) %>%
+  bind_cols(st_coordinates(.)) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
+```
+```{r}
+# Construct IDW matrix
+# Calculate pairwise geographic distances
+geoMat <- st_distance(dframe)
+
+# Convert to a numeric matrix while preserving the original matrix structure
+geoMat <- matrix(as.numeric(units::drop_units(geoMat)), nrow = nrow(geoMat), ncol = ncol(geoMat))
+
+# Ensure the matrix is symmetrical
+geoMat[upper.tri(geoMat)] <- geoMat[lower.tri(geoMat)]
+
+# Apply inverse distance weighting
+spdata.IDW <- 1 / geoMat
+diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
+
+# Perform a global test of Moran's I on the point observations
+# All are spatially autocorrelated
+Moran.I(dframe$paleo_change, spdata.IDW)
+Moran.I(dframe$Q, spdata.IDW)
+Moran.I(dframe$glacier, spdata.IDW)
+```
+
+```{r}
+dummy <- rep(1, nrow(dframe))
+dframe <- cbind(dframe, dummy) # Add it to the data frame
+```
+
+```{r}
+null.model <- lme(fixed = Ho ~ paleo_change + Q + glacier, data = dframe, random = ~ 1 | dummy, method = "ML")
+summary(null.model)
+
+# Residuals are spatially autocorrelated
+null_resids <- residuals(null.model)
+null_M <- Moran.I(null_resids, spdata.IDW)
+```
+
+Next, we can run the same model with spatial correlation structures.  We can specify such a structure with the correlation option of lme().  The structures are generated using corExp for exponential, corGaus for Gaussian, or corSpher for spherical.  
+```{r}
+exp.sp <- update(null.model, correlation = corExp(1, form = ~ X + Y), method = "ML")
+writeLines("Results for exponential spatial correlation:\n")
+summary(exp.sp)
+
+gau.sp <- update(null.model, correlation = corGaus(1, form = ~ X + Y), method = "ML")
+writeLines("\nResults for Gaussian spatial correlation:\n")
+summary(gau.sp)
+
+sph.sp <- update(null.model, correlation = corSpher(1, form = ~ X + Y), method = "ML")
+writeLines("\nResults for spherical spatial correlation:\n")
+summary(sph.sp)
+```
+
+```{r}
+# Get the AIC for all models
+aic <- AIC(null.model, exp.sp, gau.sp, sph.sp)
+best <- rownames(aic)[which.min(aic[, "AIC"])]
+best
+
+# the best model is exp.sp
+best_model <- get(best)
+
+summary(best_model)
+
+# Residuals are spatially autocorrelated
+resids <- residuals(best_model)
+M <- Moran.I(resids, spdata.IDW)
+
+# Residual autocorrelation is somehow stronger than the null model?
+null_M
+M
+
+dframe$resids <- resids
+dframe$null_resids <- null_resids
+
+gg_df <- dframe %>% pivot_longer(cols = contains("resids"), names_to = "resid_type", values_to = "resids")
+
+ggplot(gg_df) + 
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = resids)) +
+  facet_wrap(~resid_type) +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+```
+
+
+# Comparison of x/y versus paleo change
+
+```{r}
+r <- env_data[[1]]
+r[] <- 1:ncell(r)
+
+mod_df2 <- 
+  get_coords() %>% 
+  left_join(get_het()) %>%
+  left_join(paleoclim_mod_df)
+
+mod_df2$r <- extract(r,  get_coords(sf = TRUE), ID = FALSE)[,1]
+
+AIC(lm(Ho ~ x + y, data = mod_df2))
+AIC(lm(Ho ~ paleo_change, data = mod_df2))
+AIC(lm(Ho ~ r, data = mod_df2))
+```
+
 # Moving window
 ```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
 library(wingen)
@@ -1206,12 +1284,14 @@ browseURL("map.html")
 # Future climate change
 ```{r}
 future_ho <- 
+  # NOTE: CSI was inverted (1 - CSI) before
   df_future %>%
   left_join(mod_df) %>%
   # REMOVE CHANNEL ISLAND
   filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
 
-ggplot(future_ho, aes(x = 1 - csi, y = Ho, col = 1 - csi)) +
+plt <- 
+  ggplot(future_ho, aes(x = csi, y = Ho, col = csi)) +
   geom_point() +
   facet_wrap(~model_name, scales = "free_x", nrow = 1) +
   theme_classic() +
@@ -1223,6 +1303,10 @@ ggplot(future_ho, aes(x = 1 - csi, y = Ho, col = 1 - csi)) +
     strip.background = element_blank(),
     strip.text.x = element_text(hjust = 0, size = 14),
     axis.title = element_text(size = 14))
+
+pdf(here("analysis", "genetic_diversity", "future_plot.pdf"), width = 12, height = 3.5)
+plt
+dev.off()
 ```
 
 # ROH models
@@ -1300,7 +1384,7 @@ summary(third_best_model)
 mod_df_imputed_scaled$predict <- predict(best_model)
 ggplot(mod_df_imputed_scaled, aes(x = predict, y = Ho)) +
   geom_point() +
-  #geom_abline(intercept = 0, slope = 1) +
+  #geom_abline(intercept = 0, slope = 1) +d
   geom_smooth(method = "lm") +
   theme_classic() +
   labs(x = "Predicted Ho", y = "Observed Ho")
@@ -1445,24 +1529,39 @@ summary(best_model)$adj.r.squared
 
 plot(mod_df_imputed_scaled$paleo_change_lgm, mod_df_imputed_scaled$Ho)
 
-ggplot(mod_df_imputed_scaled, aes(x = paleo_change_lgm, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+gg_df <- 
+  mod_df_imputed_scaled %>% 
+  pivot_longer(c(paleo_change_lgm, paleo_change_cur, paleo_change)) %>%
+  mutate(name = 
+    case_when(name == "paleo_change_lgm" ~ "LGM - LIG", 
+    name == "paleo_change_cur" ~ "CUR - LGM",
+    name == "paleo_change" ~ "CUR - LIG")
+  )
 
-ggplot(mod_df_imputed_scaled, aes(x = paleo_change_cur, y = Ho)) +
+plt1 <-
+  ggplot(gg_df, aes(x = value, y = Ho)) +
   geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2))
+  facet_wrap(~name, scales = "free") +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2)) +
+  geom_smooth(method = "lm", col = "red")
   
 # plot paleo_change_cur across CA
-ggplot(mod_sf) +
+gg_df <- 
+  mod_sf %>% 
+  mutate_at(c("paleo_change_cur", "paleo_change_lgm", "paleo_change"), ~scale(.)) %>%
+  pivot_longer(c(paleo_change_cur, paleo_change_lgm, paleo_change)) %>%
+  mutate(name = 
+    case_when(name == "paleo_change_lgm" ~ "LGM - LIG", 
+    name == "paleo_change_cur" ~ "CUR - LGM",
+    name == "paleo_change" ~ "CUR - LIG")
+  )
+plt2 <-
+  ggplot(gg_df) +
   geom_sf(data = ca) +
-  geom_sf(aes(col = paleo_change_cur)) +
+  geom_sf(aes(col = value)) +
+  facet_wrap(~name) +
   scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
   theme_void()
 
-ggplot(mod_sf) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = paleo_change_lgm)) +
-  scale_color_viridis_c(option = "magma", begin = 0.05, end = 0.95) +
-  theme_void()
+plot_grid(plt1, plt2, ncol = 1)
 ```
