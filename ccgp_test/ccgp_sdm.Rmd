@@ -42,14 +42,8 @@ selected_vars <- pc_var_selection(cur)
 
 ```{r}
 # Get species list
-df <- get_ccgp_taxa()
-
-# Make species/genus names
-taxa_df <- 
-  df %>% 
-  dplyr::select(-id) %>%
-  pivot_wider(names_from = "rank", values_from = "name") %>%
-  mutate(GenusSpecies = paste(genus, species, sep = " "))
+df <- get_ccgp_meta()
+head(df)
 
 # Download occurrence data
 occ_coords <- get_occ_coords("Sceloporus occidentalis", data_source = "gbif", occ_limit = 10000, cache = TRUE)
