@@ -131,10 +131,70 @@ ggbarplot_helper <- function(gg_df) {
 # Kriging functions -------------------------------------------------------
 # -------------------------------------------------------------------------
 
+#' Implements `Krig()` function in the fields package
+#'
+#' @param qmat matrix of Q-values for given K
+#' @param coords matrix of x y coordinates
+#' @param grid raster upon which to krige
+#'
+#' @return
+#' @export
+new_tess_krig <- function(qmat, coords, grid) {
+  # Check CRS
+  crs_check(coords, grid)
 
+  # Get K
+  K <- ncol(qmat)
 
+  krig_df <- coords_to_sp(coords)
 
-# Structure boundaries ----------------------------------------------------
-# -------------------------------------------------------------------------
+  # Make grid for kriging
+  if (!inherits(grid, "SpatRaster")) grid <- terra::rast(grid)
+  # krig_grid <- raster_to_grid(grid) # not necessary for type of kriging
 
+  # Krige each K value
+  krig_admix <-
+    purrr::map(1:K, new_tess_krig_helper, krig_df, qmat, coords, grid) %>%
+    terra::rast()
 
+  # mask with original raster layer because the grid fills in all NAs
+  # (note: we don't remove NAs because it can change the extent)
+  grid <- terra::resample(grid, krig_admix[[1]])
+  krig_admix <- terra::mask(krig_admix, grid)
+
+  # Rename layers
+  names(krig_admix) <- paste0("K", 1:K)
+
+  # Return stack
+  return(krig_admix)
+}
+
+#' Krige one K value
+#'
+#' @param K single K value to krige
+#' @param qmat matrix of Q-values
+#' @param krig_df df with coords
+#' @param coords coordinates in x and y
+#' @param grid grid upon which to krige
+#'
+#' @return
+#' @export
+new_tess_krig_helper <- function(K, krig_df, qmat, coords, grid) {
+  # Add Q values to spatial dataframe
+  krig_df$Q <- qmat[, K]
+
+  # Skip if all of the Q values are identical (kriging not possible)
+  # if (length(unique(krig_df$Q)) == 1) {
+  #   warning(paste0("Only one unique Q value for K = ", K, ", returning NULL (note: may want to consider different K value)"))
+  #   return(NULL)
+  # }
+
+  co <- capture.output(model <- fields::Krig(coords, qmat[, K]))
+  interpolated <- terra::interpolate(raster(grid), model)
+  interpolated <- terra::rast(interpolated)
+  return(interpolated)
+}
+
+# Reproject the coordinates
+st_as_sf(coords, coords = c("x", "y"), crs = 4326)
+st_transform(coords, 3310)

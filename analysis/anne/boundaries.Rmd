@@ -1,0 +1,185 @@
+---
+title: "boundaries"
+author: "Anne Chambers"
+date: "2024-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(here)
+library(tidyverse)
+library(cowplot)
+library(sf)
+library(terra)
+library(algatr)
+library(viridis)
+devtools::load_all()
+theme_set(theme_cowplot())
+
+source(here("analysis", "anne", "boundaries.R"))
+source(here("general_functions.R"))
+```
+
+-   [1. Import data]
+-   [2. Make structure boundaries]
+-   [3. Make polygons]
+
+# 1. Import data
+
+```{r}
+# Get coordinates 
+coords <- read_tsv(here("data", "58-Sceloporus.coords.txt"), col_names = FALSE) %>% 
+  rename(SampleID = X1, x = X2, y = X3)
+
+# Get kriged map for all Ks
+krig_admix_k2 <- terra::rast(paste0(here("analysis", "anne", "outputs"), "/kriged_K2.tif"))
+krig_admix_k6 <- terra::rast(paste0(here("analysis", "anne", "outputs"), "/kriged_K6.tif"))
+```
+
+Plot kriged map with sampling coordinates.
+
+```{r}
+tess_ggplot(krig_admix_k6, 
+            ggplot_fill = scale_fill_manual(values = viridis::turbo(7)), 
+            coords = coords %>% dplyr::select(x, y))
+```
+
+# 2. Make structure boundaries
+
+## Boundaries for a single K value
+
+```{r}
+# weights = matrix(rep(1, 9), nrow = 3)
+threshold = c(0.2, 0.6) # bounds between which admixture is considered (only works for K=2 right now)
+K = 6
+krig_admix <- krig_admix_k6
+
+# Run above for each K value
+# admixrl1 <- make_boundary(Kvalue = 1, krig_admix_k6, threshold, krig_raster)
+# plot(admixrl1)
+# admixrl2 <- admix_zone_helper(Kvalue = 2, krig_admix_k6, threshold, krig_raster)
+
+results <-
+  purrr::map(1:K, make_boundary, krig_admix, threshold, krig_raster) %>%
+  terra::rast()
+
+# Set names
+names(results) <- paste0("K", 1:K)
+```
+
+```{r}
+# Plot boundaries for each K
+ggplot() +
+  geom_sf(data = ca) +
+  geom_spatraster(data = results) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  theme_map() +
+  theme(legend.position = "none") +
+  facet_wrap(~lyr)
+```
+
+## Combine boundaries for all Ks
+
+```{r}
+# Check that extents are the same
+ext(results[[1]]) == ext(results[[2]])
+
+# final <- do.call(terra::ext, c(results[[1], results[[2]]]))
+
+# Set all boundaries equal to 1 so they combine properly when mosaic-ing
+# TODO maybe there's a circumstance in which user wants to see which K gets assigned vals in which case we don't want to do the following
+# TODO in which case I'd want to ensure values are kept consistent with Q-values
+results[[2]][results[[2]] != 0] <- 1
+results[[3]][results[[3]] != 0] <- 1
+results[[4]][results[[4]] != 0] <- 1
+results[[5]][results[[5]] != 0] <- 1
+results[[6]][results[[6]] != 0] <- 1
+
+# Combine both K-values together
+# TODO fix this!
+mosaic <- terra::mosaic(results[[1]], results[[2]]) # TODO play around with fun arg; mean is default
+mosaic <- terra::mosaic(mosaic, results[[3]])
+mosaic <- terra::mosaic(mosaic, results[[4]])
+mosaic <- terra::mosaic(mosaic, results[[5]])
+mosaic <- terra::mosaic(mosaic, results[[6]])
+
+# rasters = lapply(results, terra::init, fun = init)
+# mosaic <- do.call(terra::mosaic, rasters)
+rasters = lapply(raster::stack(results), raster::init, fun = runif)
+final <- do.call(raster::mosaic, c(rasters, fun = mean))
+
+# TODO play around with focal and weights
+rv <- terra::focal(mosaic, w = weights, fun = var)
+terra::plot(rv, axes = FALSE, box = FALSE, legend = TRUE)
+
+# Export results
+terra::writeRaster(rv, 
+                   paste0(here("analysis", "anne", "outputs"), "/Scelop_bounds_K6_0.20.6.tif"))
+```
+
+Plot results.
+
+```{r}
+ggplot() +
+  geom_sf(data = ca) +
+  geom_spatraster(data = rv) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  theme_map() +
+  theme(legend.position = "none") +
+  ggtitle(paste0("K=", K))
+```
+
+## Mask boundaries
+
+## Boundaries for a single K value
+
+```{r}
+gg_df <- krig_admix %>%
+  terra::as.data.frame(x, xy = TRUE, na.rm = FALSE) %>%
+  tidyr::as_tibble() %>%
+  tidyr::pivot_longer(names_to = "K", values_to = "Q", -c(x, y)) %>%
+  dplyr::mutate(K = as.factor(gsub("K", "", K))) %>%
+  dplyr::group_by(x, y) %>% 
+  # Select Ks with max Q vals
+  filter(is.na(Q) | Q == max(Q))
+
+# Convert into raster
+dat <- terra::rast(newdat, type = "xyz")
+plot(dat[[2]])
+
+# Export results
+terra::writeRaster(dat[[2]], 
+                   paste0(here("analysis", "anne", "outputs"), "/Scelop_bounds_K6_maxQ.tif"))
+```
+
+# 3. Make polygons
+
+Using Ryan's code to combine polygons, dropping crumbs and filling holes with `smoothr`
+
+```{r}
+# poly <- tess_ggplot(krig_admix, plot_method = "maxQ_poly")
+
+newgrid <- terra::resample(grid, krig_r[[1]])
+krig_admix <- terra::mask(krig_r, newgrid)
+krig_admix <- krig_admix[[1]]
+
+poly <- terra::as.polygons(krig_admix > 0.75)
+plot(poly)
+polysf <- st_as_sf(poly)
+
+test1pd = smoothr::drop_crumbs(polysf, threshold = units::set_units(1000))
+
+test1pd = smoothr::drop_crumbs(test1, threshold = units::set_units(1000, km^2))
+test1pe = smoothr::fill_holes(test1pd, threshold = units::set_units(1000, km^2))
+rast <- raster(krig_admix)
+
+scape_to_shape(rast)
+```
