@@ -85,3 +85,11 @@ get_ccgp_taxa <- function(){
   return(taxa_df)
 
 }
+
+get_ccgp_meta <- function(){
+  meta <- 
+    readr::read_csv(here::here("ccgp_test", "data", "WGS_METADATA_DB - raw.csv")) %>% 
+    dplyr::select(`*sample_name`, `*organism`, `ccgp-project-id`) %>%
+    rename(SampleID = `*sample_name`, GenusSpecies = `*organism`, project = `ccgp-project-id`)
+  return(meta)
+}
