@@ -1,5 +1,8 @@
 # Data processing of Sceloporus for ADMIXTURE
 # Do the following in the analysis/anne directory
+# conda install bioconda::admixture
+
+mamba activate ccgpscelop
 
 PREFIX="58-Sceloporus_annotated_pruned_0.6"
 VCF="../../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6.vcf.gz" # n=164 inds, LD-pruned

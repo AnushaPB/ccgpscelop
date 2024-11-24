@@ -1,6 +1,6 @@
 ### Linking GEA outliers to pruned sites
 # Run within analysis/anne directory
-mamba activate snakemake
+mamba activate ccgpscelop
 
 # Get correlation values
 # Specify window size and r2 value the same as our initial LD-pruning prior to running GEA
