@@ -4,11 +4,10 @@ library(tidyverse)
 #!/usr/bin/env Rscript # leave line commented
 args = commandArgs(trailingOnly=TRUE)
 prunedout_file = args[1]	# path to .prune.out file
-corr_file = args[2]		    # path to .ld correlations file
-gea_path = args[3]		    # path to concatenated GEA results
-sig = args[4]             # alpha threshold for rdadapt p-values
-output_format = args[5]		# whether to output separate bed files for pruned out SNPs vs outlier ones; options are "separate" or "together"
-output_path = args[6]		  # output path
+input_path = args[2]		  # path to .ld correlations file and concatenated GEA results
+sig = args[3]             # alpha threshold for rdadapt p-values
+output_format = args[4]		# whether to output separate bed files for pruned out SNPs vs outlier ones; options are "separate" or "together"
+output_path = args[5]		  # output path
 
 
 # Read in files -----------------------------------------------------------
@@ -19,7 +18,14 @@ zscores <- read_csv(paste0(gea_path, "/58-Sceloporus_Zscores.csv"),
                     col_names = c("rda_snps", "axis", "loading"))
 rdadapt <- read_csv(paste0(gea_path, "/58-Sceloporus_rdadapt.csv"),
                     col_names = c("p.values", "q.values", "rda_snps")) %>%
-  filter(p.values <= sig)
+  # q-values are adjusted p-values
+  filter(q.values <= sig)
+# p-value adjustment
+# fdr_pvals <- p.adjust(rdadapt$p.values, method = "fdr") %>%
+#   as.data.frame() %>%
+#   rename("fdr_pvals" = ".")
+# rdadapt <- bind_cols(rdadapt, fdr_pvals) %>%
+#   filter(fdr_pvals <= sig)
 
 
 # Process files -----------------------------------------------------------
@@ -76,10 +82,10 @@ if (nrow(corr_p) == 0) corr_p <- NULL
 
 # Export correlation info
 if (!is.null(corr_z)) {
-  write_csv(corr_z, file = paste0(output_path, "/", species, "_corr_Zscores.csv"))
+  write_csv(corr_z, file = paste0(output_path, "/58-Sceloporus_corr_Zscores.csv"))
 }
 if (!is.null(corr_p)) {
-  write_csv(corr_p, file = paste0(output_path, "/", species, "_corr_rdadapt.csv"))
+  write_csv(corr_p, file = paste0(output_path, "/58-Sceloporus_corr_rdadapt.csv"))
 }
 
 # Export bed files
@@ -102,26 +108,29 @@ if (!is.null(corr_p)) {
 }
 
 bed_rdadapt <- rdadapt %>%
-  tidyr::separate(rda_snps, sep = "_", into = c("chrom", "chromStart", "ref", "alt")) %>%
+  tidyr::extract(rda_snps, c("chrom", "chromStart", "ref", "alt"),
+                 regex = "(.*)_([^_]+)_([^_]+)_([^_]+)$") %>%
+  # tidyr::separate(rda_snps, sep = "_", into = c("chrom", "chromStart", "ref", "alt")) %>%
   dplyr::mutate(chromEnd = as.numeric(chromStart),
                 chromStart = as.numeric(chromStart)) %>%
   dplyr::select(-c(ref, alt, q.values, p.values))
 
 bed_zscores <- zscores %>%
-  tidyr::separate(rda_snps, sep = "_", into = c("chrom", "chromStart", "ref", "alt")) %>%
+  tidyr::extract(rda_snps, c("chrom", "chromStart", "ref", "alt"),
+                 regex = "(.*)_([^_]+)_([^_]+)_([^_]+)$") %>%
+  # tidyr::separate(rda_snps, sep = "_", into = c("chrom", "chromStart", "ref", "alt")) %>%
   dplyr::mutate(chromEnd = as.numeric(chromStart),
                 chromStart = as.numeric(chromStart)) %>%
   dplyr::select(-c(ref, alt, axis, loading))
 
 if (output_format == "separate") {
-  if (!is.null(bed_p)) write_tsv(bed_p, file = paste0(output_path, "/", species, "_gea_prunedout_rdadapt.bed"))
-  if (!is.null(bed_z)) write_tsv(bed_z, file = paste0(output_path, "/", species, "_gea_prunedout_Zscores.bed"))
-  write_tsv(bed_rdadapt, file = paste0(output_path, "/", species, "_gea_rda_rdadapt.bed"))
-  write_tsv(bed_zscores, file = paste0(output_path, "/", species, "_gea_rda_Zscores.bed"))
+  if (!is.null(bed_p)) write_tsv(bed_p, file = paste0(output_path, "/58-Sceloporus_gea_prunedout_rdadapt.bed"))
+  if (!is.null(bed_z)) write_tsv(bed_z, file = paste0(output_path, "/58-Sceloporus_gea_prunedout_Zscores.bed"))
+  write_tsv(bed_rdadapt, file = paste0(output_path, "/58-Sceloporus_gea_rda_rdadapt.bed"))
+  write_tsv(bed_zscores, file = paste0(output_path, "/58-Sceloporus_gea_rda_Zscores.bed"))
 }
 
-# TODO didn't account for if bed_p or bed_z are NULL below
 if (output_format == "together") {
-  write_tsv(bind_rows(bed_p, bed_rdadapt), file = paste0(output_path, "/", species, "_gea_rda_rdadapt.bed"))
-  write_tsv(bind_rows(bed_z, bed_zscores), file = paste0(output_path, "/", species, "_gea_rda_Zscores.bed"))
+  if (!is.null(bed_p)) write_tsv(bind_rows(bed_p, bed_rdadapt), file = paste0(output_path, "/58-Sceloporus_gea_rda_rdadapt.bed"))
+  if (!is.null(bed_z)) write_tsv(bind_rows(bed_z, bed_zscores), file = paste0(output_path, "/58-Sceloporus_gea_rda_Zscores.bed"))
 }
