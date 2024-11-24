@@ -1,0 +1,150 @@
+---
+title: "GEA"
+output:
+  github_document:
+    toc: TRUE
+---
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(tidyverse)
+library(raster)
+library(vegan)
+library(qvalue)
+library(peakRAM)
+library(here)
+library(devtools)
+library(algatr)
+
+source(here("analysis", "anne", "GEA.R"))
+source(here("general_functions.R"))
+```
+
+-   [1. Import metadata]
+-   [2. Import data]
+-   [3. Run RDA]
+-   [4. Get outliers and cortest]
+-   [5. Export results]
+
+# i. Specify params
+
+```{r}
+vcf_file_name = "58-Sceloporus_annotated_pruned_0.6_onecontig.recode.vcf"
+# vcf_file_name = "58-Sceloporus_annotated_pruned_0.6.vcf.gz"
+
+model = "full"
+correctPC = here("data", "ccgp_data", "58-Sceloporus_annotated_pruned_0.6.eigenvec")
+output_path = paste0(here("analysis", "anne", "outputs"), "/")
+padj = "fdr"
+sig = 0.01 # sig threshold for p-values
+save_impute = FALSE # whether to save imputed genetic data
+```
+
+# 1. Import metadata
+
+```{r, include = FALSE}
+# Get coordinates 
+coords <- read_tsv(here("data", "ccgp_data", "58-Sceloporus.coords.txt"), col_names = FALSE) %>%
+  rename(SampleID = X1, x = X2, y = X3)
+```
+
+# 2. Import data
+
+```{r}
+env <- terra::rast(here("data", "env", "envstack.tif"))
+names(env) <- c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3", "elevation")
+env <- terra::subset(env, "elevation", negate = TRUE)
+
+coords_proj <- 
+  coords[,c("x", "y")] %>% 
+  sf::st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  sf::st_transform(3310)
+
+env <- terra::extract(env, coords_proj, ID = FALSE)
+env <- scale(env, center = TRUE, scale = TRUE)
+env <- data.frame(env)
+```
+
+Import and process genetic data.
+
+```{r}
+vcf <- vcfR::read.vcfR(paste0(here("data", "ccgp_data"), "/", vcf_file_name))
+gen <- algatr::vcf_to_dosage(vcf)
+gen <- algatr::simple_impute(gen)
+```
+
+# 3. Run RDA
+
+```{r rda}
+peakRAM_run <-
+  peakRAM::peakRAM(
+    mod <- rda_run_pc(gen = gen,
+                      env = env,
+                      coords = coords, 
+                      model = model, 
+                      correctGEO = FALSE, 
+                      correctPC = correctPC,
+                      nPC = 3, 
+                      Pin = 0.05, 
+                      R2permutations = 1000, 
+                      R2scope = TRUE)
+  )
+```
+
+# 4. Get outliers and run correlation test
+
+```{r outliers}
+peakRAM_outliers <-
+  peakRAM::peakRAM(
+    outliers <- get_outliers(mod$mod, 
+                             gen = mod$gen,
+                             padj = padj,
+                             sig = sig)
+  )
+
+peakRAM_cortest <-
+  peakRAM::peakRAM(
+    cortest <- run_cortest(rda_gen_p = outliers$rda_gen_p, 
+                           rda_gen_z = outliers$rda_gen_z, 
+                           env = mod$env)
+  )
+```
+
+# 5. Export results
+
+```{r export}
+# Export results
+peakRAM_exp <- 
+  peakRAM::peakRAM(
+    export_rda(mod$mod, 
+               output_path = output_path, 
+               species = "58-Sceloporus", 
+               model = model,
+               outliers$rda_sig_z, 
+               outliers$rda_sig_p, 
+               cortest$cor_df_p, 
+               cortest$cor_df_z, 
+               save_impute = save_impute)
+  )
+```
+
+Export peakRAM info
+
+```{r peakRAM}
+RAM <- dplyr::bind_rows(peakRAM_imp,
+                        peakRAM_run, 
+                        peakRAM_outliers,
+                        peakRAM_cortest,
+                        peakRAM_exp) %>% 
+  dplyr::mutate(fxn = c("import", "run", "outliers", "cortest", "export"))
+
+readr::write_csv(RAM,
+                 file = paste0(output_path, "58-Sceloporus_RDA_peakRAM.csv"))
+```

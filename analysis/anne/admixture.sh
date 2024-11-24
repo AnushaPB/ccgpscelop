@@ -1,13 +1,13 @@
 # Data processing of Sceloporus for ADMIXTURE
 # Do the following in the analysis/anne directory
 
-PREFIX="58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60"
-VCF="../../data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60.vcf.gz" # n=164 inds, LD-pruned
+PREFIX="58-Sceloporus_annotated_pruned_0.6"
+VCF="../../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6.vcf.gz" # n=164 inds, LD-pruned
 
 # ADMIXTURE ------------------------------------------------------------------------------
 
 # Create folder for outputs
-mkdir -p outputs
+# mkdir -p outputs
 
 # Make plink bed, bim, and fam files required for admixture
 plink --vcf $VCF --out $PREFIX --allow-extra-chr --make-bed --const-fid
