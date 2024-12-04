@@ -1013,7 +1013,9 @@ varpart_plt <-
   scale_fill_gradientn(colors = ylgnbl_lite) +
   theme_minimal() +
   labs(x = "", y = "", fill = "Variance\nExplained") +
-  scale_x_discrete(position = "top")
+  scale_x_discrete(position = "top") +
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12))
 
 # Correlation plot
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
@@ -1039,11 +1041,13 @@ cor_plt <-
     low = "cyan3",
     mid = "white",
     high = "orange",
-    midpoint = 0
+    midpoint = 0,
+    limits = c(-1, 1)
   ) +
   theme_minimal() +
   labs(x = "", y = "", fill = "Correlation") +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12))
 
 # Plot variables correlated with Ho that are not in the final model
 names(mod_vars) <- mod_vars
@@ -1071,6 +1075,53 @@ plot_grid(combo, missig_plt, nrow = 2, rel_heights = c(0.6, 0.35), labels = c(""
 dev.off()
 ```
 
+```{r}
+plot_map <- function(var){
+  ggplot(st_as_sf(mod_df_imputed_scaled)) +
+    geom_sf(data = ca) +
+    geom_sf(aes(fill = .data[[var]]), pch = 21, col = rgb(0,0,0,0), cex = 2) +
+    theme_void() +
+    scale_fill_viridis_c(option = "mako") +
+    labs(fill = gsub(" ", "\n", make_pretty_names(var)))
+}
+
+plot_points <- function(var){
+  ggplot(mod_df_imputed_scaled, aes(x = .data[[var]], y = Ho)) +
+    geom_point(aes(col = .data[[var]]), alpha = 0.8) +
+    geom_smooth(method = "lm", color = "black") +
+    theme_classic() +
+    labs(x = make_pretty_names(var), y = "Ho") +
+    scale_color_viridis_c(option = "mako") +
+    stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
+    labs(col = gsub(" ", "\n", make_pretty_names(var))) +
+    theme(legend.position = "none")
+}
+
+mod_df_imputed_scaled$predicted <- best_model$fitted[, "fixed"]
+
+mod_plt <-
+  ggplot(mod_df_imputed_scaled, aes(x = predicted, y = Ho)) +
+  geom_point(aes(col = Ho), alpha = 0.8) +
+  geom_smooth(method = "lm", color = "black") +
+  theme_classic() +
+  labs(x = "Predicted", y = "Observed") +
+  scale_color_viridis_c(option = "mako") +
+  stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
+  theme(legend.position = "none")
+
+
+pdf(here(outpath, "main_figure.pdf"), width = 12.5, height = 7.5) 
+plot_grid(
+  plot_map("Ho"),
+  plot_map("paleo_change"),
+  plot_map("Q"), 
+  mod_plt,
+  plot_points("paleo_change"), 
+  plot_points("Q"), 
+  labels = c("A", "B", "C", "D", "E", "F"),
+  nrow = 2)
+dev.off()
+```
 
 # Test of model without correlated variables
 
