@@ -1,6 +1,14 @@
 
 
-### genome download
+### Environmental Data
+
+Environmental data was from this repo: https://github.com/AnushaPB/calienv
+Created using this file: calienv.Rmd
+Outputs: 
+"california_chelsa_bioclim_1981-2010_V.2.1.tif"
+"california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"
+
+### Genome Download
 
 ```bash
 # download genome from ncbi
