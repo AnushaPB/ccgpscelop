@@ -1,40 +1,9 @@
 source activate ccgpscelop
+BASE_PATH=../../data/ccgp_data
+# !!! NOTE: running into issues with this file so currently het/window_pi was created on Rancor using Anne's 58-Sceloporus_annotated plink files
+PLINK=$BASE_PATH/58-Sceloporus
+VCF=$BASE_PATH/58-Sceloporus_clean_snps.vcf.gz
 
-BASE_PATH=../../data/processed_data
-VCF=$BASE_PATH/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz
-GENOME="../../data/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
-
-# PLINK -----------------------------
-# PLINK is a whole-genome association analysis toolset, designed to perform a range of basic, large-scale analyses in a computationally efficient manner.
-
-
-# ROH -----------------------------
-
-# Define an array with your population identifiers
-POPS_PATH="../admixture/outputs"
-POPS=("pop1" "pop2" "pop3" "pop4" "pop5", "pop6")
-# Loop through each population in parallel
-for POP in "${POPS[@]}"; do
-    (
-        # Split by population
-        bcftools view -S $POPS_PATH/k6_${POP}.txt $VCF -Oz -o ${POP}.vcf.gz
-
-        # Calculate ROH
-        bcftools roh --threads 10 -G30 --AF-dflt 0.4 --estimate-AF GT,- -O z -o ${POP}.roh.gz ${POP}.vcf.gz
-        zgrep RG ${POP}.roh.gz > ${POP}.rg.roh
-
-        # Calculate fROH
-        python -c "from roh import calc_roh; calc_roh('${POP}.rg.roh', '$GENOME', '${POP}.froh')"
-
-        # Get maximum ROH length
-        Rscript -e "print(max(read.table('${POP}.rg.roh')\$V6))"
-
-        # Move data into output directory
-        mkdir -p outputs
-        mv *${POP}* outputs/
-    ) &
-done
-wait
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
 # FID: Family ID
@@ -45,17 +14,7 @@ wait
 # F: Inbreeding coefficient estimate
 # calculate heterozygosity stats
 # set const-fid to set FID (population ID) to 0; otherwise Error: Multiple instances of '_' in sample ID.
-plink --vcf $VCF --make-bed --out 58-Sceloporus --allow-extra-chr --const-fid
-plink --bfile 58-Sceloporus --het --out 58-Sceloporus --allow-extra-chr
+plink --bfile $PLINK --het --out outputs/58-Sceloporus --allow-extra-chr
 
-# move files into outputs and delete unnecessary files
-rm *.log
-rm *.nosex
-mv *.het outputs
-mv *.bed outputs
-mv *.bim outputs 
-mv *.fam outputs
-
-# note: calculated the same as https://www.cell.com/current-biology/pdfExtended/S0960-9822(21)00548-0: 
-# "we define heterozygosity as the fraction of heterozygous genotypes out of all
-# called genotypes (including invariant sites) within an individual"
+# WINDOWED PI -------------------------------------------------------------------------
+vcftools --gzvcf $VCF --window-pi 10000 --out 58-Sceloporus_10kb_windowpi

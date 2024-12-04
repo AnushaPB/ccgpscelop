@@ -262,6 +262,7 @@ env_list <- list(
   )
 ```
 
+
 # Models
 ```{r}
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "CHELSA_bio12_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur", "x", "y")
@@ -278,8 +279,10 @@ mod_df <-
   dplyr::select(Ho, SampleID, geometry, all_of(mod_vars)) %>%
   drop_na(Ho) %>%
   # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
-  
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
+  # Drop samples with missing Q values (COME BACK TO THIS - if you don't do this you get a weird outlier)
+  drop_na(Q)
+
 # Count NAs in each column
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
 have_nas
@@ -327,6 +330,18 @@ high_corr_pairs <- data.frame(
 )
 high_corr_pairs
 # paleo_change is correlated with CHELSA_bio1_1981.2010_V.2.1, gHM, and csi_past
+```
+
+
+```{r}
+# CHECK CORRELATION
+png(here("analysis", "genetic_diversity", "outputs", "deleteme.png"))
+ggplot(mod_df_imputed_scaled, aes(x = paleo_change, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  stat_cor() 
+dev.off()
 ```
 
 ```{r}
@@ -415,12 +430,14 @@ dframe$null_resids <- null_resids
 
 gg_df <- dframe %>% pivot_longer(cols = contains("resids"), names_to = "resid_type", values_to = "resids")
 
+pdf(here(pdfpath, "full_model_residuals.pdf"), width = 12, height = 6)
 ggplot(gg_df) + 
   geom_sf(data = ca) + 
   geom_sf(aes(col = resids)) +
   facet_wrap(~resid_type) +
   scale_color_viridis_c(option = "magma") +
   theme_void()
+dev.off()
 ```
 
 ```{r}

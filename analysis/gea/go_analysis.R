@@ -205,7 +205,6 @@ dev.off()
 genes_org %>% filter(grepl("HSP", full_name) | grepl("heat shock", full_name))
 genes_org %>% filter(grepl(" heat", full_name))
 
-
 search <- function(x, y = NULL){
   if (is.null(y)) y <- genes_org 
   y %>% filter(grepl(x, full_name)) %>% pull(full_name)
@@ -214,7 +213,8 @@ search <- function(x, y = NULL){
 #HSP70 (Heat Shock Protein 70): This protein helps protect cells from stress-induced damage, including heat stress. It plays a crucial role in protein folding and repair.
 search("HSP70")
 search("HSP")
-search("Heat shock") # many of these!
+search("Heat shock") # many of these! Heat shock 70 kDA is included in the list
+search("Heat shock 70")
 length(search("Heat shock"))
 search("heat shock")
 #UCP1 (Uncoupling Protein 1): Found in brown adipose tissue, UCP1 is involved in thermogenesis, helping humans generate heat in cold environments.
@@ -295,6 +295,10 @@ rda_genes <-
   # filter to only include humans
  # filter(grepl("Homo sapien", organism)) 
 
+# Look at HSP 70
+hsp70 <- rda_genes %>% filter(grepl("Heat shock 70", full_name)) %>% dplyr::select(p.adj, gene_name)
+range(hsp70$p.adj)
+nrow(hsp70)
 # Get top 5 genes based on p-value
 arrange(rda_genes, p.adj) %>% head(10) %>% dplyr::select(gene_name, organism, uniprot_id)
 
