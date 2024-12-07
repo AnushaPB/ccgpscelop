@@ -268,6 +268,15 @@ env_list <- list(
 ```{r}
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "CHELSA_bio12_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur", "x", "y")
 
+# Get individuals with low depth
+depth <- read_table(here("data", "ccgp_data", "58-Sceloporus.idepth"))  
+low_depth <- 
+  depth %>% 
+  filter(INDV %in% het$SampleID) %>%
+  filter(MEAN_DEPTH < 8) %>% 
+  pull(INDV)
+low_depth
+
 mod_df <- 
   get_coords() %>% 
   left_join(get_het()) %>%
@@ -281,8 +290,8 @@ mod_df <-
   drop_na(Ho) %>%
   # REMOVE CHANNEL ISLAND
   filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
-  # Drop samples with missing Q values (COME BACK TO THIS - if you don't do this you get a weird outlier)
-  drop_na(Q)
+  # Drop samples with low depth (<8x)
+  filter(!(SampleID %in% low_depth))
 
 # Count NAs in each column
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
@@ -335,13 +344,14 @@ high_corr_pairs
 
 
 ```{r}
-# CHECK CORRELATION
+test <- mod_df_imputed_scaled %>% left_join(depth, by = c("SampleID" = "INDV"))
 png(here("analysis", "genetic_diversity", "outputs", "deleteme.png"))
-ggplot(mod_df_imputed_scaled, aes(x = paleo_change, y = Ho)) +
-  geom_point() +
+ggplot(test, aes(x = paleo_change, y = Ho)) +
+  geom_point(aes(col = MEAN_DEPTH)) +
   geom_smooth(method = "lm") +
   theme_classic() +
-  stat_cor() 
+  stat_cor() +
+  scale_color_viridis_c(option = "turbo") 
 dev.off()
 ```
 
@@ -689,7 +699,7 @@ future_ho <-
   df_future %>%
   left_join(mod_df) %>%
   # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
 
 plt <- 
   ggplot(future_ho, aes(x = csi, y = Ho, col = csi)) +
@@ -761,51 +771,6 @@ best_model_table <-
 gt::gtsave(best_model_table, filename = here(outpath, "best_model_table.html"))
 ```
 
-
-```{r}
-# Plot all variables with significant associations with Ho & a intermediate+ correlation with the sig vars
-# Get significant variables from the model
-sigvars <- 
-  data.frame(summary(best_model)$tTable) %>%
-  mutate(var = row.names(.)) %>%
-  filter(!(var %in% c("(Intercept)"))) %>%
-  filter(p.value < 0.05) %>%
-  filter(!grepl("glacier", var)) %>%
-  pull(var)
-
-named_mod_vars <- mod_vars
-names(named_mod_vars) <- mod_vars
-# drop glacier
-named_mod_vars <- named_mod_vars[-which(named_mod_vars == "glacier")]
-Ho_r <- map_dbl(named_mod_vars, ~cor.test(mod_df$Ho, mod_df[[.x]])$p.value) < 0.05
-Ho_r <- Ho_r[Ho_r]
-
-# Test for significant correlations with model variables
-cor_vars <-
-  expand.grid(var1 = mod_vars, var2 = sigvars) %>%
-  mutate(p.value = pmap_dbl(list(var1, var2), ~ cor.test(mod_df_imputed_scaled[[..1]], mod_df_imputed_scaled[[..2]], use = "complete.obs")$p.value)) %>%
-  filter(!(var1 %in% sigvars)) %>%
-  filter(var1 %in% names(Ho_r)) %>%
-  filter(p.value < 0.05) %>%
-  pull(var1)
-
-gg_df2 <- 
-  mod_df %>%
-  pivot_longer(all_of(cor_vars)) %>%
-  mutate(name =  map_chr(name, ~make_pretty_names(.x))) %>%
-  filter(!(name %in% c("Glacier (inside/outside)")))
-
-ggplot(gg_df2, aes(x = value, y = Ho)) +
-  geom_point() +
-  facet_wrap(~name, scales = "free") +
-  theme_classic() +
-  labs(x = "Value", y = "Ho") +
-  geom_smooth(method = "lm", se = TRUE) +
-  stat_cor(label.y = 0) +
-  theme(strip.background = element_blank(), strip.text.x = element_text(hjust = 0, size = 12))
-```
-
-
 ```{r}
 # Make pretty plots 
 mod <- best_model
@@ -869,7 +834,7 @@ plt4 <-
       scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
 })
 
-pdf(here("analysis", "genetic_diversity", "ho.pdf"), width = 4.5, height = 4.5)
+pdf(here(outpath, "ho.pdf"), width = 4.5, height = 4.5)
 ggplot(gg_df) +
   geom_sf(data = ca) +
   geom_point(aes(x = x, y = y, col = Ho)) +
@@ -981,7 +946,7 @@ resid_plts <-
   bind_rows() %>%
   mutate(name = map_chr(name, ~make_pretty_names(.x)))
 
-pdf(here(outputs, "residual_plot.pdf"), width = 8.5, height = 4)
+pdf(here(outpath, "residual_plot.pdf"), width = 8.5, height = 4)
 ggplot(resid_plts, aes(x = value, y = residuals)) +
   geom_point() +
   geom_smooth(method = "lm") +
@@ -1108,7 +1073,6 @@ mod_plt <-
   scale_color_viridis_c(option = "mako") +
   stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
   theme(legend.position = "none")
-
 
 pdf(here(outpath, "main_figure.pdf"), width = 12.5, height = 7.5) 
 plot_grid(
