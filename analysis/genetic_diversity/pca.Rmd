@@ -1,0 +1,168 @@
+
+```{r}
+library(tidyverse)
+library(algatr)
+library(terra)
+library(sf)
+library(here)
+library(cowplot)
+source(here("general_functions.R"))
+outpath <- here("analysis", "genetic_diversity", "outputs")
+pca <- 
+  read_table(here(outpath, "58-Sceloporus_pca.eigenvec"), col_names = FALSE) %>%
+  rename(SampleID = X2, PC1 = X3, PC2 = X4, PC3 = X5) %>%
+  # X1 is the population ID
+  select(-X1)
+coords <- get_coords(sf = TRUE) %>% filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
+ca <- get_ca()
+
+pca_sf <- 
+  left_join(coords, pca, by = "SampleID") %>%
+  pivot_longer(starts_with("PC"), names_to = "PC", values_to = "value") %>%
+  drop_na()
+
+pdf(here(outpath, "pca.pdf"), width = 10, height = 3)
+ggplot(pca_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = value)) +
+  facet_wrap(~PC) +
+  theme_void() +
+  scale_color_viridis_c(option = "turbo")
+dev.off()
+
+vals_to_rgb <- function(x){
+  scales::rescale(x, to = c(0, 1))
+}
+
+rgb_sf <- 
+  left_join(coords, pca, by = "SampleID") %>%
+  drop_na() %>%
+  mutate(across(starts_with("PC"), vals_to_rgb, .names = "RGB_{.col}"))
+
+# Plot RGB
+pdf(here(outpath, "pca.pdf"), width = 6, height = 3)
+leg <- 
+  ggplot(rgb_sf) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  annotate("segment", x = min(rgb_sf$PC1) * 1.1, xend = max(rgb_sf$PC1) * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("segment", x = 0, xend = 0, y = min(rgb_sf$PC2) * 1.1, yend = max(rgb_sf$PC2) * 1.1, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("text", x = max(rgb_sf$PC1) * 1.1, y = 0, label = "PC1", color = "black", hjust = -0.1) +
+  annotate("text", x = 0, y = max(rgb_sf$PC2) * 1.1, label = "PC2", color = "black", vjust = -0.1) +
+  coord_cartesian(xlim = c(min(rgb_sf$PC1) * 1.4, max(rgb_sf$PC1) * 1.4), ylim = c(min(rgb_sf$PC2) * 1.4, max(rgb_sf$PC2) * 1.4))
+plt <- 
+  ggplot(rgb_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity()
+
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+dev.off()
+
+library(wingen)
+
+win_sf <- st_transform(rgb_sf, 3310)
+lyr <- coords_to_raster(win_sf, res = 10000)
+
+wg <- 
+  map(c("PC1", "PC2", "PC3"), ~{
+    window_general(
+      x = win_sf[[.x]],
+      coords = win_sf,
+      lyr = lyr,
+      wdim = 7,
+      stat = mean,
+      na.rm = TRUE,
+      min_n = 1
+    )
+  }, .progress = TRUE) %>%
+  rast()
+
+pca_wg <- wg[[c(1,3,5)]]
+names(pca_wg) <- c("PC1", "PC2", "PC3")
+
+pca_krig <- krig_gd(pca_wg, disagg(lyr, 2), index = 1:3)
+# Rescale raster PCA values from 0 to 1
+writeRaster(pca_krig, here(outpath, "pca_krig.tif"), overwrite = TRUE)
+ca_proj <- ca %>%
+  st_transform(3310)
+
+rgb_wg <- 
+  pca_krig %>%
+  mask(ca_proj) %>%
+  as.data.frame(xy = TRUE) %>%
+  mutate(across(starts_with("PC"), vals_to_rgb, .names = "RGB_{.col}"))
+
+
+leg <- 
+  ggplot(rgb_sf) +
+  annotate("segment", x = min(rgb_sf$PC1) * 1.1, xend = max(rgb_sf$PC1) * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm")), col = "gray70") +
+  annotate("segment", x = 0, xend = 0, y = min(rgb_sf$PC2) * 1.1, yend = max(rgb_sf$PC2) * 1.1, arrow = arrow(length = unit(0.2, "cm")), col = "gray70") +
+  annotate("text", x = max(rgb_sf$PC1) * 1.1, y = 0, label = "PC1", color = "gray70", hjust = -0.1, cex = 3) +
+  annotate("text", x = 0, y = max(rgb_sf$PC2) * 1.1, label = "PC2", color = "gray70", vjust = -0.5, cex = 3) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  coord_cartesian(xlim = c(min(rgb_sf$PC1) * 1.4, max(rgb_sf$PC1) * 1.4), ylim = c(min(rgb_sf$PC2) * 1.4, max(rgb_sf$PC2) * 1.4))
+
+plt <- 
+  ggplot(rgb_wg) +
+  geom_sf(data = ca_proj) +
+  geom_raster(aes(x = x, y = y, fill = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  geom_sf(data = rgb_sf, aes(fill = rgb(RGB_PC1, RGB_PC2, RGB_PC3)), col = "black", pch = 21, cex = 1) +
+  theme_void() +
+  scale_fill_identity()
+
+png(here(outpath, "pca_wingen.png"), width = 6, height = 3, units = "in", res = 300)
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+dev.off()
+```
+
+```{r}
+# Required libraries
+library(rayshader)
+library(elevatr)
+
+# Get elevation data
+elevation_data <- get_elev_raster(ca, z = 7)
+
+# Convert elevation raster to matrix
+elevation_matrix <- raster_to_matrix(elevation_data)
+
+# Create RGB matrix (replace with your actual RGB raster)
+rgb_raster <- raster::stack(elevation_data)
+values(rgb_raster) <- cbind(
+  runif(ncell(elevation_data), 0, 255),  # Red channel
+  runif(ncell(elevation_data), 0, 255),  # Green channel
+  runif(ncell(elevation_data), 0, 255)   # Blue channel
+)
+
+# Convert RGB raster to matrix
+rgb_matrix <- raster_to_matrix(rgb_raster)
+
+# Create 3D plot with RGB overlay
+elevation_matrix %>%
+  sphere_shade(texture = "desert") %>%
+  add_overlay(rgb_matrix / 255) %>%
+  plot_3d(elevation_matrix, 
+          zscale = 10,  # Exaggerate elevation
+          theta = 135,  # Rotation angle
+          phi = 45,     # Viewing angle
+          windowsize = c(1000, 800),
+          zoom = 0.5,
+          background = "white")
+
+# Render camera position
+render_camera(theta = 135, phi = 45, zoom = 0.5)
+
+# Render high-quality image
+render_highquality()
+
+# Export to PNG
+render_snapshot(filename = "california_elevation_rgb_3d.png", 
+                width = 1200, 
+                height = 900, 
+                dpi = 300)
+```
