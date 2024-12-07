@@ -15,24 +15,21 @@ rda_sig <-
 write.table(rda_sig$locus, here("analysis", "gea", "outputs", "rda_ids.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE)
 
 # Extract numeric coordinates from locus
-rda_sig <- 
+rda_sig_formatted <- 
   rda_sig %>% 
   mutate(
-    start = as.integer(str_extract(locus, "(?<=_)[0-9]+")),
-    end = as.integer(str_extract(locus, "(?<=_)[0-9]+"))
+    # Pull out the digit in ...[digit]_[bp]_[bp] pattern
+    start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]_[A-Z])")),
+    end = start
   )
 
 # Write out csv file
-write_csv(rda_sig, here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
+write_csv(rda_sig_formatted, here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
 
 # Create bed file
 rda_bed <- 
-  rda_sig %>%
+  rda_sig_formatted %>%
   select(scaffold, start, end) 
 
 # Write to table with no header
 write.table(rda_bed, here("analysis", "gea", "outputs", "rda_sig_p01.bed"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
-
-library(vcfR)
-library(here)
-vcf <- read.vcfR(here("data", "ccgp_data", "58-Sceloporus_annotated_pruned_0.6.vcf.gz"))

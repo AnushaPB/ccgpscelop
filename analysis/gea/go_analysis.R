@@ -350,3 +350,5 @@ ggplot(gg_df, aes(x = BPcum, y = logp, color = as.factor(scaffold))) +
   ) +
   labs(x = "Chromosome", y = "-log10(p-value)")
 dev.off()
+
+

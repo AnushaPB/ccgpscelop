@@ -17,10 +17,12 @@ source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 
 # Read in het data
 callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
+
 neutral <- 
   format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus.het"), callable_sites = callable_sites) %>%
   mutate(neutral_ho = Ho) %>%
   select(IID, neutral_ho)
+
 
 gea <- 
   format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%

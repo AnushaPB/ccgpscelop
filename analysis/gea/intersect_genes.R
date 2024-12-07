@@ -12,8 +12,7 @@ gene_pos <-
 
 # Get RDA positions which have SNP names
 rda <- 
-  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv")) %>% 
-  dplyr::select(scaffold, start, end, locus, p.adj)
+  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv")) 
 
 # Intersect the two to get SNP names for the SNPs in genes
 gene_snp <- left_join(gene_pos, rda, by = c("scaffold", "start", "end"))
