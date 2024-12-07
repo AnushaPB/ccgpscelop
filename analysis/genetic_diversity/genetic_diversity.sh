@@ -1,8 +1,10 @@
+# Run in analysis/genetic_diversity
 source activate ccgpscelop
 BASE_PATH=../../data/ccgp_data
 # !!! NOTE: running into issues with this file so currently het/window_pi was created on Rancor using Anne's 58-Sceloporus_annotated plink files
 PLINK=$BASE_PATH/58-Sceloporus
 VCF=$BASE_PATH/58-Sceloporus_clean_snps.vcf.gz
+PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6
 
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
@@ -17,4 +19,8 @@ VCF=$BASE_PATH/58-Sceloporus_clean_snps.vcf.gz
 plink --bfile $PLINK --het --out outputs/58-Sceloporus --allow-extra-chr
 
 # WINDOWED PI -------------------------------------------------------------------------
-vcftools --gzvcf $VCF --window-pi 10000 --out 58-Sceloporus_10kb_windowpi
+vcftools --gzvcf $VCF --window-pi 10000 --out outputs/58-Sceloporus_10kb_windowpi
+vcftools --gzvcf $VCF --window-pi 100000 --out outputs/58-Sceloporus_100kb_windowpi
+
+# PCA ---------------------------------------------------------------------------------
+plink --bfile $PLINK_PRUNED --pca 3 --out outputs/58-Sceloporus_pca
