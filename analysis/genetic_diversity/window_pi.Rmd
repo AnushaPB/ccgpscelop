@@ -1,0 +1,144 @@
+```{r}
+library(tidyverse)
+library(here)
+outpath <- here("analysis", "genetic_diversity", "outputs")
+wpi <- read_table(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus_10kb_windowpi.windowed.pi"))
+
+
+chr_count <- wpi %>% count(CHROM) %>% arrange(desc(n)) %>% filter(n > 1000) %>% pull(CHROM)
+
+
+gg_df <-
+  wpi %>%
+  filter(CHROM %in% chr_count) %>%
+  mutate(CUMSUM = cumsum(BIN_START)) %>%
+  mutate(CHROM = factor(CHROM, levels = chr_count)) 
+
+gg_df2 <-
+  gg_df %>%
+  mutate(BIN_START = floor(BIN_START / 100000) * 100000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(PI = mean(PI)) %>%
+  ungroup()
+
+pdf(here(outpath, "windowed_pi.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(aes(xintercept = BIN_START, col = PI), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "-log(mean p) (10kb window)") 
+dev.off()
+```
+
+```{r}
+gea <- read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv"))
+hsp <-
+  gea %>% 
+  filter(grepl("Heat shock protein", full_name)) %>%
+  filter(p.adj < 0.001) %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = chr_count)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n())
+
+top <- 
+  gea %>% 
+  filter(scaffold %in% chr_count) %>%
+  arrange(p.adj) %>% 
+  filter(p.adj < 0.001) %>%
+  #head(1000) %>% 
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = chr_count)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(p.adj = min(p.adj, na.rm = TRUE), pcount = n(), q.values = mean(q.values, na.rm = TRUE)) %>%
+  ungroup()
+
+pdf(here(outpath, "windowed_pi_gea.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(data = top, aes(xintercept = BIN_START, col = -log(p.adj)), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "-log(mean p) (10kb window)") 
+
+ggplot(gg_df) +
+  geom_vline(data = top, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)") 
+
+ggplot(gg_df) +
+  geom_vline(data = top, aes(xintercept = BIN_START, col = q.values), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "mean q (10kb window)") 
+
+ggplot(gg_df) +
+  geom_vline(data = head(arrange(top, p.adj), 1000), aes(xintercept = BIN_START, col = -log(p.adj)), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * "  (10kb window)"), col = "-log(p) (top 10,000; 10kb window)") 
+
+ggplot(gg_df) +
+  geom_vline(data = top, aes(xintercept = BIN_START, col = -log(p.adj)), alpha = 0.5) +
+  geom_vline(data = hsp, aes(xintercept = BIN_START), alpha = 1, col = "cyan3") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "-log(mean p) (10kb window)") 
+dev.off()
+```
