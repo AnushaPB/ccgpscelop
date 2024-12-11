@@ -24,7 +24,7 @@ knitr::opts_chunk$set(
 
 ```{r, fig.width = 13, fig.height = 6}
 smcpp <- 
-  get_smcpp(folder = "outputs/k6", K = 6) %>%
+  get_smcpp(folder = "outputs", K = 6) %>%
   group_by(pop) %>%
   # Generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
   filter(T == 2) %>%

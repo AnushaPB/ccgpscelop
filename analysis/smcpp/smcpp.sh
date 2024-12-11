@@ -5,6 +5,7 @@ source activate ccgpscelop
 # INSTALLATION -------------------------------------------------------------------
 # install smcpp if it doesn't exist already
 if [ ! -d "smcpp" ]; then
+    # sudo apt-get install -y python3-dev libgmp-dev libmpfr-dev libgsl0-dev
     # If the directory does not exist, execute the following commands
     git clone https://github.com/popgenmethods/smcpp.git
     cd smcpp
@@ -23,9 +24,9 @@ fi
 # create paths
 BASE_PATH="../../data"
 PREFIX="58-Sceloporus"
-GENOME="$BASE_PATH/genome/ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna.fai"
-GENOME_NAME="GCA_023333645.1_rSceOcc1.0.p_genomic"
-CALLABLE="$BASE_PATH/raw_data/58-Sceloporus_callable_sites.bed"
+GENOME="$BASE_PATH/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta.fai"
+GENOME_NAME="jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled"
+CALLABLE="$BASE_PATH/ccgp_data/58-Sceloporus_callable_sites.bed"
 
 # create reverse masks from genome data if they don't exist
 if [ -f "${PREFIX}_uncallable_sites.sorted.bed.gz" ]; then
@@ -117,7 +118,7 @@ BASE_PATH="../.."
 MUTATION_RATE=1.17e-8
 
 # Files
-VCF_FILE="${BASE_PATH}/data/processed_data/58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40.vcf.gz"
+VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_clean_snps.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
 # Index the vcf file
@@ -125,7 +126,8 @@ tabix -p vcf "${VCF_FILE}"
 
 # Extract contig information for contigs with length > 1Mb
 CONTIG_FILE="outputs/contigs.txt"
-if [ -f $CONTIF_FILE ]; then
+mkdir -p outputs
+if [ -f $CONTIG_FILE ]; then
     mapfile -t CONTIGS_ALL < "${CONTIG_FILE}"
 else
     mapfile -t CONTIGS_ALL < <(zgrep '##contig=' "${VCF_FILE}" | awk -F'[<>,]' '{for(i=1;i<=NF;i++) {if($i ~ /ID=/) id=substr($i,4); if($i ~ /length=/) len=substr($i,8);} if(len+0 > 1000000) print id}')
@@ -134,7 +136,6 @@ else
 fi
 
 # Subset contigs
-#CONTIGS=("${CONTIGS_ALL[0]}")
 CONTIGS=("${CONTIGS_ALL[@]:0:10}")
 # Print the contigs
 echo ${CONTIGS[@]}
@@ -147,6 +148,13 @@ do
     process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
 done
 wait
+
+[1] 1967561
+[2] 1967562
+[3] 1967563
+[4] 1967565
+[5] 1967567
+[6] 1967570
 
 # Run all populations together
 # Combine all populations into one
