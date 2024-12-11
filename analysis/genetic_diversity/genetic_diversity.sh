@@ -2,7 +2,7 @@
 source activate ccgpscelop
 BASE_PATH=../../data/ccgp_data
 # !!! NOTE: running into issues with this file so currently het/window_pi was created on Rancor using Anne's 58-Sceloporus_annotated plink files
-PLINK=$BASE_PATH/58-Sceloporus
+PLINK=$BASE_PATH/58-Sceloporus_annotated
 VCF=$BASE_PATH/58-Sceloporus_clean_snps.vcf.gz
 PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6
 
@@ -17,6 +17,9 @@ PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6
 # calculate heterozygosity stats
 # set const-fid to set FID (population ID) to 0; otherwise Error: Multiple instances of '_' in sample ID.
 plink --bfile $PLINK --het --out outputs/58-Sceloporus --allow-extra-chr
+
+# Calculate heterozygosity from pruned data
+plink --bfile $PLINK_PRUNED --het --out outputs/58-Sceloporus_pruned --allow-extra-chr
 
 # WINDOWED PI -------------------------------------------------------------------------
 vcftools --gzvcf $VCF --window-pi 10000 --out outputs/58-Sceloporus_10kb_windowpi
