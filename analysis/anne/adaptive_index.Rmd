@@ -38,20 +38,24 @@ source(here("general_functions.R"))
 
 ```{r}
 scafs = list.dirs(here("outputs/RDA/"), full.names = FALSE, recursive = FALSE)
-i = 1
-scaf_name = scafs[[i]]
-path_to_output = paste0(here("outputs/RDA"), "/", scafs[[i]], "/")
+scaf_name = scafs[[9]]
+path_to_output = paste0(here("outputs/RDA"), "/", scaf_name, "/")
 ```
 
 ```{r}
 # The following will be unnecessary once newer RDA code has been run, which
 # will no longer generate .rds files at all.
+mod <- readRDS(paste0(path_to_output, "/58-Sceloporus_RDA_model_full.RDS"))
+biplot <- data.frame(mod$CCA$biplot)
+scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE)
+unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0)
 
-mod <- readRDS(paste0(here("outputs/RDA"), "/", scafs[[1]], "/58-Sceloporus_RDA_model_full.RDS"))
-biplot <- data.frame(mod$CCA$biplot) # %>% rownames_to_column(var = "var") %>% write_csv(file = biplot_output, col_names = TRUE)
-scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE) # %>% write_csv(file = scalload_output, col_names = TRUE)
-unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0) # %>% write_csv(file = unscalload_output, col_names = TRUE)
+# Save outputs so I don't have to reload RDS file again
+biplot %>% rownames_to_column(var = "var") %>% write_csv(file = paste0(path_to_output, "58-Sceloporus_biplot.csv"), col_names = TRUE)
+scaled_loadings %>% write_csv(file = paste0(path_to_output, "58-Sceloporus_scaledloadings.csv"), col_names = TRUE)
+unscaled_loadings %>% write_csv(file = paste0(path_to_output, "58-Sceloporus_unscaledloadings.csv"), col_names = TRUE)
 
+# Load old env until new RDA results come back with new env layers:
 load_algatr_example()
 env_pres = CA_env
 ```
@@ -79,13 +83,15 @@ ca <- get_ca()
 ```{r}
 adap_ind <- adaptive_index(biplot, K = ncol(biplot), env_pres, 
                            coords = coords %>% dplyr::select(x, y), range = NULL, 
-                           method = "loadings", scale_env, center_env)
+                           method = "loadings")
 ```
 
 # 3. Build map of adaptive index
 
 ```{r}
 p_adapt <- plot_adaptiveindex(Proj_data = adap_ind, scaf_name, bkg = ca, to_mask = FALSE)
+p_adapt
+ggsave(paste0(path_to_output, "58-Sceloporus_", scaf_name, "_adaptiveindex.png"), width = 12, height = 4)
 ```
 
 # 4. Build biplots
@@ -94,12 +100,14 @@ p_adapt <- plot_adaptiveindex(Proj_data = adap_ind, scaf_name, bkg = ca, to_mask
 # TODO automatically uses q.values column from rdadapt
 plt_biplot <- biplot_plot(biplot, loadings = scaled_loadings, 
                           pvals = rdadapt, sig = 0.01, biplot_type = "separate")
+biplots <- plot_grid(plt_biplot$p_rda1, plt_biplot$p_rda2, plt_biplot$p_rda3, nrow = 1)
+biplots
+ggsave(paste0(path_to_output, "58-Sceloporus_", scaf_name, "_biplot.png"), width = 12, height = 4)
 ```
 
 # 5. Knit everything together and export
 
 ```{r}
-biplots <- plot_grid(plt_biplot$p_rda1, plt_biplot$p_rda2, plt_biplot$p_rda3, nrow = 1)
 plot_grid(p_adapt, biplots, nrow = 2, rel_heights = c(1, 0.75))
-ggsave(paste0(path_to_output, "58-Sceloporus_", scaf_name, "_adaptiveindex.pdf"), width = 12, height = 8)
+ggsave(paste0(path_to_output, "58-Sceloporus_", scaf_name, "_adaptiveindexcompplot.png"), width = 12, height = 8) # add dpi arg
 ```

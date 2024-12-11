@@ -141,15 +141,21 @@ biplot_plot <- function(biplot, loadings, pvals, sig = 0.01, col_w_pvals, biplot
     p_rda1 <- biplot_helper(TAB_snps_sub = tidy_dat_12$TAB_snps_sub,
                            TAB_var_sub = tidy_dat_12$TAB_var_sub,
                            biplot_type = "separate",
-                           color_by = "x")
+                           color_by = "x",
+                           xax = tidy_dat_12$xax,
+                           yax = tidy_dat_12$yax)
     p_rda2 <- biplot_helper(TAB_snps_sub = tidy_dat_12$TAB_snps_sub,
                             TAB_var_sub = tidy_dat_12$TAB_var_sub,
                             biplot_type = "separate",
-                            color_by = "y")
+                            color_by = "y",
+                           xax = tidy_dat_12$xax,
+                           yax = tidy_dat_12$yax)
     p_rda3 <- biplot_helper(TAB_snps_sub = tidy_dat_13$TAB_snps_sub,
                             TAB_var_sub = tidy_dat_13$TAB_var_sub,
                             biplot_type = "separate",
-                            color_by = "y")
+                            color_by = "y",
+                           xax = tidy_dat_13$xax,
+                           yax = tidy_dat_13$yax)
     plt_biplot <- list(p_rda1 = p_rda1, p_rda2 = p_rda2, p_rda3 = p_rda3)
   }
   return(plt_biplot)
@@ -181,7 +187,7 @@ tidy_biplot_helper <- function(biplot, biplot_axes, loadings, pvals, sig, col_w_
   TAB_var_sub$x <- TAB_var_sub$x * max(TAB_snps_sub$x) / stats::quantile(TAB_var_sub$x)[4]
   TAB_var_sub$y <- TAB_var_sub$y * max(TAB_snps_sub$y) / stats::quantile(TAB_var_sub$y)[4]
 
-  return(list(TAB_var_sub = TAB_var_sub, TAB_snps_sub = TAB_snps_sub))
+  return(list(TAB_var_sub = TAB_var_sub, TAB_snps_sub = TAB_snps_sub, xax = xax, yax = yax))
 }
 
 ggtidy_helper <- function(loadings, pvals, sig, col_w_pvals) {
@@ -205,10 +211,12 @@ ggtidy_helper <- function(loadings, pvals, sig, col_w_pvals) {
 #' @param TAB_var_sub df with variable loadings
 #' @param biplot_type "overall" or "separate" if you want SNPs colorized by axis
 #' @param color_by if biplot_type = "separate", which axis to color SNPs by ("x" or "y")
+#' @param xax label for x axis
+#' @param yax label for y axis
 #'
 #' @return
 #' @export
-biplot_helper <- function(TAB_snps_sub, TAB_var_sub, biplot_type, color_by) {
+biplot_helper <- function(TAB_snps_sub, TAB_var_sub, xax, yax, biplot_type, color_by) {
   if (biplot_type == "overall") {
     plt_biplot <-
     ggplot2::ggplot() +
@@ -227,8 +235,7 @@ biplot_helper <- function(TAB_snps_sub, TAB_var_sub, biplot_type, color_by) {
                      panel.grid = ggplot2::element_blank(),
                      plot.background = ggplot2::element_blank(),
                      legend.text = ggplot2::element_text(size = ggplot2::rel(.8)),
-                     strip.text = ggplot2::element_text(size = 11)) +
-      coord_equal()
+                     strip.text = ggplot2::element_text(size = 11))
   }
   if (biplot_type == "separate") {
     if (color_by == "x") {
@@ -250,8 +257,7 @@ biplot_helper <- function(TAB_snps_sub, TAB_var_sub, biplot_type, color_by) {
                        plot.background = ggplot2::element_blank(),
                        # legend.text = ggplot2::element_text(size = ggplot2::rel(.8)),
                        legend.position = "none",
-                       strip.text = ggplot2::element_text(size = 11)) +
-        coord_equal()
+                       strip.text = ggplot2::element_text(size = 11))
     }
     if (color_by == "y") {
       plt_biplot <-
@@ -272,8 +278,7 @@ biplot_helper <- function(TAB_snps_sub, TAB_var_sub, biplot_type, color_by) {
                        plot.background = ggplot2::element_blank(),
                        legend.position = "none",
                        # legend.text = ggplot2::element_text(size = ggplot2::rel(.8)),
-                       strip.text = ggplot2::element_text(size = 11)) +
-        coord_equal()
+                       strip.text = ggplot2::element_text(size = 11))
     }
 
   }
