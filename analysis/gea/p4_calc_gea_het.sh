@@ -1,3 +1,5 @@
+# Run in analysis/gea
+source activate ccgpscelop
 
 # Get plink 
 PLINK=../../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6
@@ -10,9 +12,15 @@ plink --bfile $PLINK \
 
 # Subset plink file with genes (created using intersect_genes.R)
 plink --bfile outputs/gea \
-      --extract outputs/gene_ids.txt \
+      --extract outputs/gea_gene_ids.txt \
       --make-bed \
       --out outputs/genes --allow-extra-chr
+
+# Subset plink file without RDA snps
+plink --bfile $PLINK \
+      --exclude outputs/rda_ids.txt \
+      --make-bed \
+      --out outputs/nogea --allow-extra-chr
 
 # Calculate heterozygosity stats
 # note: outputs homozygosity information
@@ -26,13 +34,14 @@ plink --bfile outputs/gea \
 # set const-fid to set FID (population ID) to 0; otherwise Error: Multiple instances of '_' in sample ID.
 plink --bfile outputs/gea --het --out outputs/gea --allow-extra-chr
 plink --bfile outputs/genes --het --out outputs/genes --allow-extra-chr
+plink --bfile outputs/nogea --het --out outputs/nogea --allow-extra-chr
 
 # Calculate pairwise genetic distance
 plink --bfile outputs/gea --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid --out outputs/gea 
-plink --bfile outputs/genes --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid --out outputs/genes 
-plink --bfile $PLINK --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid --out outputs/neutral 
+plink --bfile outputs/genes --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid --out outputs/genes
+plink --bfile outputs/nogea --allow-extra-chr --autosome-num 95 --distance square 1-ibs --const-fid --out outputs/nogea
 
 # Run PCA
 plink --bfile outputs/gea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/gea
 plink --bfile outputs/genes --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/genes
-plink --bfile $PLINK --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/neutral
+plink --bfile outputs/nogea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/nogea

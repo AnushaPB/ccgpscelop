@@ -19,10 +19,9 @@ source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
 
 neutral <- 
-  format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus.het"), callable_sites = callable_sites) %>%
+  format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
   mutate(neutral_ho = Ho) %>%
   select(IID, neutral_ho)
-
 
 gea <- 
   format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%
@@ -53,8 +52,8 @@ ggplot(df) +
   # Remove fill legend
   #guides(fill = FALSE) +
   labs(col = "", fill = "") +
-  xlab("Neutral heterozygosity") +
-  ylab("Adaptive heterozygosity") 
+  xlab("Non-GEA heterozygosity") +
+  ylab("GEA heterozygosity") 
 dev.off()
 
 coords <- get_coords(sf = TRUE) %>% rename(IID = SampleID)
@@ -87,8 +86,8 @@ plt1 <-
   # Remove fill legend
   #guides(fill = FALSE) +
   labs(col = "", fill = "Residuals") +
-  xlab("Neutral heterozygosity") +
-  ylab("Adaptive heterozygosity") 
+  xlab("Non-GEA heterozygosity") +
+  ylab("GEA heterozygosity") 
 
 plt2 <- 
   ggplot(gg_df) +
@@ -105,7 +104,7 @@ plt3a <-
     geom_sf(data = ca) +
     geom_sf(aes(col = neutral_ho)) +
     scale_color_viridis_c(option = "magma") +
-    labs(col = "Neutral Ho") +
+    labs(col = "Non-GEA Ho") +
     theme_void()
 plt3b <- 
   ggplot(coords) +
@@ -339,4 +338,79 @@ plot_grid(plt1, plt2, plt3, nrow = 1, rel_widths = c(5, 4, 4))
 dev.off()
 
 # PCA
-pca_genes <- read.table(here("analysis", "gea", "outputs", "genes.eigenvec"))
+process_pca <- function(path){
+  pca <- read.table(path)
+  pca <- 
+    pca %>% 
+    rename(SampleID = V2) %>% 
+    select(-V1) %>% 
+    rename(PC1 = V3, PC2 = V4, PC3 = V5) %>%
+    # add RGB
+    mutate(RGB_PC1 = scales::rescale(PC1, to = c(0, 1)),
+           RGB_PC2 = scales::rescale(PC2, to = c(0, 1)),
+           RGB_PC3 = scales::rescale(PC3, to = c(0, 1))
+    )
+  return(pca)
+}
+
+coords <- get_coords(sf = TRUE)
+pca_genes <- 
+  process_pca(here("analysis", "gea", "outputs", "genes.eigenvec")) %>%
+  left_join(coords, by = "SampleID") %>%
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>%
+  st_as_sf()
+pca_nogea <- 
+  process_pca(here("analysis", "gea", "outputs", "nogea.eigenvec"))  %>%
+  left_join(coords, by = "SampleID") %>%
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>% 
+  mutate(PC2 = -PC2, RGB_PC2 = scales::rescale(PC2, to = c(0, 1))) %>%
+  mutate(PC1 = -PC1, RGB_PC1 = scales::rescale(PC1, to = c(0, 1))) %>%
+  mutate(PC3 = -PC3, RGB_PC3 = scales::rescale(PC3, to = c(0, 1))) %>%
+  st_as_sf()
+
+# Plot RGB 
+outpath <- here("analysis", "gea", "plots")
+pdf(here(outpath, "genes_pca.pdf"), width = 6, height = 3)
+minvals <- min(pca_genes$PC1, pca_genes$PC2)
+maxvals <- max(pca_genes$PC1, pca_genes$PC2)
+leg <- 
+  ggplot(pca_genes) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  annotate("segment", x = minvals * 1.1, xend = maxvals * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("segment", x = 0, xend = 0, y = minvals * 1.1, yend = maxvals * 1.1, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("text", x = maxvals * 1.1, y = 0, label = "PC1", color = "black", hjust = -0.1) +
+  annotate("text", x = 0, y = maxvals * 1.1, label = "PC2", color = "black", vjust = -0.1) +
+  coord_cartesian(xlim = c(minvals * 1.4, maxvals * 1.4), ylim = c(minvals * 1.4, maxvals * 1.4))
+plt <- 
+  ggplot(pca_genes) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity()
+
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+
+
+minvals <- min(pca_nogea$PC1, pca_nogea$PC2)
+maxvals <- max(pca_nogea$PC1, pca_nogea$PC2)
+leg <- 
+  ggplot(pca_nogea) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  annotate("segment", x = minvals * 1.1, xend = maxvals * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("segment", x = 0, xend = 0, y = minvals * 1.1, yend = maxvals * 1.1, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("text", x = maxvals * 1.1, y = 0, label = "PC1", color = "black", hjust = -0.1) +
+  annotate("text", x = 0, y = maxvals * 1.1, label = "PC2", color = "black", vjust = -0.1) +
+  coord_cartesian(xlim = c(minvals * 1.4, maxvals * 1.4), ylim = c(minvals * 1.4, maxvals * 1.4))
+plt <- 
+  ggplot(pca_nogea) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity()
+
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+dev.off()

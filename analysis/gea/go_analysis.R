@@ -2,65 +2,12 @@ library(tidyverse)
 library(here)
 #BiocManager::install("topGO")
 library(topGO)
+library(cowplot)
 
-clean_gene_annotations <- function(input_file) {
-    # Read the file
-    data <- read.table(input_file, sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
-    #DOES NOT WORK: data <- read_table(input_file, col_names = FALSE)
-    
-    # Extract the column containing gene information (based on our format, it's column 13)
-    gene_info <- data[, 12]
-    
-    # Function to extract information from each entry
-    extract_info <- function(entry) {
-        # Extract Gene ID
-        gene_id <- gsub(".*ID=(.*?);.*", "\\1", entry)
-        
-        # Extract gene name and organism
-        name_org <- gsub(".*Name=(.*?);.*", "\\1", entry)
-        # Extract organism name from square brackets
-        organism <- gsub(".*\\[(.*?)\\].*", "\\1", name_org)
-        # Get the UniProt ID (everything before the :)
-        uniprot_id <- gsub("^(.*?):.*", "\\1", organism)
-        # Clean up organism name to remove any UniProt IDs
-        organism <- gsub("^.*?:", "", organism)
-        
-        # Extract gene name (everything before the square bracket)
-        gene_name <- gsub("\\s*\\[.*\\].*$", "", name_org)
-        
-        return(data.frame(ID = gene_id, gene_name = gene_name, organism= organism, full_name= name_org, uniprot_id = uniprot_id, original_entry = entry))
-    }
-    
-    # Apply the extraction function to each row
-    result <- map(gene_info, extract_info, .progress = TRUE) 
-    
-    # Convert to data frame with proper column names
-    result_df <- bind_rows(result)
-
-    # Remove duplicates (multiple SNPs that fall in the same gene)
-    result_df <- distinct(result_df)
-
-    # Replace rows where ID is not present with NA
-    result_df$organism <- ifelse(grepl("ID=", result_df$organism), NA, result_df$organism)
-    result_df$uniprot_id <- ifelse(grepl("ID=", result_df$uniprot_id), NA, result_df$uniprot_id)
-    
-    return(result_df)
-}
-
-# Read in genes 
-# CHECK WHY THERE ARE PARSING FAILURES
-genes <- clean_gene_annotations(here("analysis", "gea", "outputs", "gea_genes.bed"))
-genes_org <- 
-  genes %>% 
-  drop_na(organism) %>% 
-  mutate(ID = gsub("GNX-", "", ID))  %>% 
-  # remove version from uniprot_id
-  mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
-
-write_csv(genes_org, here("analysis", "gea", "outputs", "genes_list.csv"))
 genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
-unique(genes_org$Gene_Name)
-unique(genes_org$Organism)
+
+# Check the number of unique genes
+print(paste("Number of genes:", nrow(genes_org)))
 
 #https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
 #install.packages("gprofiler2")
@@ -110,7 +57,7 @@ run_go <- function(org_key){
 # Run GO analysis for human genes
 go_hsapien <- run_go("hsapiens")
 write_csv(go_hsapien$result, here("analysis", "gea", "outputs", "hsapiens.csv"))
-head(go_hsapien$result, 3)
+head(go_hsapien$result[,1:11], 3)
 #gostplot(go_hsapien, capped = FALSE, interactive = TRUE)
 p <- gostplot(go_hsapien, capped = FALSE, interactive = FALSE)
 pdf(here("analysis", "gea", "plots", "hsapiens.pdf"))
@@ -123,7 +70,7 @@ bp_hsapien <-
     filter(p_value < 0.05) %>%
     arrange(p_value) %>%
     as_tibble() %>%
-    dplyr::select(p_value, precision, recall, term_name)
+    dplyr::select(p_value, precision, recall, term_name, intersection)
 
 genes_hsapien <- bp_hsapien$intersection
 nrow(bp_hsapien)
@@ -161,6 +108,8 @@ bp_mmusculus <-
     as_tibble() %>%
     dplyr::select(p_value, precision, recall, term_name)
 nrow(bp_mmusculus)
+
+# Comparing the results
 bp_mmusculus %>% arrange(p_value) %>% head(10)
 bp_mmusculus %>% arrange(desc(recall)) %>% head(10)
 
@@ -201,9 +150,8 @@ dev.off()
 
 # Proteins of interest
 
-# Heat shock proteins
+# Heat shock proteins (4)
 genes_org %>% filter(grepl("HSP", full_name) | grepl("heat shock", full_name))
-genes_org %>% filter(grepl(" heat", full_name))
 
 search <- function(x, y = NULL){
   if (is.null(y)) y <- genes_org 
@@ -251,9 +199,9 @@ search("ADR")
 
 #Chickens
 #HSP70 (Heat Shock Protein 70): Like in humans, HSP70 in chickens helps protect cells from heat stress.
-search("HSP70")
+search("Heat shock") # found HSP 70!
 #UCP (Uncoupling Protein): Chickens also have uncoupling proteins that play a role in thermogenesis, helping them cope with temperature fluctuations.
-search("UCP")
+search("UCP") 
 #TRPV4 (Transient Receptor Potential Vanilloid 4): This protein is involved in temperature sensation and regulation.
 #TRP in general is associated with thermosensation
 search("TRPV4")
@@ -287,7 +235,7 @@ search("PAS", bp_genes)
 # Look at p-values
 rda_genes <-
   # file from intersect_genes.R
-  read_csv(here("analysis", "gea", "outputs", "gene_snp.csv")) %>%
+  read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv")) %>%
   dplyr::rename(original_entry = full_name)  %>%
   left_join(genes_org) %>%
   # remove genes without IDs
@@ -305,7 +253,7 @@ arrange(rda_genes, p.adj) %>% head(10) %>% dplyr::select(gene_name, organism, un
 # Manhattan plots
 # Prepare the data for the Manhattan plot
 gg_df <- 
-  read_csv(here("analysis", "gea", "outputs", "gene_snp.csv"))  %>%
+  read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv"))  %>%
   mutate(logp = -log10(p.adj)) %>%
   mutate(scaffold = case_when(grepl("Scaffold", scaffold) ~ "Anonymous scaffolds", TRUE ~ scaffold)) %>%
   mutate(scaffold = factor(scaffold, levels = c(paste0("chr", 1:11), "Anonymous scaffolds"))) %>%
@@ -351,4 +299,4 @@ ggplot(gg_df, aes(x = BPcum, y = logp, color = as.factor(scaffold))) +
   labs(x = "Chromosome", y = "-log10(p-value)")
 dev.off()
 
-
+# GT TABLES
