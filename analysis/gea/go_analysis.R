@@ -20,7 +20,7 @@ run_go <- function(org_key){
 
     ids <- 
         genes_org %>% 
-        filter(grepl(search_key, organism)) %>%
+        #filter(grepl(search_key, organism)) %>%
         pull(uniprot_id)
 
     go_result <-
@@ -64,13 +64,32 @@ pdf(here("analysis", "gea", "plots", "hsapiens.pdf"))
 print(p)
 dev.off()
 
+go_hsapien_result <- 
+  go_hsapien$result %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(p_value, precision, recall, term_name, source, intersection)
+
+head(go_hsapien_result)
+
 bp_hsapien <- 
-    go_hsapien$result %>% 
-    filter(source == "GO:BP") %>% 
-    filter(p_value < 0.05) %>%
-    arrange(p_value) %>%
-    as_tibble() %>%
-    dplyr::select(p_value, precision, recall, term_name, intersection)
+  go_hsapien_result %>% 
+  filter(source == "GO:BP") 
+head(bp_hsapien)
+
+cc_hsapien <- 
+  go_hsapien_result %>% 
+  filter(source == "GO:CC") 
+head(cc_hsapien)
+
+mf_hsapien <- 
+  go_hsapien_result %>% 
+  filter(source == "GO:MF") 
+head(mf_hsapien)
+unique(mf_hsapien$term_name)
 
 genes_hsapien <- bp_hsapien$intersection
 nrow(bp_hsapien)
@@ -87,38 +106,99 @@ p <- gostplot(go_ggallus, capped = FALSE, interactive = FALSE)
 pdf(here("analysis", "gea", "plots", "ggallus.pdf"))
 print(p)
 dev.off()
+
+go_ggallus_result <- 
+  go_ggallus$result %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(p_value, precision, recall, term_name, source, intersection)
 bp_ggallus <- 
-    go_ggallus$result %>% 
-    filter(source == "GO:BP") %>% 
-    filter(p_value < 0.05) %>%
-    arrange(p_value) %>%
-    as_tibble() %>%
-    dplyr::select(p_value, precision, recall, term_name)
-nrow(bp_ggallus)
-bp_ggallus %>% arrange(p_value) %>% head(10)
-bp_ggallus %>% arrange(desc(recall)) %>% head(10)
+  go_ggallus_result %>% 
+  filter(source == "GO:BP") 
+mf_ggallus <- 
+  go_ggallus_result %>% 
+  filter(source == "GO:MF") 
+
 
 go_mmusculus <- run_go("mmusculus")
 write_csv(go_mmusculus$result, here("analysis", "gea", "outputs", "mmusculus.csv"))
+
+go_mmusculus_result <- 
+  go_mmusculus$result %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(p_value, precision, recall, term_name, source, intersection)
 bp_mmusculus <- 
-    go_mmusculus$result %>% 
-    filter(source == "GO:BP") %>% 
-    filter(p_value < 0.05) %>%
-    arrange(p_value) %>%
-    as_tibble() %>%
-    dplyr::select(p_value, precision, recall, term_name)
-nrow(bp_mmusculus)
+  go_mmusculus_result %>% 
+  filter(source == "GO:BP") 
+mf_mmusculus <- 
+  go_mmusculus_result %>% 
+  filter(source == "GO:MF") 
 
 # Comparing the results
 bp_mmusculus %>% arrange(p_value) %>% head(10)
 bp_mmusculus %>% arrange(desc(recall)) %>% head(10)
-
 
 bp_hsapien %>% arrange(p_value) %>% head(10)
 bp_ggallus %>% arrange(p_value) %>% head(10)
 
 bp_ggallus %>% arrange(desc(recall)) %>% head(10)
 bp_hsapien %>% arrange(desc(recall)) %>% head(10)
+
+
+# TABLES
+create_gt_table <- function(df, n = 5) {
+  # Rename columns
+  df <- df %>%
+    dplyr::rename(
+      `p` = p_value,
+      `Precision` = precision,
+      `Recall` = recall,
+      `Term Name` = term_name
+    ) %>%
+    mutate(`Term Name` = str_to_sentence(`Term Name`)) %>%
+    dplyr::arrange(p) %>%
+    head(n) %>%
+    dplyr::select(`Term Name`, Precision, Recall, p) 
+  
+  # Create gt table
+  gt_table <- df %>%
+    gt() %>%
+    fmt_scientific(
+      columns = p,
+      decimals = 2
+    ) %>%
+    fmt_number(
+      columns = c(`Precision`, `Recall`),
+      decimals = 2
+    ) %>%
+    data_color(
+      columns = c(`Precision`, `Recall`),
+      fn = scales::col_numeric(
+        palette = RColorBrewer::brewer.pal(9, "YlGnBu"),
+        domain = c(min(df$Precision, df$Recall), max(df$Precision, df$Recall))
+      )
+    )
+  
+  return(gt_table)
+}
+
+library(gt)
+gtsave(create_gt_table(bp_hsapien), here("analysis", "gea", "outputs", "hsapien_gt_bp.html"))
+gtsave(create_gt_table(mf_hsapien), here("analysis", "gea", "outputs", "hsapien_gt_mf.html"))
+gtsave(create_gt_table(go_hsapien_result), here("analysis", "gea", "outputs", "hsapien_gt.html"))
+
+# Repeat for mouse and chicken 
+gtsave(create_gt_table(bp_ggallus), here("analysis", "gea", "outputs", "ggallus_gt_bp.html"))
+gtsave(create_gt_table(bp_mmusculus), here("analysis", "gea", "outputs", "mmusculus_gt_bp.html"))
+gtsave(create_gt_table(mf_ggallus), here("analysis", "gea", "outputs", "ggallus_gt_mf.html"))
+gtsave(create_gt_table(mf_mmusculus), here("analysis", "gea", "outputs", "mmusculus_gt_mf.html"))
 
 
 # PLOTS
@@ -146,7 +226,6 @@ plt3 <- plot_bp(bp_mmusculus)
 plot_grid(plt1, plt2, plt3, nrow = 3, labels = c("Human", "Chicken", "Mouse"))
 # Precision: Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set
 dev.off()
-
 
 # Proteins of interest
 
