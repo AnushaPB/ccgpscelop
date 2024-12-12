@@ -21,17 +21,17 @@ callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_s
 neutral <- 
   format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
   mutate(neutral_ho = Ho) %>%
-  select(IID, neutral_ho)
+  dplyr::select(IID, neutral_ho)
 
 gea <- 
   format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%
   mutate(gea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
-  select(IID, gea_ho)
+  dplyr::select(IID, gea_ho)
 
 genes <- 
   format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
   mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
-  select(IID, genes_ho)
+  dplyr::select(IID, genes_ho)
 
 df <- 
   left_join(neutral, gea, by = "IID") %>%
@@ -56,7 +56,7 @@ ggplot(df) +
   ylab("GEA heterozygosity") 
 dev.off()
 
-coords <- get_coords(sf = TRUE) %>% rename(IID = SampleID)
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID)
 coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
 
 gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
@@ -71,7 +71,7 @@ gg_df <-
   mutate(type = case_when(
     type == "gea_resid" ~ "GEA",
     type == "genes_resid" ~ "GEA genes"
-  ))
+  )) 
 
 ca <- get_ca()
 plt1 <- 
@@ -103,21 +103,21 @@ plt3a <-
   ggplot(coords) +
     geom_sf(data = ca) +
     geom_sf(aes(col = neutral_ho)) +
-    scale_color_viridis_c(option = "magma") +
+    scale_color_viridis_c(option = "mako") +
     labs(col = "Non-GEA Ho") +
     theme_void()
 plt3b <- 
   ggplot(coords) +
     geom_sf(data = ca) +
     geom_sf(aes(col = gea_ho)) +
-    scale_color_viridis_c(option = "magma") +
+    scale_color_viridis_c(option = "mako") +
     labs(col = "GEA Ho") +
     theme_void()
 plt3c <- 
   ggplot(coords) +
     geom_sf(data = ca) +
     geom_sf(aes(col = genes_ho)) +
-    scale_color_viridis_c(option = "magma") +
+    scale_color_viridis_c(option = "mako") +
     labs(col = "GEA genes Ho") +
     theme_void()
 
@@ -163,11 +163,6 @@ build_spatial_models <- function(nbdist) {
   # Create neighborhood using coordinates
   nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
   listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
-
-  # Calculate Moran's I on residuals of best mod
-  mod_sf$residuals <- residuals(best_model)
-  morans_i <- moran.test(mod_sf$residuals, listw)
-  print(morans_i)
 
   # Ordinary least squares model
   ols_model <- lm(genes_ho ~ neutral_ho, data = mod_sf)
@@ -215,7 +210,6 @@ plt2 <-
   scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
   theme_void() + 
   theme(plot.title = element_text(hjust = 0.5), strip.text.y = element_text(angle = 90))
-
 
 plt3 <- 
   ggplot(resids) + 
