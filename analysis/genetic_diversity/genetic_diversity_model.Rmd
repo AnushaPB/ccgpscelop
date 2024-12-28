@@ -14,7 +14,7 @@ library("cowplot")
 
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
-source(here("analysis", "sdm", "paleovars.R"))
+source(here("analysis", "genetic_diversity", "paleovars.R"))
 ca <- get_ca()
 outpath <- here("analysis", "genetic_diversity", "outputs")
 
@@ -27,8 +27,21 @@ dem <- get_dem(r= TRUE)
 
 ```{r}
 # Get paleoclimate data
-# Created using paleoclimate.Rmd
-paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+# Created using paleoclimate.Rmd #FIND THIS!
+# get paleovars
+paleopath <- here("data", "env", "paleoclim", "paleoclim.tif")
+if (file.exists(paleopath)){
+  paleovars <- rast(paleopath)
+} else {
+  env_list <- get_paleovars()
+  env_rast <- 
+    imap(env_list[c("cur", "lgm", "lig")], ~{
+      names(.x) <- paste0(.y, "_", names(.x))
+      return(.x)
+    })
+  paleovars <- c(env_rast[["cur"]], env_rast[["lgm"]], env_rast[["lig"]])
+  writeRaster(paleovars, paleopath, overwrite = TRUE, datatype = "FLT4S")
+}
 
 # Get important var for change in climate (based on paleoclimate.Rmd)
 bio1_dif_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
@@ -44,8 +57,8 @@ paleoclim_mod_df <-
 
 # Plots of climate change
 gg_df <-
-  as.data.frame(paleovars[[c("cur_bio_1", "lh_bio_1", "lgm_bio_1", "lig_bio_1")]]/10, xy = TRUE) %>%
-  mutate(dif_lh = cur_bio_1 - lh_bio_1,
+  as.data.frame(paleovars[[c("cur_bio_1", "lgm_bio_1", "lig_bio_1")]]/10, xy = TRUE) %>%
+  mutate(
          dif_lgm = cur_bio_1 - lgm_bio_1,
          dif_lig = cur_bio_1 - lig_bio_1) 
 
@@ -56,7 +69,6 @@ gg_df1 <-
   mutate(name = factor(name, levels = unique(name))) %>%
   mutate(name = case_when(
     name == "cur_bio_1" ~ "Current",
-    name == "lh_bio_1" ~ "Late Holocene",
     name == "lgm_bio_1" ~ "LGM",
     name == "lig_bio_1" ~ "LIG"
   ))
@@ -67,7 +79,6 @@ gg_df2 <-
   pivot_longer(c(-x, -y)) %>% 
   mutate(name = factor(name, levels = unique(name)))%>%
   mutate(name = case_when(
-    name == "dif_lh" ~ "Current - Late Holocene",
     name == "dif_lgm" ~ "Current - LGM",
     name == "dif_lig" ~ "Current - LIG"
   ))
@@ -342,6 +353,12 @@ high_corr_pairs
 # paleo_change is correlated with CHELSA_bio1_1981.2010_V.2.1, gHM, and csi_past
 ```
 
+```{r}
+export_df <- 
+  st_drop_geometry(mod_df_imputed) %>% 
+  select(SampleID, x, y, everything(), -paleo_change_lgm, -paleo_change_cur, -geometry)
+write_csv(export_df, here(outpath, "model_df.csv"))
+```
 
 ```{r}
 test <- mod_df_imputed_scaled %>% left_join(depth, by = c("SampleID" = "INDV"))
@@ -358,12 +375,10 @@ dev.off()
 ```{r}
 library(nlme)
 library(ape)
-```
-```{r}
+
 coords <- get_coords(sf = TRUE)
 dframe <- mod_df_imputed_scaled %>% st_as_sf()
-```
-```{r}
+
 # Construct IDW matrix
 # Calculate pairwise geographic distances
 geoMat <- st_distance(dframe)
@@ -371,26 +386,19 @@ geoMat <- st_distance(dframe)
 # Convert to a numeric matrix while preserving the original matrix structure
 geoMat <- matrix(as.numeric(units::drop_units(geoMat)), nrow = nrow(geoMat), ncol = ncol(geoMat))
 
-# Ensure the matrix is symmetrical
-geoMat[upper.tri(geoMat)] <- geoMat[lower.tri(geoMat)]
-
 # Apply inverse distance weighting
 spdata.IDW <- 1 / geoMat
 diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
 
 # Perform a global test of Moran's I on the point observations
-# All are spatially autocorrelated
-Moran.I(as.numeric(dframe$paleo_change), spdata.IDW)
-Moran.I(as.numeric(dframe$Q), spdata.IDW)
-Moran.I(as.numeric(dframe$glacier), spdata.IDW)
-```
+# Ho is spatially autocorrelated
+Moran.I(as.numeric(dframe$Ho), spdata.IDW)
 
-```{r}
+# Add a dummy variable for the random effect
 dummy <- rep(1, nrow(dframe))
 dframe <- cbind(dframe, dummy) # Add it to the data frame
-```
 
-```{r}
+# Fit a null model
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 null.model <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = "ML")
@@ -399,10 +407,9 @@ summary(null.model)
 # Residuals are spatially autocorrelated
 null_resids <- residuals(null.model)
 null_M <- Moran.I(null_resids, spdata.IDW)
-```
+null_M
 
-Next, we can run the same model with spatial correlation structures.  We can specify such a structure with the correlation option of lme().  The structures are generated using corExp for exponential, corGaus for Gaussian, or corSpher for spherical.  
-```{r}
+# Fit spatial models
 exp.sp <- update(null.model, correlation = corExp(1, form = ~ x + y), method = "ML")
 writeLines("Results for exponential spatial correlation:\n")
 summary(exp.sp)
@@ -414,9 +421,7 @@ summary(exp.sp)
 sph.sp <- update(null.model, correlation = corSpher(1, form = ~ x + y), method = "ML")
 writeLines("\nResults for spherical spatial correlation:\n")
 summary(sph.sp)
-```
 
-```{r}
 # Get the AIC for all models
 #aic <- AIC(null.model, exp.sp, gau.sp, sph.sp)
 aic <- AIC(null.model, exp.sp, sph.sp)
