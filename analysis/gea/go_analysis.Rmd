@@ -1,9 +1,12 @@
+```{r}
 library(tidyverse)
 library(here)
 #BiocManager::install("topGO")
 library(topGO)
 library(cowplot)
-
+library(gprofiler2)
+```
+```{r}
 genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
 
 # Check the number of unique genes
@@ -65,13 +68,13 @@ print(p)
 dev.off()
 
 go_hsapien_result <- 
-  go_hsapien$result %>% 
+  read_csv(here("analysis", "gea", "outputs", "hsapiens.csv")) %>% 
   filter(p_value < 0.05) %>%
   arrange(p_value) %>%
   as_tibble() %>%
   # Just keep GO terms
   filter(grepl("GO", source)) %>%
-  dplyr::select(p_value, precision, recall, term_name, source, intersection)
+  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection )
 
 head(go_hsapien_result)
 
@@ -114,7 +117,7 @@ go_ggallus_result <-
   as_tibble() %>%
   # Just keep GO terms
   filter(grepl("GO", source)) %>%
-  dplyr::select(p_value, precision, recall, term_name, source, intersection)
+  dplyr::select(p_value, precision, recall, query_size, term_name, source, intersection)
 bp_ggallus <- 
   go_ggallus_result %>% 
   filter(source == "GO:BP") 
@@ -122,28 +125,6 @@ mf_ggallus <-
   go_ggallus_result %>% 
   filter(source == "GO:MF") 
 
-
-go_mmusculus <- run_go("mmusculus")
-write_csv(go_mmusculus$result, here("analysis", "gea", "outputs", "mmusculus.csv"))
-
-go_mmusculus_result <- 
-  go_mmusculus$result %>% 
-  filter(p_value < 0.05) %>%
-  arrange(p_value) %>%
-  as_tibble() %>%
-  # Just keep GO terms
-  filter(grepl("GO", source)) %>%
-  dplyr::select(p_value, precision, recall, term_name, source, intersection)
-bp_mmusculus <- 
-  go_mmusculus_result %>% 
-  filter(source == "GO:BP") 
-mf_mmusculus <- 
-  go_mmusculus_result %>% 
-  filter(source == "GO:MF") 
-
-# Comparing the results
-bp_mmusculus %>% arrange(p_value) %>% head(10)
-bp_mmusculus %>% arrange(desc(recall)) %>% head(10)
 
 bp_hsapien %>% arrange(p_value) %>% head(10)
 bp_ggallus %>% arrange(p_value) %>% head(10)
@@ -155,20 +136,24 @@ bp_hsapien %>% arrange(desc(recall)) %>% head(10)
 # TABLES
 create_gt_table <- function(df, n = 5) {
   # Rename columns
-  df <- df %>%
+  df <- 
+    df %>%
     dplyr::rename(
       `p` = p_value,
       `Precision` = precision,
       `Recall` = recall,
-      `Term Name` = term_name
+      `Term name` = term_name,
+      `Term ID` = term_id,
+      `No. genes` = intersection_size
     ) %>%
-    mutate(`Term Name` = str_to_sentence(`Term Name`)) %>%
+    mutate(`Term Name` = str_to_sentence(`Term name`)) %>%
     dplyr::arrange(p) %>%
     head(n) %>%
-    dplyr::select(`Term Name`, Precision, Recall, p) 
+    dplyr::select(`Term name`, `Term ID`, Precision, Recall, `No. genes`, p) 
   
   # Create gt table
-  gt_table <- df %>%
+  gt_table <- 
+    df %>%
     gt() %>%
     fmt_scientific(
       columns = p,
@@ -190,15 +175,13 @@ create_gt_table <- function(df, n = 5) {
 }
 
 library(gt)
-gtsave(create_gt_table(bp_hsapien), here("analysis", "gea", "outputs", "hsapien_gt_bp.html"))
-gtsave(create_gt_table(mf_hsapien), here("analysis", "gea", "outputs", "hsapien_gt_mf.html"))
-gtsave(create_gt_table(go_hsapien_result), here("analysis", "gea", "outputs", "hsapien_gt.html"))
+gtsave(create_gt_table(bp_hsapien), here("analysis", "gea", "plots", "hsapien_gt_bp.html"))
+gtsave(create_gt_table(mf_hsapien), here("analysis", "gea", "plots", "hsapien_gt_mf.html"))
+gtsave(create_gt_table(go_hsapien_result), here("analysis", "gea", "plots", "hsapien_gt.html"))
 
-# Repeat for mouse and chicken 
-gtsave(create_gt_table(bp_ggallus), here("analysis", "gea", "outputs", "ggallus_gt_bp.html"))
-gtsave(create_gt_table(bp_mmusculus), here("analysis", "gea", "outputs", "mmusculus_gt_bp.html"))
-gtsave(create_gt_table(mf_ggallus), here("analysis", "gea", "outputs", "ggallus_gt_mf.html"))
-gtsave(create_gt_table(mf_mmusculus), here("analysis", "gea", "outputs", "mmusculus_gt_mf.html"))
+# Repeat for chicken 
+gtsave(create_gt_table(bp_ggallus), here("analysis", "gea", "plots", "ggallus_gt_bp.html"))
+gtsave(create_gt_table(mf_ggallus), here("analysis", "gea", "plots", "ggallus_gt_mf.html"))
 
 
 # PLOTS
@@ -222,10 +205,12 @@ plot_bp <- function(bp){
 pdf(here("analysis", "gea", "plots", "hsapiens.pdf"),width = 12, height = 10)
 plt1 <- plot_bp(bp_hsapien)
 plt2 <- plot_bp(bp_ggallus)
-plt3 <- plot_bp(bp_mmusculus)
-plot_grid(plt1, plt2, plt3, nrow = 3, labels = c("Human", "Chicken", "Mouse"))
+plot_grid(plt1, plt2, plt3, nrow = 3, labels = c("Human", "Chicken"))
 # Precision: Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set
 dev.off()
+```
+
+```{r}
 
 # Proteins of interest
 
@@ -344,6 +329,11 @@ gg_df <-
   mutate(BPcum = start + tot) %>%
   filter(grepl("chr", scaffold))
 
+# Axis labels
+axisdf <- 
+  gg_df %>%
+  group_by(scaffold) %>%
+  summarize(center = (max(BPcum) + min(BPcum)) / 2)
 # Get top 5 genes based on p-value
 top <- 
   head(arrange(rda_genes, p.adj), 5) %>%
@@ -352,12 +342,6 @@ top <-
   mutate(scaffold = factor(scaffold, levels = c(paste0("chr", 1:11), "Anonymous scaffolds"))) %>%
   left_join(dplyr::select(gg_df, scaffold, start, BPcum), by = c("scaffold", "start")) 
 print(dplyr::select(top, gene_name, organism))
-
-# Axis labels
-axisdf <- 
-  gg_df %>%
-  group_by(scaffold) %>%
-  summarize(center = (max(BPcum) + min(BPcum)) / 2)
 
 png(here("analysis", "gea", "plots", "manhattan.png"), width = 25, height = 3, units = "in", res = 300)
 # Manhattan plot
@@ -379,3 +363,356 @@ ggplot(gg_df, aes(x = BPcum, y = logp, color = as.factor(scaffold))) +
 dev.off()
 
 # GT TABLES
+```
+
+```{r}
+bphaspien <- read_csv(here("analysis", "gea", "outputs", "hsapiens.csv"))
+# Install required packages if not already installed
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!requireNamespace("GO.db", quietly = TRUE)) BiocManager::install("GO.db")
+if (!requireNamespace("igraph", quietly = TRUE)) install.packages("igraph")
+if (!requireNamespace("GOSemSim", quietly = TRUE)) BiocManager::install("GOSemSim")
+
+# Load required libraries
+library(GO.db)
+library(igraph)
+library(GOSemSim)
+
+create_go_network <- function(go_terms, ontology = "BP", similarity_cutoff = 0.5) {
+  # Initialize semantic data
+  hsGO <- godata(annoDb='org.Hs.eg.db', ont=ontology)
+  
+  # Convert GO terms to a matrix of semantic similarities
+  sim_matrix <- matrix(0, nrow = length(go_terms), ncol = length(go_terms))
+  rownames(sim_matrix) <- go_terms
+  colnames(sim_matrix) <- go_terms
+  
+  # Calculate semantic similarities between all pairs of GO terms
+  for(i in 1:length(go_terms)) {
+    for(j in 1:length(go_terms)) {
+      if(i != j) {
+        # Add error handling for invalid GO terms
+        tryCatch({
+          sim_matrix[i,j] <- goSim(go_terms[i], go_terms[j], semData=hsGO, measure="Wang")
+        }, error = function(e) {
+          warning(sprintf("Error calculating similarity between %s and %s: %s", 
+                        go_terms[i], go_terms[j], e$message))
+          return(0)
+        })
+      }
+    }
+  }
+  
+  # Convert similarity matrix to adjacency matrix based on cutoff
+  adj_matrix <- sim_matrix
+  adj_matrix[adj_matrix < similarity_cutoff] <- 0
+  adj_matrix[adj_matrix >= similarity_cutoff] <- 1
+  
+  # Create network
+  network <- graph_from_adjacency_matrix(adj_matrix, mode = "undirected", weighted = TRUE)
+  
+  # Get GO term descriptions
+  term_descriptions <- sapply(go_terms, function(x) {
+    tryCatch({
+      Term(GOTERM[[x]])
+    }, error = function(e) {
+      warning(sprintf("Could not find description for %s", x))
+      return(x)
+    })
+  })
+  
+  # Add vertex attributes
+  V(network)$name <- term_descriptions
+  V(network)$GO_ID <- go_terms
+  
+  # Calculate network metrics
+  V(network)$degree <- degree(network)
+  V(network)$betweenness <- betweenness(network)
+  
+  return(network)
+}
+
+# Function to plot the network
+plot_go_network <- function(network, layout_type = "fr") {
+  # Set up plot parameters
+  vertex_size <- sqrt(V(network)$degree) * 5
+  vertex_label_size <- 0.8
+  
+  # Create layout based on specified type
+  if(layout_type == "fr") {
+    layout <- layout_with_fr(network)
+  } else if(layout_type == "kk") {
+    layout <- layout_with_kk(network)
+  } else if(layout_type == "circle") {
+    layout <- layout_in_circle(network)
+  } else {
+    layout <- layout_nicely(network)
+  }
+  
+  # Create the plot
+  plot(network,
+       layout = layout,
+       vertex.size = vertex_size,
+       vertex.label = V(network)$name,
+       vertex.label.cex = vertex_label_size,
+       vertex.label.color = "black",
+       vertex.color = "lightblue",
+       vertex.frame.color = "darkblue",
+       edge.color = "gray",
+       main = "Gene Ontology Network")
+}
+
+
+# Example usage:
+# go_terms <- c("GO:0006915", "GO:0012501", "GO:0097194", "GO:0006914", "GO:0016236")
+# network <- create_go_network(go_terms, ontology = "BP", similarity_cutoff = 0.5)
+# plot_go_network(network)
+# Example usage:
+
+outpath <- here("analysis", "gea", "plots")
+hsapiens <- read_csv(here("analysis", "gea", "outputs", "hsapiens.csv"))
+go_terms <- 
+  hsapiens %>% 
+  filter(source == "GO:BP") %>%
+  arrange(p_value) %>%
+  head(20) %>% 
+  pull(term_id)
+network <- create_go_network(go_terms, ontology = "BP", similarity_cutoff = 0.5)
+pdf(here(outpath, "go_network.pdf"), width = 12, height = 10)
+plot_go_network(network)
+dev.off()
+```
+
+
+```{r}
+# Install required packages if not already installed
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!requireNamespace("GO.db", quietly = TRUE)) BiocManager::install("GO.db")
+if (!requireNamespace("DiagrammeR", quietly = TRUE)) install.packages("DiagrammeR")
+if (!requireNamespace("ontologyIndex", quietly = TRUE)) install.packages("ontologyIndex")
+
+# Load required libraries
+library(GO.db)
+library(DiagrammeR)
+library(ontologyIndex)
+
+find_go_relationships <- function(go_terms) {
+  # Load the GO ontology
+  data(go)
+  
+  # Initialize lists to store relationships
+  is_a <- list()
+  part_of <- list()
+  regulates <- list()
+  pos_regulates <- list()
+  neg_regulates <- list()
+  
+  # For each GO term, find its relationships
+  for (term in go_terms) {
+    # Get parents (is_a relationships)
+    parents <- get_term_property(go, term, "parents")
+    if (length(parents) > 0) {
+      is_a[[term]] <- parents
+    }
+    
+    # Get relationships
+    rels <- get_term_property(go, term, "relationships")
+    if (length(rels) > 0) {
+      # Check for different relationship types
+      if ("part_of" %in% names(rels)) {
+        part_of[[term]] <- rels$part_of
+      }
+      if ("regulates" %in% names(rels)) {
+        regulates[[term]] <- rels$regulates
+      }
+      if ("positively_regulates" %in% names(rels)) {
+        pos_regulates[[term]] <- rels$positively_regulates
+      }
+      if ("negatively_regulates" %in% names(rels)) {
+        neg_regulates[[term]] <- rels$negatively_regulates
+      }
+    }
+  }
+  
+  # Create visualization using DiagrammeR
+  nodes <- unique(c(go_terms, 
+                   unlist(is_a),
+                   unlist(part_of),
+                   unlist(regulates),
+                   unlist(pos_regulates),
+                   unlist(neg_regulates)))
+  
+  # Create DOT language representation
+  dot <- "digraph G {\n"
+  dot <- paste0(dot, "  rankdir=TB;\n")
+  dot <- paste0(dot, "  node [shape=box, style=filled];\n\n")
+  
+  # Add nodes
+  for (node in nodes) {
+    # Get term name
+    term_name <- tryCatch({
+      Term(GOTERM[[node]])
+    }, error = function(e) {
+      return(node)
+    })
+    
+    # Color based on namespace
+    namespace <- tryCatch({
+      Ontology(GOTERM[[node]])
+    }, error = function(e) {
+      return("unknown")
+    })
+    
+    color <- switch(namespace,
+                   "BP" = "#0088CC",
+                   "MF" = "#4C4C4C",
+                   "CC" = "#94B43B",
+                   "#CCCCCC")
+    
+    dot <- paste0(dot, sprintf('  "%s" [label="%s\\n%s", fillcolor="%s", fontcolor="white"];\n',
+                              node, term_name, node, color))
+  }
+  
+  # Add edges with different colors and styles
+  # is_a relationships (black)
+  for (term in names(is_a)) {
+    for (parent in is_a[[term]]) {
+      dot <- paste0(dot, sprintf('  "%s" -> "%s" [color="black"];\n', term, parent))
+    }
+  }
+  
+  # part_of relationships (blue)
+  for (term in names(part_of)) {
+    for (parent in part_of[[term]]) {
+      dot <- paste0(dot, sprintf('  "%s" -> "%s" [color="blue"];\n', term, parent))
+    }
+  }
+  
+  # regulates relationships (orange)
+  for (term in names(regulates)) {
+    for (parent in regulates[[term]]) {
+      dot <- paste0(dot, sprintf('  "%s" -> "%s" [color="orange"];\n', term, parent))
+    }
+  }
+  
+  # positively_regulates relationships (green)
+  for (term in names(pos_regulates)) {
+    for (parent in pos_regulates[[term]]) {
+      dot <- paste0(dot, sprintf('  "%s" -> "%s" [color="green"];\n', term, parent))
+    }
+  }
+  
+  # negatively_regulates relationships (red)
+  for (term in names(neg_regulates)) {
+    for (parent in neg_regulates[[term]]) {
+      dot <- paste0(dot, sprintf('  "%s" -> "%s" [color="red"];\n', term, parent))
+    }
+  }
+  
+  dot <- paste0(dot, "}\n")
+  
+  # Create and return the graph
+  grViz(dot)
+}
+
+
+hsapiens <- read_csv(here("analysis", "gea", "outputs", "hsapiens.csv"))
+go_terms <- 
+  hsapiens %>% 
+  filter(source == "GO:BP") %>%
+  arrange(p_value) %>%
+  head(20) %>% 
+  pull(term_id)
+
+pdf(here(outpath, "go_relationships.pdf"), width = 12, height = 10)
+find_go_relationships(go_terms)
+dev.off()
+```
+
+# FOR ANCESTRY NETWORK:
+```{r}
+cat(bp_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
+cat(mf_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
+cat(cc_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
+```
+
+# ALL GENES:
+```{r}
+ids <- 
+    read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv")) %>% 
+    pull(uniprot_id)
+
+go_result_all <-
+  gost(
+      query = ids, 
+      organism = "hsapiens", ordered_query = FALSE, 
+      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = TRUE, 
+      user_threshold = 0.05, correction_method = "g_SCS", 
+      domain_scope = "annotated", custom_bg = NULL, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+  )
+
+write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_hsapiens.csv"))
+
+all_genes <- 
+  read_csv(here("analysis", "gea", "outputs", "all_genes_hsapiens.csv")) %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(term_id, intersection_size, query_size, term_size, p_value)
+names(all_genes)[-1] <- paste0(names(all_genes), "_all")[-1]
+
+gea_genes <- 
+  read_csv(here("analysis", "gea", "outputs", "hsapiens.csv")) %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(intersection_size, query_size, term_size, term_name, source, term_id, p_value)
+
+comparison <- 
+  right_join(all_genes, gea_genes, by = "term_id") %>%
+  # Remove rows where the term is not found in all genes [TEMP NEED TO RERUN INCLUDING N.S. TERMS]
+  drop_na(query_size_all) %>%
+  rowwise() %>%
+  mutate(fish_p = go_fish(query_size, term_size, intersection_size, query_size_all, intersection_size_all))
+
+comparison %>%
+ filter(term_name == "biological regulation") %>% 
+ select(query_size, intersection_size, query_size_all, intersection_size_all, term_size)
+
+# Term size all and term size should be the same
+stopifnot(comparison$term_size_all == comparison$term_size)
+
+# I DONT THINK A FISHER TEST IS WHAT I WANT
+go_fish <- function(query_size, term_size, intersection_size, query_size_all, intersection_size_all) {
+  # Calculate the counts for the contingency table
+  a <- intersection_size  # Number of GEA genes in the category
+  b <- query_size - intersection_size  # Number of GEA genes not in the category
+  c <- intersection_size_all - intersection_size  # Number of non-GEA Sceloporus genes in the category
+  d <- query_size_all - intersection_size_all  # Number of non-GEA Sceloporus genes not in the category
+  
+  # Create the contingency table
+  contingency_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
+  
+  # Perform Fisher's exact test
+  result <- fisher.test(contingency_table)
+  
+  # Return the p-value
+  return(result$p.value)
+}
+
+
+sig <- 
+  comparison %>% 
+  filter(fish_p < 0.05) %>% 
+  arrange(fish_p) %>% 
+  dplyr::select(term_name, term_id, source, fish_p, query_size_all, intersection_size)
+
+comparison %>% filter(grepl("biological regulation", term_name)) %>% select(query_size, intersection_size, query_size_all, intersection_size_all)
+sig %>% filter(source == "GO:BP") %>% arrange(desc(intersection_size)) %>% head(10)
+ ```

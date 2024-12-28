@@ -408,3 +408,84 @@ plt <-
 
 plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
 dev.off()
+
+
+# Test different numbers of adaptive snps
+top_df <- map(c("1000", "10000", "100000", "1000000"), ~{
+  name <- paste0("gea_genes_top", .x, ".het")
+  het <- format_het(here("analysis", "gea", "outputs", name), callable_sites = as.numeric(.x))
+  het <- het %>% mutate(nsnp = .x)
+}) %>% bind_rows() 
+
+nogea <- 
+  format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
+  mutate(nogea_ho = Ho) %>%
+  dplyr::select(IID, nogea_ho)
+
+top_df <- left_join(top_df, nogea, by = "IID")
+
+top_mod_df <- map(c("1000", "10000", "100000", "1000000"), ~{
+  sub_df <- top_df %>% filter(nsnp == .x)
+  mod <- sub_df %>% filter(nsnp == .x) %>% lm(Ho ~ nogea_ho, data = .)
+  sub_df$resids <- residuals(mod)
+  sub_df$scaled_resids <- scale(sub_df$resids)
+  return(sub_df)
+}) %>% 
+  bind_rows() %>% 
+  rename(SampleID = IID) %>% 
+  left_join(get_coords(sf = TRUE)) %>%
+  st_as_sf() %>%
+  mutate(nsnp = factor(nsnp, levels = c("1000", "10000", "100000", "1000000")))
+
+ca <- get_ca()
+plt1 <- 
+  ggplot(top_mod_df) +
+  geom_point(aes(x = nogea_ho, y = Ho, fill = scaled_resids), col = "gray20", pch = 21, cex = 2) +
+  geom_smooth(aes(x = nogea_ho, y = Ho), method = "lm") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(x = "Non-GEA heterozygosity", y = "GEA heterozygosity") +
+  facet_wrap(~paste0("Top ", nsnp, " GEA SNPs"), nrow = 1, scales = "free_y") +
+  theme_classic() +
+  theme(strip.background = element_blank(), legend.position = "none")
+
+plt2 <- 
+  ggplot(top_mod_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = scaled_resids), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  facet_wrap(~nsnp, nrow = 1) +
+  theme_void() +
+  labs(fill = "Scaled residuals") +
+  theme(strip.background = element_blank(), legend.position = "bottom", strip.text = element_blank())
+
+
+pdf(here("analysis", "gea", "plots", "top_snps.pdf"), width = 12, height = 7)
+cowplot::plot_grid(plt1, plt2, ncol = 1, rel_heights = c(0.45, 0.55))
+dev.off()
+
+# Get paleoclim 
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+
+# Get important var for change in climate (based on paleoclimate.Rmd)
+bio1_dif_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
+bio1_dif_lgm_lig <- paleovars$lgm_bio_1 - paleovars$lig_bio_1
+bio1_dif_cur_lgm <- paleovars$cur_bio_1 - paleovars$lgm_bio_1
+coords <- get_coords(sf = TRUE)
+paleoclim_mod_df <- 
+  data.frame(
+    SampleID = coords$SampleID,
+    paleo_change = terra::extract(bio1_dif_lig, coords, ID = FALSE)[,1],
+    paleo_change_lgm = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
+    paleo_change_cur = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1],
+    cur = terra::extract(paleovars$cur_bio_1, coords, ID = FALSE)[,1]
+    ) %>%
+    left_join(filter(top_mod_df, nsnp == "1000000"), by = "SampleID") 
+
+pdf(here("analysis", "gea", "plots", "paleoclim.pdf"), width = 5, height = 5)
+ggplot(paleoclim_mod_df, aes(x = paleo_change, y = resids)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Paleoclimate change", y = "Scaled residuals") +
+  ggpubr::stat_cor(method = "pearson")
+dev.off()

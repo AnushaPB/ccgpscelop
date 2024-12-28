@@ -45,3 +45,21 @@ plink --bfile outputs/nogea --allow-extra-chr --autosome-num 95 --distance squar
 plink --bfile outputs/gea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/gea
 plink --bfile outputs/genes --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/genes
 plink --bfile outputs/nogea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/nogea
+
+# Calculate heterozygosity stats for different numbers of GEA SNPs
+plink --bfile outputs/gea -extract outputs/gea_gene_ids_top1000.txt --make-bed --out outputs/gea_genes_top1000 --allow-extra-chr
+plink --bfile outputs/gea_genes_top1000 --het --out outputs/gea_genes_top1000 --allow-extra-chr
+
+plink --bfile outputs/gea -extract outputs/gea_gene_ids_top10000.txt --make-bed --out outputs/gea_genes_top10000 --allow-extra-chr
+plink --bfile outputs/gea_genes_top10000 --het --out outputs/gea_genes_top10000 --allow-extra-chr
+
+plink --bfile outputs/gea -extract outputs/gea_gene_ids_top100000.txt --make-bed --out outputs/gea_genes_top100000 --allow-extra-chr
+plink --bfile outputs/gea_genes_top100000 --het --out outputs/gea_genes_top100000 --allow-extra-chr
+
+plink --bfile outputs/gea -extract outputs/gea_gene_ids_top1000000.txt --make-bed --out outputs/gea_genes_top1000000 --allow-extra-chr
+plink --bfile outputs/gea_genes_top1000000 --het --out outputs/gea_genes_top1000000 --allow-extra-chr
+
+# WINDOWED PI -------------------------------------------------------------------------
+VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
+vcftools --gzvcf $VCF --window-pi 10000 --out outputs/58-Sceloporus_10kb_windowpi
+vcftools --gzvcf $VCF --window-pi 100000 --out outputs/58-Sceloporus_100kb_windowpi
