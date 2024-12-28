@@ -1,6 +1,9 @@
 library(here)
 library(tidyverse)
 
+# example run:
+# Rscript GEA_outlier_positions.R "./outputs/58-Sceloporus_0.6.prune.out" "./outputs/58-Sceloporus_snp_correlations.ld" "../../outputs/RDA/*/" 0.01 "together" "./outputs/"
+
 #!/usr/bin/env Rscript # leave line commented
 args = commandArgs(trailingOnly=TRUE)
 prunedout_file = args[1]	# path to .prune.out file
