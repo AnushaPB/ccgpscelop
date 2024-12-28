@@ -30,3 +30,9 @@ rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.imis
 mkdir -p analysis/gea/outputs
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/subsets/RDA/ analysis/gea/outputs
 #rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/subsets/RDA/chr/
+
+rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/admixture/
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/admixture/Q_files/58-Sceloporus.7.Q analysis/admixture/outputs/
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/admixture/Q_files/58-Sceloporus.8.Q analysis/admixture/outputs/
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/admixture/Q_files/58-Sceloporus.9.Q analysis/admixture/outputs/
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/admixture/58-Sceloporus.fam analysis/admixture/outputs/
