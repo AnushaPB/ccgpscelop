@@ -84,7 +84,6 @@ ggplot(df) +
   theme_void() +
   scale_color_manual(values = viridis::turbo(max(Kvals))) 
 
-
 barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
 do.call(ggarrange, c(barplots, ncol = 1))
 dev.off()
