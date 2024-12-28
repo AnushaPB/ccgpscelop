@@ -118,7 +118,7 @@ BASE_PATH="../.."
 MUTATION_RATE=1.17e-8
 
 # Files
-VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_clean_snps.vcf.gz"
+VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
 # Index the vcf file
@@ -148,13 +148,6 @@ do
     process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
 done
 wait
-
-[1] 1967561
-[2] 1967562
-[3] 1967563
-[4] 1967565
-[5] 1967567
-[6] 1967570
 
 # Run all populations together
 # Combine all populations into one
