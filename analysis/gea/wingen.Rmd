@@ -1,0 +1,79 @@
+```{r}
+library(wingen)
+library(here)
+library(sf)
+library(tidyverse)
+library(terra)
+library(vcfR)
+source(here("general_functions.R"))
+```
+
+```{r}
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+dos <- read_table(here("analysis", "gea", "outputs", "nogea_thinned.raw"))
+
+coords <- get_coords(sf = TRUE) %>% filter(SampleID %in% gea_dos$IID) %>% st_transform(3310)
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == gea_dos$IID))
+stopifnot(all(dos$IID == coords$SampleID))
+
+# Convert to heterozygosity using ifelse for matrices
+het <- dos[, -(1:6)]
+gea_het <- gea_dos[, -(1:6)]
+het <- matrix(ifelse(het == 1, 1, 0), nrow = nrow(het), ncol = ncol(het))
+gea_het <- matrix(ifelse(gea_het == 1, 1, 0), nrow = nrow(gea_het), ncol = ncol(gea_het))
+
+# Confirm conversion works (same number of 1s)
+stopifnot(sum(het == 1, na.rm = TRUE) == sum(dos[, -(1:6)] == 1, na.rm = TRUE))
+stopifnor(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+```
+
+```{r}
+lyr <- coords_to_raster(coords, res = 10000)
+
+png(here("analysis", "gea", "plots", "gea_genes.png"), width = 800, height = 800)
+#sc <- preview_gd(lyr, coords, wdim = 7)
+#sc[sc == 0] <- NA
+#plot(sc)
+wg2 <- wg
+wg2[wg2 < 0.04] <- NA
+plot_gd(wg2)
+dev.off()
+
+
+# setup parallel session
+future::plan("multisession", workers = 10)
+
+wg <- window_general(het, coords, lyr, stat = "Ho", wdim = 7, min_n = 1)
+wg_gea <- window_general(gea_het, coords, lyr, stat = "Ho", wdim = 7, min_n = 1)
+future::plan("sequential")
+
+
+
+
+# Read in climate data
+env_data <- rast(here("data", "env", "california_env_stack.tif"))
+bio1 <- env_data[["CHELSA_bio1_1981-2010_V.2.1"]]
+bio1 <- terra::extract(bio1, coords, ID = FALSE)[,1]
+
+custom <- function(x) var(x, na.rm = TRUE)
+wenv <- window_general(bio1, coords, lyr, stat = custom, wdim = 7, min_n = 1)
+
+
+png(here("analysis", "gea", "plots", "wingen.png"), width = 1600, height = 800)
+par(mfrow = c(1, 3))
+wg2 <- wg
+wg2[wg2 < 0.03] <- NA
+plot_gd(wg2)
+points(coords)
+wg_gea2 <- wg_gea
+wg_gea2[wg_gea2 < 0.10] <- NA
+plot_gd(wg_gea2)
+points(coords)
+plot_gd(wenv)
+points(coords)
+dev.off()
+```

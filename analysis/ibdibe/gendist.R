@@ -1,16 +1,28 @@
-format_dist <- function(){
+format_dist_helper <- function(file_name, output_name){
   path <- here("analysis", "ibdibe", "outputs")
-  d <- read.table(here(path,"58-Sceloporus_annotated_pruned_0.6.mdist"))
-  id <- read.table(here(path,"58-Sceloporus_annotated_pruned_0.6.mdist.id"))[,2]
+  d <- read.table(here(path, paste0(file_name, ".mdist")))
+  id <- read.table(here(path, paste0(file_name, ".mdist.id")))[,2]
   rownames(d) <- colnames(d) <- id
-  path <- here(path, "58-Sceloporus_dist.csv")
-  write.csv(d, path)
-  message("wrote dist file to:", path)
+  output_path <- here(path, paste0(output_name, ".csv"))
+  write.csv(d, output_path)
+  message("wrote dist file to: ", output_path)
+}
+
+format_dist <- function(){
+  format_dist_helper("58-Sceloporus_annotated_pruned_0.6", "58-Sceloporus_dist")
+  format_dist_helper("genes", "genes_dist")
 }
 
 get_gendist <- function(){
   path <- here("analysis", "ibdibe", "outputs")
   gendist <- read.csv(here(path, "58-Sceloporus_dist.csv"), row.names = 1)
+  colnames(gendist) <- row.names(gendist)
+  return(gendist)
+}
+
+get_genedist <- function(){
+  path <- here("analysis", "ibdibe", "outputs")
+  gendist <- read.csv(here(path, "genes_dist.csv"), row.names = 1)
   colnames(gendist) <- row.names(gendist)
   return(gendist)
 }

@@ -2,7 +2,7 @@
 source activate ccgpscelop
 BASE_PATH=../../data/ccgp_data
 # !!! NOTE: running into issues with this file so currently het/window_pi was created on Rancor using Anne's 58-Sceloporus_annotated plink files
-PLINK=$BASE_PATH/58-Sceloporus_annotated
+PLINK=$BASE_PATH/58-Sceloporus_complete_coords_annotated
 PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6
 
 # HETEROZYGOSITY ----------------------------------------------------------------------
