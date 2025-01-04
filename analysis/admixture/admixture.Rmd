@@ -49,7 +49,7 @@ coords <- get_coords()
 
 # 2. ADMIXTURE
 ```{r}
-cv <- get_cv(K = 2:6)
+cv <- get_cv(K = 2:12)
 
 png(here("analysis", "admixture", "cv_error.png"), width = 10, height = 5, units = "in", res = 300)
 ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
@@ -61,7 +61,7 @@ dev.off()
 
 ```{r admixture, fig.width = 13, fig.height = 6}
 # join with coords
-Kvals <- c(2:6)
+Kvals <- c(2:12)
 Q <-
  map(Kvals, ~get_Q(K = .x) %>% 
  mutate(K = .x)) %>%
@@ -76,7 +76,7 @@ df <-
  st_as_sf(coords = c("x", "y")) %>%
  st_set_crs(st_crs(4326))
 
-pdf(here("analysis", "admixture", "admixture.pdf"), width =10, height = 10)
+pdf(here("analysis", "admixture", "admixture.pdf"), width =20, height = 10)
 ggplot(df) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
@@ -89,6 +89,20 @@ do.call(ggarrange, c(barplots, ncol = 1))
 dev.off()
 
 ```
+```{r}
+qdf <- df %>% group_by(SampleID, K) %>% summarize(score = 1 - max(Q, na.rm = TRUE))
+
+pdf(here("analysis", "admixture", "admixture_scores.pdf"), width = 10, height = 10)
+ggplot(qdf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = score)) +
+  theme_void() +
+  scale_color_viridis_c(option = "plasma") +
+  facet_wrap(~K) +
+  labs(col = "Admixture score")
+dev.off()
+```
+
 ```{r}
 grid <- coords_to_raster(coords_proj, res = 1000)
 qmat_samples <- get_Q(K = 6, qmat_only = FALSE)
@@ -115,12 +129,6 @@ Q %>%
   mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
   filter(cluster == PopGroup, K == 6) %>%
   write_csv(here("analysis", "admixture", "outputs", "Q6.csv"))
-
-Q %>% 
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 9) %>%
-  write_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
 
 # write out Q values for the assigned population for Q = 6
 Q %>%
@@ -189,9 +197,20 @@ get_Q(K = 6) %>%
   group_split() %>%
   iwalk(\(x, idx) write(x$SampleID, here("analysis", "admixture", "outputs", paste0("k6_pop", idx, ".txt"))))
 
+
+# Write out individual pop assignments for Q = 9
+get_Q(K = 9) %>% 
+  # Remove channel island sample
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
+  # Remove sample of unknown provenance
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>%
+  group_by(cluster) %>% 
+  group_split() %>%
+  iwalk(\(x, idx) write(x$SampleID, here("analysis", "admixture", "outputs", paste0("k9_pop", idx, ".txt"))))
+
 # Check population locations
 # Read in files and bind with coords 
-pop_files <- list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9")
+pop_files <- list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k6")
 coords <- get_coords()
 pop_df <- 
   map(pop_files, ~{
