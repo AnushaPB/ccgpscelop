@@ -2,19 +2,22 @@ library(here)
 library(tidyverse)
 
 rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_rdadapt.csv"))
-rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_Zscores.csv"))
+#rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_Zscores.csv"))
 
-rda_sig <- 
+rda_adj <- 
   rda_results %>% 
   rename(scaffold = scaff) %>%
   # Used a holm correction for multiple testing because it is more conservative
   mutate(p.adj = p.adjust(p.values, method = "holm")) %>%
-  filter(p.values < 0.01) %>% 
+  #filter(p.values < 0.01) %>% 
   mutate(
     # Pull out the digit in ...[digit]_[bp]_[bp] pattern
     start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
     end = start
   )
+
+rda_sig <- rda_adj %>% filter(p.adj < 0.01)
+print(paste("Number of significant loci:", nrow(rda_sig)))
 
 # Write out txt file with just ids
 write.table(rda_sig$locus, here("analysis", "gea", "outputs", "rda_ids.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE)

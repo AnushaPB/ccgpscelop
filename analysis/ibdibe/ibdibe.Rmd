@@ -185,7 +185,7 @@ print(gdm$coeff_df)
 gdm_plot_isplines(gdm$model)
 
 pdf(here("analysis", "ibdibe", "plots", "gene_gdm.pdf"), width = 5, height = 5)
-maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = FALSE)
+maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = TRUE)
 dev.off()
 
 rgb_mask <- mask(maps$pcaRastRGB, get_range())

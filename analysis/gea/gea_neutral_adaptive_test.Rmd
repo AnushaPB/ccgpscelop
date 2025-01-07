@@ -59,7 +59,6 @@ genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
 coords$gea_resid <- residuals(gea_mod)
 coords$genes_resid <- residuals(genes_mod)
 
-
 gg_df <- 
   coords %>% 
   pivot_longer(cols = c("gea_resid", "genes_resid"), names_to = "type", values_to = "Residuals") %>%
@@ -187,10 +186,11 @@ dev.off()
 convert_lab <- function(x){
   if (x == "paleo_change") return("Paleoclimate temperature change\n ")
   if (x == "CHELSA_bio1_1981.2010_V.2.1") return("Contemporary temperature\n ")
+  if (x == "tmean_dif") return("Contemporary climate change\n")
   if (x == "Ho") return("Genome-wide heterozygosity\n ")
   if (x == "neutral_ho")return("Genome-wide heterozygosity\n ")
   if (x == "genes_ho") return("Adaptive heterozygosity\n ")
-  if (x == "resid") return("Residuals\n(Genome-wide heterozygosity ~ adaptive heterozygosity)")
+  if (x == "resid") return("Residuals\n(Adaptive heterozygosity ~ genome-wide heterozygosity)")
   if (x == "neutral_resid") return("Genome-wide residuals")
   if (x == "genes_resid") return("Adaptive residuals")
   if (x == "resid_both") return("Residuals")
@@ -216,26 +216,31 @@ sf_plot <- function(sf_df, x){
 
 
 mod_df$resid <- residuals(lm(genes_ho ~ neutral_ho, data = mod_df))
-mod_df$neutral_resid <- residuals(lm(neutral_ho ~ paleo_change, data = mod_df))
-mod_df$genes_resid <- residuals(lm(genes_ho ~ CHELSA_bio1_1981.2010_V.2.1, data = mod_df))
+mod_df$neutral_resid <- residuals(lm(neutral_ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df))
+mod_df$genes_resid <- residuals(lm(genes_ho ~ CHELSA_bio1_1981.2010_V.2.1 + tmean_dif + paleo_change, data = mod_df))
 mod_df$resid_both <- residuals(lm(genes_resid ~ neutral_resid, data = mod_df))
 sf_df <- mod_df %>% left_join(get_coords(sf = TRUE), by = c("IID" = "SampleID")) %>% st_as_sf()
 
-pdf(here("analysis", "gea", "plots", "paleotest.pdf"), width = 22, height = 4.5)
+pdf(here("analysis", "gea", "plots", "paleotest.pdf"), width = 40, height = 4.5)
 plt1 <- lm_plot(mod_df, "paleo_change", "genes_ho")
 plt2 <- lm_plot(mod_df, "CHELSA_bio1_1981.2010_V.2.1", "genes_ho")
-plt5 <- lm_plot(mod_df, "paleo_change", "neutral_ho")
-plt3 <- lm_plot(mod_df, "neutral_ho", "genes_ho")
-plt4 <- lm_plot(mod_df, "neutral_resid", "genes_resid")
-cowplot::plot_grid(plt5, plt1, plt2, plt3, plt4, nrow = 1)
+plt3 <- lm_plot(mod_df, "tmean_dif", "genes_ho")
+plt4 <- lm_plot(mod_df, "paleo_change", "neutral_ho")
+plt5 <- lm_plot(mod_df, "neutral_ho", "genes_ho")
+plt6 <- lm_plot(mod_df, "neutral_resid", "genes_resid")
+plt7 <- lm_plot(mod_df, "tmean_dif", "resid")
+plt8 <- lm_plot(mod_df, "CHELSA_bio1_1981.2010_V.2.1", "resid")
+plt8 <- lm_plot(mod_df, "paleo_change", "resid")
+cowplot::plot_grid(plt5, plt1, plt2, plt3, plt4, plt6, plt7, plt8, nrow = 1)
 
 plt1 <- sf_plot(sf_df, "paleo_change")
 plt2 <- sf_plot(sf_df, "neutral_ho")
 plt3 <- sf_plot(sf_df, "genes_ho")
-plt4 <- sf_plot(sf_df, "resid_both")
+plt4 <- sf_plot(sf_df, "resid")
 plt5 <- sf_plot(sf_df, "CHELSA_bio1_1981.2010_V.2.1")
+plt6 <- sf_plot(sf_df, "tmean_dif")
 
-cowplot::plot_grid(plt1, plt5, plt2, plt3, plt4, nrow = 1)
+cowplot::plot_grid(plt1, plt5, plt2, plt3, plt4, plt6, nrow = 1)
 dev.off()
 
 outliers <- sf_df %>% filter(resid_both > 0.04 & y > 36)
@@ -643,6 +648,7 @@ mod_vars <- c("gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1",
 mod_df <- 
   read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>% 
   left_join(genes, by = c("SampleID" = "IID")) %>%
+  left_join(neutral, by = c("SampleID" = "IID")) %>%
   mutate(across(all_of(mod_vars), scale)) 
 
 unimod <-
@@ -656,16 +662,44 @@ sig <-
   filter(p.value < 0.05) %>%
   arrange(desc(r2))
 
-lm(genes_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1, data = mod_df) %>% broom::tidy()
+lm(genes_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
+lm(neutral_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
+lm(Ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
 
-pdf(here("analysis", "gea", "plots", "univariate_models.pdf"), width = 15, height = 5)
-gg_df <- mod_df %>% pivot_longer(c(Q, paleo_change, CHELSA_bio1_1981.2010_V.2.1))
-ggplot(gg_df, aes(x = value, y = genes_ho)) + 
+make_pretty_names <- function(vars){
+  map_chr(vars, \(x){
+    if (x == "paleo_change") return("Paleoclimate temperature change")
+    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
+    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
+    if (grepl("csi", x)) return("Past climate stability")
+    if (grepl("gHM", x)) return("Human modification")
+    if (grepl("glacier", x)) return("Glacier (inside/outside)")
+    if (grepl("Q", x)) return("Admixture")
+    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    return(x)
+  })
+}
+
+pdf(here("analysis", "gea", "plots", "univariate_models.pdf"), width = 15, height = 9)
+gg_df <-  mod_df %>% pivot_longer(c(Q, paleo_change, CHELSA_bio1_1981.2010_V.2.1, tmean_dif)) %>% mutate(name = make_pretty_names(name))
+plt1 <- ggplot(gg_df, aes(x = value, y = Ho)) + 
   geom_point() + 
   geom_smooth(method = "lm") +
-  facet_wrap(~name, scales = "free") +
   theme_classic() +
-  ggpubr::stat_cor(method = "pearson")
+  ggpubr::stat_cor(method = "pearson") +
+  labs(y = "Genome-wide heterozygosity") +
+  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
+  theme(strip.placement = "outside", strip.background = element_blank())
+plt2 <- ggplot(gg_df, aes(x = value, y = genes_ho)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  ggpubr::stat_cor(method = "pearson") +
+  labs(y = "Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
+  theme(strip.placement = "outside", strip.background = element_blank())
+
+cowplot::plot_grid(plt1, plt2, nrow =2)
 dev.off()
 ```
 
@@ -771,12 +805,14 @@ gene_names <-
 
 gene_names %>%
   filter(locus %in% str_replace_all(dif_snps, "_[^_]+$", "")) %>%
-  select(full_name)
+  arrange(desc(dif)) %>%
+  select(locus, full_name, dif)
 
 # Plot across genome
 pdf(here("analysis", "gea", "plots", "outlier_snps_genome.pdf"), width = 15, height = 15)
 ggplot(gene_names) +
   geom_vline(aes(xintercept = start, col = dif, alpha = dif)) +
+  geom_vline(data = filter(gene_names, locus == "chr2_50496206_A_T"), aes(xintercept = start), col = "cyan", lwd = 2) +
   theme_classic() +
   facet_wrap(~scaffold, ncol = 1) +
   scale_color_viridis_c(option = "plasma", direction = -1)
@@ -801,4 +837,19 @@ go_result <- go$result %>% filter(p_value < 0.05)
 go_result %>% arrange(p_value) %>% filter(source == "GO:BP") %>% select(term_name, precision, recall) %>% head(10)
 
 go_result %>% arrange(p_value) %>% filter(source == "GO:MF") %>% select(term_name, precision, recall) %>% head(10)
+```
+
+```{r}
+env <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif")) %>% as.data.frame(xy = TRUE)
+
+pdf(here("analysis", "gea", "env.pdf"), width = 5, height = 5) 
+ggplot() +
+  geom_sf(data = ca) +
+  geom_raster(data = env, aes(x = x, y = y, fill = `CHELSA_bio1_1981-2010_V.2.1`)) +
+  #geom_sf(data = gg_df, aes(col = outlier), pch = 1, size = 2, alpha = 0.2) +
+  theme_void() +
+  scale_fill_viridis_c() +
+  labs(fill = "Mean\nTemperature") +
+  scale_color_manual(values = c("black", "red")) 
+dev.off()
 ```

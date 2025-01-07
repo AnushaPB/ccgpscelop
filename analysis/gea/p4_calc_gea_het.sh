@@ -6,19 +6,19 @@ PLINK=../../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6
 
 # Subset plink file with RDA snps (created using p1_process_rda.R)
 plink --bfile $PLINK \
-      --extract outputs/bio1_ids.txt \
+      --extract outputs/rda_ids.txt \
       --make-bed \
       --out outputs/gea --allow-extra-chr
 
 # Subset plink file with RDA genes (created using p3_intersect_genes.R)
 plink --bfile outputs/gea \
-      --extract outputs/bio1_gene_ids.txt \
+      --extract outputs/gea_gene_ids.txt \
       --make-bed \
       --out outputs/genes --allow-extra-chr
 
 # Subset plink file without RDA snps
 plink --bfile $PLINK \
-      --exclude outputs/bio1_ids.txt \
+      --exclude outputs/rda_ids.txt \
       --make-bed \
       --out outputs/nogea --allow-extra-chr
 
