@@ -126,6 +126,7 @@ library(rayshader)
 library(elevatr)
 
 # Get elevation data
+ca <- get_ca()
 elevation_data <- get_elev_raster(ca, z = 7)
 
 # Convert elevation raster to matrix
@@ -165,4 +166,80 @@ render_snapshot(filename = "california_elevation_rgb_3d.png",
                 width = 1200, 
                 height = 900, 
                 dpi = 300)
+```
+
+```{r}
+library(raster)
+ca <- get_ca() %>% st_transform(3310)
+elev <- get_elev_raster(ca, z = 5)
+elev <- raster::projectRaster(elev, crs = "EPSG:3310")
+elev_ca <- crop(elev, ca)
+elev_ca <- mask(elev_ca, ca)
+plot(elev_ca)
+elev_mat <- raster_to_matrix(elev_ca)
+
+pcaRastRGB <- rast(here(outpath, "pca_krig.tif"))
+sample_count <- pcaRastRGB[[4]]
+sample_count[sample_count < 1] <- NA
+#pcaRastRGB <- mask(pcaRastRGB[[1:3]], sample_count)
+
+
+```
+
+```{r}
+
+stack_to_rgb <- function(s) {
+  stack_list <- as.list(s)
+  new_stack <- terra::rast(purrr::map(stack_list, raster_to_rgb))
+  return(new_stack)
+}
+
+raster_to_rgb <- function(r) {
+  rmax <- terra::minmax(r)["max", ]
+  rmin <- terra::minmax(r)["min", ]
+  if ((rmax - rmin) == 0) {
+    r[] <- 255
+  } else {
+    r <- (r - rmin) / (rmax - rmin) * 255
+  }
+  return(r)
+}
+
+pcaRastRGB <- stack_to_rgb(pcaRastRGB)[[1:3]]
+
+names(pcaRastRGB) = c("r","g","b")
+
+pcaRastRGB <- mask(pcaRastRGB, ca)
+
+plot(pcaRastRGB, )
+points(coords)
+```
+```{r}
+gdm_r_cropped = rayshader::raster_to_matrix(pcaRastRGB$r)
+gdm_g_cropped = rayshader::raster_to_matrix(pcaRastRGB$g)
+gdm_b_cropped = rayshader::raster_to_matrix(pcaRastRGB$b)
+
+gdm_rgb_array = array(0,dim=c(nrow(gdm_r_cropped),ncol(gdm_r_cropped),3))
+
+gdm_rgb_array[,,1] = gdm_r_cropped/255 #Red layer
+gdm_rgb_array[,,2] = gdm_g_cropped/255 #Blue layer
+gdm_rgb_array[,,3] = gdm_b_cropped/255 #Green layer
+
+gdm_rgb_array = aperm(gdm_rgb_array, c(2,1,3))
+
+plot_map(gdm_rgb_array)
+
+
+
+coords <- get_coords(sf = TRUE) %>% st_transform(3310)
+elev_mat %>%
+  #sphere_shade(texture= "bw", colorintensity = 1) %>%
+  sphere_shade(texture= "bw", sunangle = 225) %>%
+  #add_overlay(height_shade(gdm_rgb_array, texture = "black"), alphalayer =  0.87) %>%
+  add_overlay(gdm_rgb_array, alphalayer =  0.9) %>%
+  add_water(detect_water(elev_mat), color="white") %>%
+  add_overlay(generate_point_overlay(coords, color="red", size=12, ext(coords), heightmap = elev_mat)) %>%
+  plot_map()
+
+
 ```
