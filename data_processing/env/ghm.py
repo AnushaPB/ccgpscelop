@@ -27,11 +27,10 @@ mosaic_gHM = gHM.mosaic()
 # Export the 'Human modification' layer to Google Drive
 task = ee.batch.Export.image.toDrive(
     image=mosaic_clipped_gHM,
-    description='california_global_human_modification_2016_1km',
+    description='california_global_human_modification_2016',
     folder='EarthEngineExports',
-    fileNamePrefix='california_global_human_modification_2016_1km',
+    fileNamePrefix='california_global_human_modification_2016',
     region=roi,
-    scale=1000,
     crs='EPSG:4326',
     maxPixels=1e13
 )
