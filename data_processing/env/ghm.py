@@ -32,6 +32,7 @@ task = ee.batch.Export.image.toDrive(
     fileNamePrefix='california_global_human_modification_2016',
     region=roi,
     crs='EPSG:4326',
+    scale=1000,  # gHM resolution
     maxPixels=1e13
 )
 

@@ -38,6 +38,7 @@ task = ee.batch.Export.image.toDrive(
     fileNamePrefix='california_ndvi_mean_2000_2020',
     region=roi,
     crs='EPSG:4326',
+    scale=250,  # MODIS NDVI resolution
     maxPixels=1e13
 )
 
