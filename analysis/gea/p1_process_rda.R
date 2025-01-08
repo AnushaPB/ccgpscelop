@@ -6,7 +6,7 @@ rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_ou
 
 rda_adj <- 
   rda_results %>% 
-  rename(scaffold = scaff) %>%
+  dplyr::rename(scaffold = scaff) %>%
   # Used a holm correction for multiple testing because it is more conservative
   mutate(p.adj = p.adjust(p.values, method = "holm")) %>%
   #filter(p.values < 0.01) %>% 
