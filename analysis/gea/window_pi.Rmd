@@ -36,7 +36,7 @@ dev.off()
 ```
 
 ```{r}
-gea <- read_csv(here("analysis", "gea", "outputs", "bio1_gene_snp.csv"))
+gea <- read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv"))
 hsp <-
   gea %>% 
   filter(grepl("Heat shock protein", full_name)) %>%
@@ -45,7 +45,7 @@ hsp <-
   # mutate(BIN_START = floor(start / 10000) * 10000) %>%
   mutate(BIN_START = floor(start / 10000) * 10000) %>%
   group_by(CHROM, BIN_START) %>%
-  summarise(pcount = n())
+  summarise(pcount = n()) 
 
 top <- 
   gea %>%
@@ -57,6 +57,10 @@ top <-
   summarise(pcount = n()) %>%
   ungroup() %>%
   drop_na(CHROM)
+
+# Check difference in number of SNPs counted
+print((sum(top$pcount) - nrow(gea)))
+
 
 outpath <- here("analysis", "gea", "plots")
 pdf(here(outpath, "windowed_pi_gea.pdf"), width = 12, height = 10)
