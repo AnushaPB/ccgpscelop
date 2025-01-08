@@ -1,0 +1,855 @@
+```{r}
+library(vcfR)
+library(algatr)
+library(tidyverse)
+library(sf)
+library(terra)
+library(here)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+
+# Read in het data
+callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
+
+neutral <- 
+  format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
+  mutate(neutral_ho = Ho) %>%
+  dplyr::select(IID, neutral_ho)
+
+gea <- 
+  format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%
+  mutate(gea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, gea_ho)
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, genes_ho)
+
+df <- 
+  left_join(neutral, gea, by = "IID") %>%
+  left_join(genes, by = "IID") 
+```
+
+```{r}
+cols = c("GEA" = "cyan", "GEA genes" = "magenta")
+
+pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_ho.pdf"), width = 6, height = 5)
+cols = c("GEA" = "#00d5d1", "GEA genes" = "#e800a6")
+ggplot(df) +
+  geom_point(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = "GEA"), alpha = 0.5) +
+  geom_point(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = "GEA genes"), alpha = 0.5) +
+  geom_smooth(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = "GEA"), method = "lm") +
+  geom_smooth(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = "GEA genes"), method = "lm") +
+  theme_classic() +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols) +
+  # Remove fill legend
+  #guides(fill = FALSE) +
+  labs(col = "", fill = "") +
+  xlab("Non-GEA heterozygosity") +
+  ylab("GEA heterozygosity") 
+dev.off()
+
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID)
+coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
+
+gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
+genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
+coords$gea_resid <- residuals(gea_mod)
+coords$genes_resid <- residuals(genes_mod)
+
+gg_df <- 
+  coords %>% 
+  pivot_longer(cols = c("gea_resid", "genes_resid"), names_to = "type", values_to = "Residuals") %>%
+  mutate(type = case_when(
+    type == "gea_resid" ~ "GEA",
+    type == "genes_resid" ~ "GEA genes"
+  )) 
+
+ca <- get_ca()
+plt1 <- 
+  ggplot(coords) +
+  geom_point(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = gea_resid), pch = 21, cex = 2) +
+  geom_point(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = genes_resid), pch = 21, cex = 2) +
+  geom_smooth(aes(x = neutral_ho, y = gea_ho, color = "GEA"), method = "lm") +
+  geom_smooth(aes(x = neutral_ho, y = genes_ho, color = "GEA genes"), method = "lm") +
+  theme_classic() +
+  scale_color_manual(values = cols) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  # Remove fill legend
+  #guides(fill = FALSE) +
+  labs(col = "", fill = "Residuals") +
+  xlab("Non-GEA heterozygosity") +
+  ylab("GEA heterozygosity") 
+
+plt2 <- 
+  ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = Residuals, col = type), pch = 21, col = "gray20", cex = 2) + 
+  # divergent color scale
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  scale_color_manual(values = c("#00d5d1", "#e800a6")) +
+  facet_wrap(~type) +
+  theme_void()
+
+plt3a <- 
+  ggplot(coords) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = neutral_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "Non-GEA Ho") +
+    theme_void()
+plt3b <- 
+  ggplot(coords) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = gea_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "GEA Ho") +
+    theme_void()
+plt3c <- 
+  ggplot(coords) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = genes_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "GEA genes Ho") +
+    theme_void()
+
+
+library(cowplot)
+# Arrange plt3a, plt3b, plt3c in a single row
+plt3 <- plot_grid(plt3a, plt3b, plt3c, nrow = 1)
+
+# Arrange plt1 and plt2 in a single row
+plt12 <- plot_grid(plt1, plt2, nrow = 1, rel_widths = c(2, 3), labels = c("B", "C"))
+
+# Arrange plt3 and plt12 in two rows
+final_plot <- plot_grid(plt3, plt12, nrow = 2, labels = c("A", "", ""))
+
+
+pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_resid.pdf"), width = 12, height = 7)
+final_plot
+dev.off()
+```
+
+# Future correlations
+```{r}
+files <- list.files(here("data", "env", "stability", "Layers", "future"), full.names = TRUE, pattern = "csi*")
+csi_future <- rast(map(files, rast))
+csi_future <- crop(csi_future, ca)
+csi_future <- mask(csi_future, ca)
+names(csi_future) <- c("SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
+
+df_sf <- 
+  get_coords(sf = TRUE) %>% 
+  right_join(df, by = c("SampleID" = "IID")) %>%
+  mutate(csi_future = extract(csi_future, .)[,2]) 
+
+
+pdf(here("analysis", "gea", "plots", "future.pdf"), width = 9, height = 4)
+plt1 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = neutral_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Genome-wide heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$neutral_ho))
+plt2 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = genes_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Adaptive heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$genes_ho))
+plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+
+```
+# Paleo test
+
+```{r}
+# NOTE: neutral_ho produces slightly different results than ho (stronger relationship with paleo_change)
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(df, mod_df, by = c("IID" = "SampleID")) %>% drop_na(neutral_ho, paleo_change)
+
+pdf(here("analysis", "gea", "plots", "mvz_plot.pdf"), width = 4, height = 4)
+ggplot(mod_df, aes(x = neutral_ho, y = genes_ho)) +
+  #geom_point(aes(col = paleo_change)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Paleoclimate\ntemperature\nchange") +
+  #scale_color_viridis_c(option = "mako") +
+  ggpubr::stat_cor(method = "pearson", label.x = 0.00025, label.y = 0.04)
+dev.off()
+
+convert_lab <- function(x){
+  if (x == "paleo_change") return("Paleoclimate temperature change\n ")
+  if (x == "CHELSA_bio1_1981.2010_V.2.1") return("Contemporary temperature\n ")
+  if (x == "tmean_dif") return("Contemporary climate change\n")
+  if (x == "Ho") return("Genome-wide heterozygosity\n ")
+  if (x == "neutral_ho")return("Genome-wide heterozygosity\n ")
+  if (x == "genes_ho") return("Adaptive heterozygosity\n ")
+  if (x == "resid") return("Residuals\n(Adaptive heterozygosity ~ genome-wide heterozygosity)")
+  if (x == "neutral_resid") return("Genome-wide residuals")
+  if (x == "genes_resid") return("Adaptive residuals")
+  if (x == "resid_both") return("Residuals")
+}
+
+lm_plot <- function(df, x, y) {
+  ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    theme_classic() +
+    labs(x = convert_lab(x), y = convert_lab(y)) +
+    ggpubr::stat_cor(method = "pearson", label.y = min(df[[y]]), label.x = min(df[[x]])) 
+}
+
+sf_plot <- function(sf_df, x){
+  ggplot(sf_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = .data[[x]])) +
+    labs(col = gsub(" ", "\n", convert_lab(x))) +
+    scale_color_viridis_c(option = "mako") +
+    theme_void()
+}
+
+
+mod_df$resid <- residuals(lm(genes_ho ~ neutral_ho, data = mod_df))
+mod_df$neutral_resid <- residuals(lm(neutral_ho ~ paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df))
+mod_df$genes_resid <- residuals(lm(genes_ho ~ CHELSA_bio1_1981.2010_V.2.1 + tmean_dif + paleo_change, data = mod_df))
+mod_df$resid_both <- residuals(lm(genes_resid ~ neutral_resid, data = mod_df))
+sf_df <- mod_df %>% left_join(get_coords(sf = TRUE), by = c("IID" = "SampleID")) %>% st_as_sf()
+
+pdf(here("analysis", "gea", "plots", "paleotest.pdf"), width = 40, height = 4.5)
+plt1 <- lm_plot(mod_df, "paleo_change", "genes_ho")
+plt2 <- lm_plot(mod_df, "CHELSA_bio1_1981.2010_V.2.1", "genes_ho")
+plt3 <- lm_plot(mod_df, "tmean_dif", "genes_ho")
+plt4 <- lm_plot(mod_df, "paleo_change", "neutral_ho")
+plt5 <- lm_plot(mod_df, "neutral_ho", "genes_ho")
+plt6 <- lm_plot(mod_df, "neutral_resid", "genes_resid")
+plt7 <- lm_plot(mod_df, "tmean_dif", "resid")
+plt8 <- lm_plot(mod_df, "CHELSA_bio1_1981.2010_V.2.1", "resid")
+plt8 <- lm_plot(mod_df, "paleo_change", "resid")
+cowplot::plot_grid(plt5, plt1, plt2, plt3, plt4, plt6, plt7, plt8, nrow = 1)
+
+plt1 <- sf_plot(sf_df, "paleo_change")
+plt2 <- sf_plot(sf_df, "neutral_ho")
+plt3 <- sf_plot(sf_df, "genes_ho")
+plt4 <- sf_plot(sf_df, "resid")
+plt5 <- sf_plot(sf_df, "CHELSA_bio1_1981.2010_V.2.1")
+plt6 <- sf_plot(sf_df, "tmean_dif")
+
+cowplot::plot_grid(plt1, plt5, plt2, plt3, plt4, plt6, nrow = 1)
+dev.off()
+
+outliers <- sf_df %>% filter(resid_both > 0.04 & y > 36)
+pdf(here("analysis", "gea", "plots", "mystery.pdf"))
+ggplot(sf_df) + 
+  geom_histogram(aes(x = resid_both), bins = 50) + 
+  geom_histogram(data = outliers, aes(x = resid_both), bins = 50, fill = "red") +
+  geom_vline(xintercept = 0.04, col = "red")
+ggplot(outliers) +
+  geom_sf(data = ca) +
+  geom_sf()
+dev.off()
+
+# Read names out
+outliers %>% 
+  st_drop_geometry() %>%
+  select(IID) %>% 
+  write_delim(here("analysis", "gea", "outputs", "outliers.txt"), delim = "\n", col_names = FALSE)
+```
+
+```{r}
+bio <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+bio_df <- extract(bio, sf_df, ID = FALSE)
+names(bio_df) <- gsub("_1981-2010_V.2.1", "", gsub("CHELSA_", "", names(bio_df)))
+
+cor.test(sf_df$genes_ho, bio_df$bio1)
+cor.test(sf_df$genes_ho, bio_df$bio5)
+# BIO2 = mean diurnal range
+cor.test(sf_df$genes_ho, bio_df$bio2)
+# BIO3 = isothermality
+cor.test(sf_df$genes_ho, bio_df$bio3)
+# BIO4 = temperature seasonality
+cor.test(sf_df$genes_ho, bio_df$bio4)
+# BIO7 = temperature annual range
+cor.test(sf_df$genes_ho, bio_df$bio7)
+
+cor(sf_df$genes_ho, bio_df, use = "pairwise.complete.obs")
+```
+
+
+# Spatial models
+
+```{r}
+# Spatial model 1
+mod_sf <- bind_cols(coords, st_coordinates(coords))
+
+library(spdep)
+library("spatialreg")
+nb_test <- map(c(10000, 50000, 100000, 200000), ~{
+  nb <- dnearneigh(mod_sf, d1 = 0, d2 = .x)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+  slm_model <- lagsarlm(genes_ho ~ neutral_ho, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+  sem_model <- errorsarlm(genes_ho ~ neutral_ho, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+  return(data.frame(slm = AIC(slm_model), sem = AIC(sem_model), d2 = .x))
+}, .progress = TRUE) %>% bind_rows()
+
+ggplot(nb_test) +
+  geom_line(aes(x = d2, y = slm, col = "SLM")) +
+  geom_line(aes(x = d2, y = sem, col = "SEM")) +
+  theme_classic() +
+  labs(x = "Distance", y = "AIC") 
+
+nb_test %>% filter(slm == min(slm) | sem == min(sem)) %>% head(1)
+
+build_spatial_models <- function(nbdist) {
+  # Assuming mod_sf, mod_df, and best_model are available in the environment
+  # Create neighborhood using coordinates
+  nb <- dnearneigh(mod_sf, d1 = 0, d2 = nbdist)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+  # Ordinary least squares model
+  ols_model <- lm(genes_ho ~ neutral_ho, data = mod_sf)
+  # test for evidence of autocorrelation
+  lm_tests <- lm.RStests(ols_model, listw, test = "all")
+  print(lm_tests)
+
+  # Spatial lag model
+  slm_model <- lagsarlm(genes_ho ~ neutral_ho, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Spatial error model
+  sem_model <- errorsarlm(genes_ho ~ neutral_ho, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Compare AIC
+  writeLines(paste("AIC OLS:", round(AIC(ols_model), 2)))
+  writeLines(paste("AIC SEM:", round(AIC(sem_model), 2)))
+  writeLines(paste("AIC SLM:", round(AIC(slm_model), 2)))
+
+  # Return a list of models
+  return(list(ols_model = ols_model, sem_model = sem_model, slm_model = slm_model))
+}
+
+spmod <- build_spatial_models(10000)
+ols_model <- spmod$ols_model
+sem_model <- spmod$sem_model
+slm_model <- spmod$slm_model
+
+# Plot residuals
+resids <- 
+  mod_sf %>% 
+  mutate(OLS = residuals(ols_model), SEM = residuals(sem_model), SLM = residuals(slm_model)) 
+
+plt1 <- 
+  ggplot(resids) + 
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = OLS), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5), strip.text.y = element_text(angle = 90))
+
+plt2 <- 
+  ggplot(resids) + 
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = SEM), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5), strip.text.y = element_text(angle = 90))
+
+plt3 <- 
+  ggplot(resids) + 
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = SLM), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5), strip.text.y = element_text(angle = 90))
+
+
+pdf(here("analysis", "gea", "plots", "spatial_model_nbdist10k.pdf"), width = 10, height = 4)
+spmod1 <- plot_grid(plt1, plt2, plt3, nrow = 1)
+spmod1
+dev.off()
+
+# Spatial model 2
+
+# Construct IDW matrix
+# Calculate pairwise geographic distances
+geoMat <- st_distance(coords)
+
+# Convert to a numeric matrix while preserving the original matrix structure
+geoMat <- matrix(as.numeric(units::drop_units(geoMat)), nrow = nrow(geoMat), ncol = ncol(geoMat))
+
+# Ensure the matrix is symmetrical
+geoMat[upper.tri(geoMat)] <- geoMat[lower.tri(geoMat)]
+
+# Apply inverse distance weighting
+spdata.IDW <- 1 / geoMat
+diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
+dummy <- rep(1, nrow(coords))
+dframe <- cbind(coords, st_coordinates(coords), dummy) # Add it to the data frame
+
+library(nlme)
+null.model <- lme(fixed = genes_ho ~ neutral_ho, data = dframe, random = ~ 1 | dummy, method = "ML")
+summary(null.model)
+
+# Residuals are spatially autocorrelated
+null_resids <- residuals(null.model)
+null_M <- ape::Moran.I(null_resids, spdata.IDW)
+null_M
+
+exp.sp <- update(null.model, correlation = corExp(1, form = ~ X + Y), method = "ML")
+writeLines("Results for exponential spatial correlation:\n")
+summary(exp.sp)
+
+# False convergence:
+#gau.sp <- update(null.model, correlation = corGaus(1, form = ~ X + Y), method = "ML")
+#writeLines("\nResults for Gaussian spatial correlation:\n")
+#summary(gau.sp)
+
+sph.sp <- update(null.model, correlation = corSpher(1, form = ~ X + Y), method = "ML")
+writeLines("\nResults for spherical spatial correlation:\n")
+summary(sph.sp)
+
+# Get the AIC for all models
+aic <- AIC(null.model, exp.sp, sph.sp)
+best <- rownames(aic)[which.min(aic[, "AIC"])]
+best
+
+# the best model is exp.sp
+best_model <- get(best)
+
+summary(best_model)
+
+# Residuals are still spatially autocorrelated
+resids <- residuals(best_model)
+Msp <- ape::Moran.I(resids, spdata.IDW)
+Msp$observed
+null_M$observed
+
+dframe$resids <- resids
+dframe$null_resids <- null_resids
+
+spmod2 <- 
+  ggplot(dframe) + 
+  geom_sf(data = ca) + 
+  labs(fill = "Variogram") +
+  geom_sf(aes(fill = resids), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void()
+
+pdf(here("analysis", "gea", "plots", "spatial_model.pdf"), width = 12, height = 3)
+plot_grid(spmod1, spmod2, nrow = 1, rel_widths = c(3, 1))
+dev.off()
+
+# predicted vs observed
+coords$sppredicted <- predict(best_model)
+coords$nullpredicted <- predict(null.model)
+plt1 <- 
+  ggplot(coords) +
+  geom_point(aes(x = genes_ho, y = nullpredicted, col = "Null"),cex = 2, alpha = 0.5) +
+  geom_point(aes(x = genes_ho, y = sppredicted, col = "Spatial"), cex = 2, alpha = 0.5) +
+  geom_smooth(aes(x = genes_ho, y = sppredicted, col = "Spatial"), method = "lm") +
+  geom_smooth(aes(x = genes_ho, y = nullpredicted, col = "Null"), method = "lm") +
+  geom_abline(lty = "dashed") +
+  labs(fill = "", col = "") +
+  theme_classic() +
+  xlab("Observed") +
+  ylab("Predicted")
+
+plt2 <-  
+  ggplot(dframe) + 
+  geom_sf(data = ca) + 
+  labs(fill = "Spatial residuals") +
+  geom_sf(aes(fill = resids), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void()
+plt3 <-  
+  ggplot(dframe) + 
+  geom_sf(data = ca) + 
+  labs(fill = "Null residuals") +
+  geom_sf(aes(fill = null_resids), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  theme_void()
+
+
+pdf(here("analysis", "gea", "plots", "predicted_vs_observed.pdf"), width = 13, height = 4)
+plot_grid(plt1, plt2, plt3, nrow = 1, rel_widths = c(5, 4, 4))
+dev.off()
+
+# PCA
+process_pca <- function(path){
+  pca <- read.table(path)
+  pca <- 
+    pca %>% 
+    rename(SampleID = V2) %>% 
+    select(-V1) %>% 
+    rename(PC1 = V3, PC2 = V4, PC3 = V5) %>%
+    # add RGB
+    mutate(RGB_PC1 = scales::rescale(PC1, to = c(0, 1)),
+           RGB_PC2 = scales::rescale(PC2, to = c(0, 1)),
+           RGB_PC3 = scales::rescale(PC3, to = c(0, 1))
+    )
+  return(pca)
+}
+
+coords <- get_coords(sf = TRUE)
+pca_genes <- 
+  process_pca(here("analysis", "gea", "outputs", "genes.eigenvec")) %>%
+  left_join(coords, by = "SampleID") %>%
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>%
+  st_as_sf()
+pca_nogea <- 
+  process_pca(here("analysis", "gea", "outputs", "nogea.eigenvec"))  %>%
+  left_join(coords, by = "SampleID") %>%
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") %>% 
+  mutate(PC2 = -PC2, RGB_PC2 = scales::rescale(PC2, to = c(0, 1))) %>%
+  mutate(PC1 = -PC1, RGB_PC1 = scales::rescale(PC1, to = c(0, 1))) %>%
+  mutate(PC3 = -PC3, RGB_PC3 = scales::rescale(PC3, to = c(0, 1))) %>%
+  st_as_sf()
+
+# Plot RGB 
+outpath <- here("analysis", "gea", "plots")
+pdf(here(outpath, "genes_pca.pdf"), width = 6, height = 3)
+minvals <- min(pca_genes$PC1, pca_genes$PC2)
+maxvals <- max(pca_genes$PC1, pca_genes$PC2)
+leg <- 
+  ggplot(pca_genes) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  annotate("segment", x = minvals * 1.1, xend = maxvals * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("segment", x = 0, xend = 0, y = minvals * 1.1, yend = maxvals * 1.1, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("text", x = maxvals * 1.1, y = 0, label = "PC1", color = "black", hjust = -0.1) +
+  annotate("text", x = 0, y = maxvals * 1.1, label = "PC2", color = "black", vjust = -0.1) +
+  coord_cartesian(xlim = c(minvals * 1.4, maxvals * 1.4), ylim = c(minvals * 1.4, maxvals * 1.4))
+plt <- 
+  ggplot(pca_genes) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity()
+
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+
+
+minvals <- min(pca_nogea$PC1, pca_nogea$PC2)
+maxvals <- max(pca_nogea$PC1, pca_nogea$PC2)
+leg <- 
+  ggplot(pca_nogea) +
+  geom_point(aes(x = PC1, y = PC2, color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity() +
+  annotate("segment", x = minvals * 1.1, xend = maxvals * 1.1, y = 0, yend = 0, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("segment", x = 0, xend = 0, y = minvals * 1.1, yend = maxvals * 1.1, arrow = arrow(length = unit(0.2, "cm"))) +
+  annotate("text", x = maxvals * 1.1, y = 0, label = "PC1", color = "black", hjust = -0.1) +
+  annotate("text", x = 0, y = maxvals * 1.1, label = "PC2", color = "black", vjust = -0.1) +
+  coord_cartesian(xlim = c(minvals * 1.4, maxvals * 1.4), ylim = c(minvals * 1.4, maxvals * 1.4))
+plt <- 
+  ggplot(pca_nogea) +
+  geom_sf(data = ca) +
+  geom_sf(aes(color = rgb(RGB_PC1, RGB_PC2, RGB_PC3))) +
+  theme_void() +
+  scale_color_identity()
+
+plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
+dev.off()
+
+
+# Test different numbers of adaptive snps
+top_df <- map(c("1000", "10000", "100000", "1000000"), ~{
+  name <- paste0("gea_genes_top", .x, ".het")
+  het <- format_het(here("analysis", "gea", "outputs", name), callable_sites = as.numeric(.x))
+  het <- het %>% mutate(nsnp = .x)
+}) %>% bind_rows() 
+
+nogea <- 
+  format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
+  mutate(nogea_ho = Ho) %>%
+  dplyr::select(IID, nogea_ho)
+
+top_df <- left_join(top_df, nogea, by = "IID")
+
+top_mod_df <- map(c("1000", "10000", "100000", "1000000"), ~{
+  sub_df <- top_df %>% filter(nsnp == .x)
+  mod <- sub_df %>% filter(nsnp == .x) %>% lm(Ho ~ nogea_ho, data = .)
+  sub_df$resids <- residuals(mod)
+  sub_df$scaled_resids <- scale(sub_df$resids)
+  return(sub_df)
+}) %>% 
+  bind_rows() %>% 
+  rename(SampleID = IID) %>% 
+  left_join(get_coords(sf = TRUE)) %>%
+  st_as_sf() %>%
+  mutate(nsnp = factor(nsnp, levels = c("1000", "10000", "100000", "1000000")))
+
+ca <- get_ca()
+plt1 <- 
+  ggplot(top_mod_df) +
+  geom_point(aes(x = nogea_ho, y = Ho, fill = scaled_resids), col = "gray20", pch = 21, cex = 2) +
+  geom_smooth(aes(x = nogea_ho, y = Ho), method = "lm") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(x = "Non-GEA heterozygosity", y = "GEA heterozygosity") +
+  facet_wrap(~paste0("Top ", nsnp, " GEA SNPs"), nrow = 1, scales = "free_y") +
+  theme_classic() +
+  theme(strip.background = element_blank(), legend.position = "none")
+
+plt2 <- 
+  ggplot(top_mod_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = scaled_resids), col = "gray20", pch = 21, cex = 2) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  facet_wrap(~nsnp, nrow = 1) +
+  theme_void() +
+  labs(fill = "Scaled residuals") +
+  theme(strip.background = element_blank(), legend.position = "bottom", strip.text = element_blank())
+
+
+pdf(here("analysis", "gea", "plots", "top_snps.pdf"), width = 12, height = 7)
+cowplot::plot_grid(plt1, plt2, ncol = 1, rel_heights = c(0.45, 0.55))
+dev.off()
+
+# Get paleoclim 
+paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+
+# Get important var for change in climate (based on paleoclimate.Rmd)
+bio1_dif_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
+bio1_dif_lgm_lig <- paleovars$lgm_bio_1 - paleovars$lig_bio_1
+bio1_dif_cur_lgm <- paleovars$cur_bio_1 - paleovars$lgm_bio_1
+coords <- get_coords(sf = TRUE)
+paleoclim_mod_df <- 
+  data.frame(
+    SampleID = coords$SampleID,
+    paleo_change = terra::extract(bio1_dif_lig, coords, ID = FALSE)[,1],
+    paleo_change_lgm = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
+    paleo_change_cur = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1],
+    cur = terra::extract(paleovars$cur_bio_1, coords, ID = FALSE)[,1]
+    ) %>%
+    left_join(filter(top_mod_df, nsnp == "1000000"), by = "SampleID") 
+
+pdf(here("analysis", "gea", "plots", "paleoclim.pdf"), width = 5, height = 5)
+ggplot(paleoclim_mod_df, aes(x = paleo_change, y = resids)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Paleoclimate change", y = "Scaled residuals") +
+  ggpubr::stat_cor(method = "pearson")
+dev.off()
+```
+
+# Models
+
+```{r}
+mod_vars <- c("gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", 
+        "CHELSA_bio12_1981.2010_V.2.1", "csi_past", "glacier", 
+        "tmean_dif", "NDVI", "Q")
+
+mod_df <- 
+  read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>% 
+  left_join(genes, by = c("SampleID" = "IID")) %>%
+  left_join(neutral, by = c("SampleID" = "IID")) %>%
+  mutate(across(all_of(mod_vars), scale)) 
+
+unimod <-
+  map(mod_vars, ~{
+    mod <- lm(genes_ho ~ ., data = mod_df %>% select(all_of(.x), genes_ho))
+    broom::tidy(mod) %>% filter(term != "(Intercept)") %>% mutate(r2 =  summary(mod)$r.squared)
+  }) %>% bind_rows()
+
+sig <- 
+  unimod %>%
+  filter(p.value < 0.05) %>%
+  arrange(desc(r2))
+
+lm(genes_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
+lm(neutral_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
+lm(Ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
+
+make_pretty_names <- function(vars){
+  map_chr(vars, \(x){
+    if (x == "paleo_change") return("Paleoclimate temperature change")
+    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
+    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
+    if (grepl("csi", x)) return("Past climate stability")
+    if (grepl("gHM", x)) return("Human modification")
+    if (grepl("glacier", x)) return("Glacier (inside/outside)")
+    if (grepl("Q", x)) return("Admixture")
+    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    return(x)
+  })
+}
+
+pdf(here("analysis", "gea", "plots", "univariate_models.pdf"), width = 15, height = 9)
+gg_df <-  mod_df %>% pivot_longer(c(Q, paleo_change, CHELSA_bio1_1981.2010_V.2.1, tmean_dif)) %>% mutate(name = make_pretty_names(name))
+plt1 <- ggplot(gg_df, aes(x = value, y = Ho)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  ggpubr::stat_cor(method = "pearson") +
+  labs(y = "Genome-wide heterozygosity") +
+  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
+  theme(strip.placement = "outside", strip.background = element_blank())
+plt2 <- ggplot(gg_df, aes(x = value, y = genes_ho)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  ggpubr::stat_cor(method = "pearson") +
+  labs(y = "Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
+  theme(strip.placement = "outside", strip.background = element_blank())
+
+cowplot::plot_grid(plt1, plt2, nrow =2)
+dev.off()
+```
+
+# Outliers
+```{r}
+outliers <- sf_df %>% filter(resid_both > 0.04 & y > 36)
+
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+coords <- get_coords(sf = TRUE) %>% filter(SampleID %in% gea_dos$IID) %>% st_transform(3310)
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(coords$SampleID == gea_dos$IID))
+
+# Convert to heterozygosity using ifelse for matrices
+gea_het <- gea_dos[, -(1:6)]
+gea_het <- matrix(ifelse(gea_het == 1, 1, 0), nrow = nrow(gea_het), ncol = ncol(gea_het))
+colnames(gea_het) <- colnames(gea_dos)[-(1:6)]
+
+# Confirm conversion works (same number of 1s)
+stopifnot(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+
+# Add back SampleIDs
+het_df <- as.data.frame(gea_het)
+het_df$IID <- coords$SampleID
+het_df <- 
+  left_join(sf_df, het_df, by = "IID") %>%
+  # Add outlier column
+  mutate(outlier = ifelse(resid_both > 0.04 & y > 36, TRUE, FALSE))
+
+gea_df <- 
+  left_join(sf_df, gea_dos, by = "IID") %>%
+  mutate(outlier = ifelse(resid_both > 0.04 & y > 36, TRUE, FALSE))
+```
+
+```{r}
+het_mean <- 
+  het_df %>% 
+  st_drop_geometry() %>%
+  group_by(outlier) %>%
+  summarise(across(c(starts_with("Scaffold"), starts_with("chr")), mean, na.rm = TRUE))
+
+# Set up parallel processing
+library(furrr)
+plan(multisession, workers = 10)  # Adjust the number of workers as needed
+
+# Convert het_df to a data.frame without geometry
+outlier_df <- 
+  st_drop_geometry(het_df) %>% 
+  filter(outlier) %>% 
+  select(starts_with("Scaffold"), starts_with("chr"))
+
+noutlier_df <- 
+  st_drop_geometry(het_df) %>% 
+  filter(!outlier) %>% 
+  select(starts_with("Scaffold"), starts_with("chr"))
+
+# Calculate mean heterozygosity for each scaffold in parallel
+outlier_mean <- future_map_dfc(outlier_df, ~mean(.x, na.rm = TRUE), .progress = TRUE)
+outlier_mean$outlier <- TRUE
+noutlier_mean <- future_map_dfc(noutlier_df, ~mean(.x, na.rm = TRUE), .progress = TRUE)
+noutlier_mean$outlier <- FALSE
+het_mean <- bind_rows(outlier_mean, noutlier_mean)
+plan(sequential)
+
+dif <- 
+  het_mean %>% 
+  pivot_longer(c(starts_with("Scaffold"), starts_with("chr")), names_to = "SNP", values_to = "mean") %>%
+  pivot_wider(names_from = "outlier", values_from = "mean") %>%
+  # NOT ABSOLUTE DIFFERENCE, want to see if outliers are higher 
+  mutate(dif = (`TRUE` - `FALSE`)) %>%
+  arrange(desc(dif)) %>%
+  mutate(rank = row_number()) %>%
+  mutate(rank = paste0(rank, SNP)) %>%
+  mutate(rank = factor(rank, levels = unique(rank))) %>%
+  filter(dif > quantile(dif, 0.99, na.rm =TRUE))
+
+dif_snps <- dif %>% filter(dif > quantile(dif, 0.99, na.rm  = TRUE)) %>% pull(SNP)
+
+gg_df <-
+ gea_df %>% 
+ select(outlier, all_of(dif_snps)) %>%
+ pivot_longer(all_of(dif_snps), names_to = "SNP") %>%
+ left_join(select(dif, SNP, rank))
+
+pdf(here("analysis", "gea", "plots", "outlier_snps.pdf"), width = 15, height = 15)
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = value, col = outlier), pch = 21) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  facet_wrap(~rank) +
+  scale_color_manual(values = c("black", "red"))
+dev.off()
+
+# Read in gene info
+dif_snps_convert <- dif$SNP %>% str_replace_all("_[^_]+$", "")
+gene_names <- 
+  read_csv(here("analysis", "gea", "outputs", "bio1_gene_snp.csv")) %>%
+  left_join(mutate(dif, locus = str_replace_all(SNP, "_[^_]+$", ""))) %>%
+  drop_na(rank)
+
+gene_names %>%
+  filter(locus %in% str_replace_all(dif_snps, "_[^_]+$", "")) %>%
+  arrange(desc(dif)) %>%
+  select(locus, full_name, dif)
+
+# Plot across genome
+pdf(here("analysis", "gea", "plots", "outlier_snps_genome.pdf"), width = 15, height = 15)
+ggplot(gene_names) +
+  geom_vline(aes(xintercept = start, col = dif, alpha = dif)) +
+  geom_vline(data = filter(gene_names, locus == "chr2_50496206_A_T"), aes(xintercept = start), col = "cyan", lwd = 2) +
+  theme_classic() +
+  facet_wrap(~scaffold, ncol = 1) +
+  scale_color_viridis_c(option = "plasma", direction = -1)
+dev.off()
+
+go_ids <- read.csv(here("analysis", "gea", "outputs", "bio1_genes_list.csv"))
+go_ids <- go_ids %>% filter(original_entry %in% gene_names$full_name) %>% pull(uniprot_id)
+
+library(gprofiler2)
+go <-
+  gost(
+      query = go_ids, 
+      organism = "hsapiens", ordered_query = FALSE, 
+      multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = TRUE, 
+      user_threshold = 0.05, correction_method = "g_SCS", 
+      domain_scope = "annotated", custom_bg = NULL, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+  )
+go_result <- go$result %>% filter(p_value < 0.05)
+
+go_result %>% arrange(p_value) %>% filter(source == "GO:BP") %>% select(term_name, precision, recall) %>% head(10)
+
+go_result %>% arrange(p_value) %>% filter(source == "GO:MF") %>% select(term_name, precision, recall) %>% head(10)
+```
+
+```{r}
+env <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif")) %>% as.data.frame(xy = TRUE)
+
+pdf(here("analysis", "gea", "env.pdf"), width = 5, height = 5) 
+ggplot() +
+  geom_sf(data = ca) +
+  geom_raster(data = env, aes(x = x, y = y, fill = `CHELSA_bio1_1981-2010_V.2.1`)) +
+  #geom_sf(data = gg_df, aes(col = outlier), pch = 1, size = 2, alpha = 0.2) +
+  theme_void() +
+  scale_fill_viridis_c() +
+  labs(fill = "Mean\nTemperature") +
+  scale_color_manual(values = c("black", "red")) 
+dev.off()
+```

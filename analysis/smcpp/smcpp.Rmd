@@ -24,12 +24,14 @@ knitr::opts_chunk$set(
 
 ```{r, fig.width = 13, fig.height = 6}
 smcpp <- 
-  get_smcpp(folder = "outputs/k6", K = 6) %>%
+  get_smcpp(folder = "outputs", K = 9) %>%
   group_by(pop) %>%
   # Generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
   filter(T == 2) %>%
   filter(!is.na(pop))
+```
 
+```r
 ggplot(smcpp) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "grey", alpha = 0.1) +
   geom_vline(xintercept = 21e3) +
@@ -51,14 +53,22 @@ library(terra)
 source(here("analysis/sdm/paleovars.R"))
 ca <- get_ca()
 coords <- get_coords(sf = TRUE)
-paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+
+# Get paleoclimate data
+paleovars_ls <- get_paleovars()
+paleovars <- imap(paleovars_ls, ~{names(.x) <- paste0(.y, "_", names(.x)); return(.x)}) 
+names(paleovars) <- NULL
+paleovars <- rast(paleovars)
 paleokey <- get_paleokey()
 # isolate paleovars that end in 1 and no following numebers
 bio <- paleovars[[grepl("bio_1$", names(paleovars))]]
 bio <- bio[[!grepl("mis19", names(bio))]]
 biovals <- extract(bio, coords, ID = FALSE)
 clim_df <- bind_cols(coords, biovals)
+```
 
+# K6
+```{r}
 pop_df <- 
   list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k6") %>%
   map(~{
@@ -166,7 +176,7 @@ plt2 <-
   geom_sf(data = ca) +
   geom_sf(data = st_as_sf(pop_df), aes(col = pop)) +
   labs(col = "Population") +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta"))  +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta"))  +
   theme_void() +
   theme(
     legend.position = c(0.8, 0.75),
@@ -196,7 +206,7 @@ plt1 <-
   scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
-  scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta")) +
   ylab("Ne") +
   xlab("years") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
@@ -237,7 +247,7 @@ dev.off()
 
 ```{r, fig.width = 13, fig.height = 6}
 smcpp <- 
-  get_smcpp(folder = "k9", K = 9) %>%
+  get_smcpp(K = 9) %>%
   group_by(pop)
 ```
 
@@ -247,7 +257,13 @@ coords <- get_coords(sf = TRUE)
 paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
 paleokey <- get_paleokey()
 
-
+# Divergence 
+div_df <- 
+  data.frame(
+    split = c("Initial", "SCA", "PNW-WSN", "ESN-GB"),
+    year = c(7.5e6, 391e3, 95.2e3, 87.4e3)
+  ) %>%
+  filter(split != "Initial") 
 
 pop_df <- 
   list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
@@ -308,6 +324,7 @@ plt2 <-
 plt1 <-
   ggplot(data = filter(smcpp, T == 2, !is.na(pop), years != 0)) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
   geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
@@ -331,25 +348,27 @@ dev.off()
 
 
 ```{r}
-#4/5 are different
+#4/5/1 are different
 
 gg_df <- 
-  filter(smcpp, T == 2, !is.na(pop), years != 0) %>%
-  mutate(pop = factor(pop, levels = c( "4", "5", "1", "2", "3", "6", "7", "8", "9")))
+  filter(smcpp, T == 3, !is.na(pop), years != 0) %>%
+  mutate(pop = factor(pop, levels = c( "4", "5", "1", "9", "8", "6", "7", "2", "3"))) %>%
+  mutate(group = ifelse(pop %in% c("4", "5", "1"), "Group 2", "Group 1")) 
 
 # Color scale one
-cs1 <- viridis::mako(2, begin = 0.7, end = 0.8)
-cs2 <- viridis::rocket(9-2, begin = 0.3, end = 0.9)
+cs1 <- viridis::mako(3, begin = 0.3, end = 0.8)
+cs2 <- viridis::rocket(9-3, begin = 0.3, end = 0.9)
 
 plt1 <-
   ggplot(data = gg_df) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   geom_vline(xintercept = 21e3, lwd = 1.5, col = "slategray2") +
   geom_vline(xintercept = 130e3, lwd = 1.5, col = "slategray2") +
   geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
   geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
   annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#466e99", cex = 6, fontface = "bold")+
-  #annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6, fontface = "bold") +
   annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#466e99", cex = 6, fontface = "bold") +
   annotate("text", x = 4e2, y = 2.5e6, label = "Temperature", hjust = 0, col = "#466e99", cex = 5, fontface = "italic") +
   geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
@@ -359,12 +378,13 @@ plt1 <-
   scale_color_manual(values = c(cs1, cs2)) +
   ylab("Ne") +
   xlab("Years") +
-  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) +
+  facet_wrap(~group)
 
 
 pop_gg_df <-
   pop_df %>%
-  mutate(pop = factor(pop, levels = c( "4", "5", "1", "2", "3", "6", "7", "8", "9"))) %>%
+  mutate(pop = factor(pop, levels =  c( "4", "5", "1", "9", "8", "6", "7", "2", "3"))) %>%
   st_as_sf()
 
 # plot of population assignments
@@ -379,8 +399,8 @@ plt2 <-
     legend.position = "none"
   )
 
-pdf(here("analysis", "smcpp", "smcpp_k9.pdf"), width = 12, height = 5)
-cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
+pdf(here("analysis", "smcpp", "smcpp_k9.pdf"), width = 17, height = 5)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(1, 3))
 dev.off()
 ```
 

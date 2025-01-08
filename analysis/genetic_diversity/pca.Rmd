@@ -83,18 +83,23 @@ wg <-
 pca_wg <- wg[[c(1,3,5)]]
 names(pca_wg) <- c("PC1", "PC2", "PC3")
 
-pca_krig <- krig_gd(pca_wg, disagg(lyr, 2), index = 1:3)
+krig_lyr <- coords_to_raster(coords_proj, res = 5000, buffer = 30)
+pca_krig <- krig_gd(pca_wg, krig_lyr, index = 1:3)
+sample_count_krig <- disagg(wg[[2]], 2)
+save_krig <- c(pca_krig, sample_count_krig)
 # Rescale raster PCA values from 0 to 1
-writeRaster(pca_krig, here(outpath, "pca_krig.tif"), overwrite = TRUE)
-ca_proj <- ca %>%
+writeRaster(save_krig, here(outpath, "pca_krig.tif"), overwrite = TRUE)
+
+ca_proj <- 
+  ca %>%
   st_transform(3310)
 
 rgb_wg <- 
   pca_krig %>%
   mask(ca_proj) %>%
+  mask(get_range()) %>%
   as.data.frame(xy = TRUE) %>%
   mutate(across(starts_with("PC"), vals_to_rgb, .names = "RGB_{.col}"))
-
 
 leg <- 
   ggplot(rgb_sf) +

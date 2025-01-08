@@ -16,7 +16,7 @@ source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 source(here("analysis", "genetic_diversity", "paleovars.R"))
 ca <- get_ca()
-outpath <- here("analysis", "genetic_diversity", "outputs")
+outpath <- here("analysis", "gea", "outputs")
 
 coords <- get_coords(sf = TRUE)
 het <- get_het()
@@ -288,9 +288,16 @@ low_depth <-
   pull(INDV)
 low_depth
 
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(Ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  rename(SampleID = IID) %>%
+  dplyr::select(SampleID, Ho)
+
 mod_df <- 
   get_coords() %>% 
-  left_join(get_het()) %>%
+  left_join(genes) %>%
   left_join(env_mod_df) %>%
   left_join(paleoclim_mod_df) %>%
   left_join(q_mod_df) %>%
@@ -353,24 +360,7 @@ high_corr_pairs
 # paleo_change is correlated with CHELSA_bio1_1981.2010_V.2.1, gHM, and csi_past
 ```
 
-```{r}
-export_df <- 
-  st_drop_geometry(mod_df_imputed) %>% 
-  select(SampleID, x, y, everything(), -paleo_change_lgm, -paleo_change_cur, -geometry)
-write_csv(export_df, here(outpath, "model_df.csv"))
-```
 
-```{r}
-test <- mod_df_imputed_scaled %>% left_join(depth, by = c("SampleID" = "INDV"))
-png(here("analysis", "genetic_diversity", "outputs", "deleteme.png"))
-ggplot(test, aes(x = paleo_change, y = Ho)) +
-  geom_point(aes(col = MEAN_DEPTH)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  stat_cor() +
-  scale_color_viridis_c(option = "turbo") 
-dev.off()
-```
 
 ```{r}
 library(nlme)
@@ -541,7 +531,9 @@ best_model_f <- dredge_result %>% filter(AIC == min(AIC))
 
 ```{r}
 # Fit the best model
-f <- formula("Ho ~ paleo_change + Q")
+# NOTE: BIO1 loses significance in spatial models
+#summary(lm(Ho ~ CHELSA_bio1_1981.2010_V.2.1 + tmean_dif + Q + NDVI, data = dframe))
+f <- formula("Ho ~ NDVI + tmean_dif + Q")
 null.model.best <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = "ML")
 exp.sp.best <- update(null.model.best, correlation = corExp(1, form = ~ x + y), method = "ML")
 summary(exp.sp.best)
@@ -725,7 +717,6 @@ plt
 dev.off()
 ```
 
-# Plots and tables
 
 ```{r}
 make_pretty_names <- function(vars){
@@ -934,7 +925,7 @@ dev.off()
 ```
 ```{r}
 plot_resid <- function(x){
-  vars <- c("glacier", "paleo_change", "Q")
+  vars <- c("tmean_dif", "NDVI", "Q")
   mod_vars <- vars[vars != x]
   mod <- lm(formula(paste0("Ho ~ ", paste(mod_vars, collapse = " + "))), data = mod_df_imputed_scaled)
   resids <- residuals(mod)
@@ -947,7 +938,7 @@ plot_resid <- function(x){
 }
 
 resid_plts <- 
-  map(c("glacier", "paleo_change", "Q"), plot_resid) %>% 
+  map(c("NDVI", "tmean_dif", "Q"), plot_resid) %>% 
   bind_rows() %>%
   mutate(name = map_chr(name, ~make_pretty_names(.x)))
 
@@ -1060,7 +1051,7 @@ plot_points <- function(var){
     geom_point(aes(col = .data[[var]]), alpha = 0.8) +
     geom_smooth(method = "lm", color = "black") +
     theme_classic() +
-    labs(x = make_pretty_names(var), y = "Ho") +
+    labs(x = make_pretty_names(var), y = "Adaptive Ho") +
     scale_color_viridis_c(option = "mako") +
     stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
     labs(col = gsub(" ", "\n", make_pretty_names(var))) +
@@ -1079,13 +1070,15 @@ mod_plt <-
   stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
   theme(legend.position = "none")
 
-pdf(here(outpath, "main_figure.pdf"), width = 12.5, height = 7.5) 
+pdf(here(outpath, "main_figure.pdf"), width = 14.5, height = 7.5) 
 plot_grid(
   plot_map("Ho"),
-  plot_map("paleo_change"),
+  plot_map("NDVI"),
+  plot_map("tmean_dif"),
   plot_map("Q"), 
   mod_plt,
-  plot_points("paleo_change"), 
+  plot_points("NDVI"), 
+  plot_points("tmean_dif"), 
   plot_points("Q"), 
   labels = c("A", "B", "C", "D", "E", "F"),
   nrow = 2)

@@ -5,7 +5,7 @@ output:
     toc: TRUE
 ---
 
-# format genetic distances
+# Format genetic distances
 ```{r}
 library(tidyverse)
 library(here)
@@ -24,12 +24,16 @@ format_dist()
 ```{r}
 ca <- get_ca()
 coords <- get_coords()
+rm_inds <- c("JEM16-001-S14_na", "Scelocci_CCGPMC_MW01-3-14", "Scelocci_CHI1382_DAW5-46-21")
 ```
 
-# GDM
 
 ```{r}
-gendist <- get_gendist()
+gendist <- get_gendist() 
+gendist <- gendist[!rownames(gendist) %in% rm_inds, !colnames(gendist) %in% rm_inds]
+
+genedist <- get_genedist()
+genedist <- genedist[!rownames(genedist) %in% rm_inds, !colnames(genedist) %in% rm_inds]
 
 gendist_coords <- 
   coords %>% 
@@ -38,15 +42,22 @@ gendist_coords <-
   arrange(SampleID)
 
 stopifnot(gendist_coords$SampleID == row.names(gendist))
+stopifnot(gendist_coords$SampleID == row.names(genedist))
+```
+
+```{r}
+envstack <- 
+  rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif")) %>%
+  terra::project("epsg:3310")
+env_agg <- mask(envstack, get_range())
+
+plot(envstack, axes = FALSE, box = FALSE)
 
 ```
 
-### Current
-```{r}
-envstack <- rast(here("data", "env", "envstack.tif"))
-names(envstack) <- c("CA_rPCA1", "CA_rPCA2", "CA_rPCA3", "elevation")
-env_agg <- aggregate(envstack, 50)
+# GDM
 
+```{r}
 coords_proj <- 
   gendist_coords[,c("x", "y")] %>% 
   st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
@@ -60,23 +71,152 @@ print(gdm$coeff_df)
 
 gdm_plot_isplines(gdm$model)
 
-maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = FALSE)
+maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = TRUE)
 
-rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
-plotRGB(rgb_envonly)
-points(coords_proj, pch = 1, cex = 1)
+rgb_mask <- mask(maps$pcaRastRGB, get_range())
+plotRGB(rgb_mask)
+#rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
+#plotRGB(rgb_envonly)
+#points(coords_proj, pch = 1, cex = 1)
 
-ggmaps <- as.data.frame(maps$pcaRastRGB, xy = TRUE) %>% pivot_longer(cols = -c(x, y), names_to = "variable", values_to = "value")
+rgb_df <- 
+  as.data.frame(rgb_mask, xy = TRUE) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+ca_proj <- ca %>% st_transform(3310) 
+coords_rgb <-
+  cbind(coords_proj, terra::extract(rgb_mask, coords_proj, ID = FALSE)) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+
+
+pdf(here("analysis", "ibdibe", "plots", "gdm.pdf"), width = 5, height = 5)
+ggplot(rgb_df) +
+  geom_sf(data = ca_proj) +
+  geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
+  geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 0.7) +
+  theme_void() +
+  scale_fill_identity() +
+  theme(legend.position = "none")
+dev.off()
+```
+
+```{r}
+ggmaps <- 
+  as.data.frame(maps$pcaRastRGB, xy = TRUE) %>% 
+  pivot_longer(cols = -c(x, y), names_to = "variable", values_to = "value")
+
 ggplot(ggmaps) +
-  geom_sf(data = ca) +
+  geom_sf(data = st_transform(ca, 3310)) +
   geom_raster(aes(x = x, y = y, fill = value)) +
   facet_wrap(~variable, nrow = 1) +
   scale_fill_viridis_c(option = "magma", na.value = NA) +
   theme_void()
 ```
 
-## Paleoclimate
+# MMRR
+```{r, fig.width = 6.5, fig.height = 6}
+coords_proj <- 
+  gendist_coords[,c("x", "y")] %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  st_transform(3310)
+
+env <- terra::extract(envstack, coords_proj, ID = FALSE)
+
+mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = FALSE)
+
+print(mmrr$coeff_df)
+
+mmrr_df <- 
+  dist_to_df(mmrr$Y, mmrr$X, stdz = TRUE) %>%
+  mutate(var = 
+    case_when(
+      var == "geodist" ~ "Geographic distance",
+      var == "PC1" ~ "Env. PC1 distance",
+      var == "PC2" ~ "Env. PC2 distance",
+      var == "PC3" ~ "Env. PC3 distance")
+  )
+
+mod_xy <- 
+  mmrr_df %>%
+  group_by(var) %>%
+  summarize(X = max(X, na.rm = TRUE), Y = min(Y, na.rm = TRUE)) 
+
+mod_df <- 
+  mmrr$coeff_df %>% 
+  mutate(estimate = round(estimate, 2)) %>%
+  filter(var != "Intercept") %>%
+  mutate(var = 
+    case_when(
+      var == "geodist" ~ "Geographic distance",
+      var == "PC1" ~ "Env. PC1 distance",
+      var == "PC2" ~ "Env. PC2 distance",
+      var == "PC3" ~ "Env. PC3 distance")
+  ) %>%
+  left_join(mod_xy, by = "var")
+
+png(here("analysis", "ibdibe", "plots", "mmrr.png"), width = 6.5, height = 6, units = "in", res = 300)
+ggplot(mmrr_df, aes(x = X, y = Y)) +
+  geom_hex(bins = 50) +
+  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~var, scales = "free") +
+  geom_text(data = mod_df, aes(label = paste("Estimate:", estimate, "\n", "p:", p)), hjust = 1, vjust = -0.3, cex = 3.5) +
+  labs(y = "Genetic distance", x = "Predictor distance") +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(size = 10))
+dev.off()
+```
+
+# GENE GDM
+
 ```{r}
+coords_proj <- 
+  gendist_coords[,c("x", "y")] %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  st_transform(3310)
+
+env <- terra::extract(envstack, coords_proj, ID = FALSE)
+
+gdm <- gdm_do_everything(gendist = genedist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
+
+print(gdm$coeff_df)
+
+gdm_plot_isplines(gdm$model)
+
+pdf(here("analysis", "ibdibe", "plots", "gene_gdm.pdf"), width = 5, height = 5)
+maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = TRUE)
+dev.off()
+
+rgb_mask <- mask(maps$pcaRastRGB, get_range())
+#plotRGB(rgb_mask)
+#rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
+#plotRGB(rgb_envonly)
+#points(coords_proj, pch = 1, cex = 1)
+
+rgb_df <- 
+  as.data.frame(rgb_mask, xy = TRUE) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+ca_proj <- ca %>% st_transform(3310) 
+coords_rgb <-
+  cbind(coords_proj, terra::extract(rgb_mask, coords_proj, ID = FALSE)) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+
+
+pdf(here("analysis", "ibdibe", "plots", "gdm_genes.pdf"), width = 5, height = 5)
+ggplot(rgb_df) +
+  geom_sf(data = ca_proj) +
+  geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
+  geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 0.7) +
+  theme_void() +
+  scale_fill_identity() +
+  theme(legend.position = "none")
+dev.off()
+```
+
+## Paleoclimate
+
+```{r, eval = FALSE}
 envstack <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
 lhstack <- envstack[[grepl("lh", names(envstack))]]
 lhpcs <- RStoolbox::rasterPCA(lhstack, nComp = 3, scale = TRUE)
@@ -96,7 +236,7 @@ maps_lh <- gdm_map(gdm_lh$model, lhpcs, coords_proj, plot_vars = FALSE)
 plotRGB(maps_lh$pcaRastRGB)
 points(coords_proj, pch = 1, cex = 1)
 ```
-```{r}
+```{r, eval = FALSE}
 curstack <- envstack[[grepl("cur", names(envstack))]]
 curpcs <- RStoolbox::rasterPCA(curstack, nComp = 3, scale = TRUE)
 curpcs <- curpcs$map
@@ -113,8 +253,7 @@ plotRGB(maps$pcaRastRGB)
 points(coords_proj, pch = 1, cex = 1)
 ```
 
-
-```{r}
+```{r, eval = FALSE}
 bio2 <- envstack[[grepl("lh_2", names(envstack))]]
 
 coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) 
@@ -130,22 +269,7 @@ points(coords_proj, pch = 1, cex = 1)
 print(gdm_bio2$coeff_df)
 ```
 
-```{r}
+```{r, eval = FALSE}
 print(gdm_cur$coeff_df)
 print(gdm_lh$coeff_df)
 ```  
-
-# MMRR
-```{r}
-coords_proj <- 
-  gendist_coords[,c("x", "y")] %>% 
-  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
-  st_transform(3310)
-
-env <- terra::extract(envstack, coords_proj, ID = FALSE)
-
-mmrr <- mmrr_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = FALSE)
-
-print(mmrr$coeff_df)
-```
-

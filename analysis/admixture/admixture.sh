@@ -7,23 +7,20 @@ source activate ccgpscelop
 mkdir -p outputs
 
 # Specify prefix for file formatting
-PREFIX="58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp40_r60"
+PREFIX="58-Sceloporus_thinned1kb"
 
 # based on code from: https://github.com/ccgproject/ccgpWorkflow/blob/227e6506cf03274be7295e9de6411bb34162d97c/workflow/modules/qc/Snakefile#L126
 # Copy plink files over from processed_data
-cp ../../data/processed_data/$PREFIX.bed .
-cp ../../data/processed_data/$PREFIX.bim .
-cp ../../data/processed_data/$PREFIX.fam .
+cp ../../data/ccgp_data/$PREFIX.bed .
+cp ../../data/ccgp_data/$PREFIX.bim .
+cp ../../data/ccgp_data/$PREFIX.fam .
 
 # Fix chromosome numbers
 awk '{$1=0;print $0}' $PREFIX.bim > $PREFIX.bim.tmp # make temp file
 mv $PREFIX.bim.tmp $PREFIX.bim # replace original file with temp file
 
-# Do two separate runs of ADMIXTURE
-mkdir -p outputs/admixture_k1-10
-for K in 1 2 3 4 5 6 7 8 9 10; do admixture --cv $PREFIX.bed $K | tee $PREFIX.${K}.out; done
-mv *58-Sceloporus* outputs/admixture_k1-10
-
-mkdir -p outputs/admixture_k3-15
-for K in 3 4 5 6 7 8 9 10 11 12 13 14 15; do admixture --cv $PREFIX.bed $K | tee $PREFIX.${K}.out; done
-mv *58-Sceloporus* outputs/admixture_k3-15
+# Run ADMIXTURE
+for K in {1..12}; do
+  admixture --cv $PREFIX.bed $K | tee $PREFIX.${K}.out
+done
+mv *$PREFIX* outputs/

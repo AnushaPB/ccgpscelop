@@ -74,3 +74,8 @@ get_biokey <- function(){
     
     return(biokey)
   }
+
+get_range <- function(){
+  sf::st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1")) %>% 
+    st_transform(3310)
+}
