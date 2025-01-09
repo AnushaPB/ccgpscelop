@@ -1,0 +1,118 @@
+---
+title: "genomic_offset"
+output:
+  github_document:
+    toc: TRUE
+---
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(algatr)
+library(here)
+library(tidyverse)
+library(RColorBrewer)
+library(sf)
+library(terra)
+library(raster)
+library(cowplot)
+library(RStoolbox)
+
+# source(here("analysis", "anne", "genomic_offset.R"))
+source(here("general_functions.R"))
+```
+
+-   [1. Process environmental layers]
+-   [2. Get input files]
+-   [3. Calculate adaptive index]
+-   [4. Build map of adaptive index]
+
+# 1. Process environmental layers
+
+## 1a. Run rasterPCA on present env layers to get model
+
+```{r}
+env_pres <- raster::stack(here("data/env/california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+# Rename layers (names must be consistent with future too)
+names(env_pres) <- c("BIO1", "BIO10", "BIO11", "BIO12", "BIO13",
+                      "BIO14", "BIO15", "BIO16", "BIO17", "BIO18", 
+                      "BIO19", "BIO2", "BIO3", "BIO4", "BIO5",
+                      "BIO6", "BIO7", "BIO8", "BIO9")
+env_pcs <- RStoolbox::rasterPCA(scale(env_pres)) # outputs map as SpatRaster
+
+# Specify projection is lat/long to keep consistent with how envlayers were projected
+# env_proj <- raster::projectRaster(env_pcs$map, crs = "+proj=longlat") # 4326
+```
+
+## 1b. Read in and process future env layers
+
+```{r}
+files <- list.files(here("data/env/CHELSA_future/bio"), full.names = TRUE)
+env_future <- raster::stack(files)
+# Rename vars to keep consistent with env_pres
+names(env_future) <- c("BIO1", "BIO10", "BIO11", "BIO12", "BIO13",
+                      "BIO14", "BIO15", "BIO16", "BIO17", "BIO18", 
+                      "BIO19", "BIO2", "BIO3", "BIO4", "BIO5",
+                      "BIO6", "BIO7", "BIO8", "BIO9")
+
+env_pcs_terra <- terra::rast(env_pcs$map)
+# Crop to match extent of env PCs
+cropped <- terra::crop(terra::rast(env_future), terra::ext(env_pcs_terra))
+# resamp <- terra::resample(cropped, env_pcs_terra)
+```
+
+## 1c. Predict future values using rasterPCA model
+
+```{r}
+# Predict values of future bioclim layers using present rasterPCA model
+future_pcs <- terra::predict(cropped,
+                             model = env_pcs$model)
+
+masked <- terra::mask(future_pcs[[1:3]], env_pcs$map[[1]])
+names(masked) <- c("PC1", "PC2", "PC3")
+raster::writeRaster(raster::stack(masked),
+                  here("data/env/CHELSA_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1_pca.tif"))
+```
+
+# 2. Get input files
+
+## 2a. Env files
+
+```{r}
+# Env files
+env_pres <- raster::stack(here("data/env/california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+env_fut <- raster::stack(here("data/env/CHELSA_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1_pca.tif"))
+names(env_fut) <- names(env_pres)
+
+ca <- get_ca()
+```
+
+## 2b. Other files
+
+```{r}
+coords <- read_tsv(here("data/ccgp_data/58-Sceloporus.coords.txt"), col_names = c("INDV", "x", "y"))
+# coords <- get_coords(sf = TRUE)
+
+# Genetic data
+# TODO get RDA SNPs from genes
+```
+
+## 3. Run RDA on SNPs in genes
+
+```{r}
+
+```
+
+## 4. Adaptive index
+
+```{r}
+source(here("analysis", "anne", "adaptive_index.R"))
+```
+## 5. Genomic offset
+
