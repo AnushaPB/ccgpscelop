@@ -16,8 +16,7 @@ source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 source(here("analysis", "genetic_diversity", "paleovars.R"))
 ca <- get_ca()
-outpath <- here("analysis", "genetic_diversity", "outputs")
-plotpath <- here("analysis", "genetic_diversity", "plots")
+outpath <- here("analysis", "gea", "outputs")
 
 coords <- get_coords(sf = TRUE)
 het <- get_het()
@@ -28,6 +27,8 @@ dem <- get_dem(r= TRUE)
 
 ```{r}
 # Get paleoclimate data
+# Created using paleoclimate.Rmd #FIND THIS!
+# get paleovars
 paleopath <- here("data", "env", "paleoclim", "paleoclim.tif")
 if (file.exists(paleopath)){
   paleovars <- rast(paleopath)
@@ -42,14 +43,14 @@ if (file.exists(paleopath)){
   writeRaster(paleovars, paleopath, overwrite = TRUE, datatype = "FLT4S")
 }
 
-# Get variables for change in climate
-bio1_dif_cur_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
+# Get important var for change in climate (based on paleoclimate.Rmd)
+bio1_dif_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
 bio1_dif_lgm_lig <- paleovars$lgm_bio_1 - paleovars$lig_bio_1
 bio1_dif_cur_lgm <- paleovars$cur_bio_1 - paleovars$lgm_bio_1
 paleoclim_mod_df <- 
   data.frame(
     SampleID = coords$SampleID,
-    paleo_change = terra::extract(bio1_dif_cur_lig, coords, ID = FALSE)[,1],
+    paleo_change = terra::extract(bio1_dif_lig, coords, ID = FALSE)[,1],
     paleo_change_lgm = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
     paleo_change_cur = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1]
     )
@@ -123,18 +124,18 @@ Herrando-Moraira, S., Nualart, N., Galbany-Casals, M. et al. Climate Stability I
 Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do contain other variables correlated with those variables
 
 ```{r, fig.width = 10, fig.height = 2.5}
-csi_past <- rast(here("data", "env", "csi", "Layers", "past", "csi_past.tif"))
+csi_past <- rast(here("data", "env", "stability", "Layers", "past", "csi_past.tif"))
 csi_past <- crop(csi_past, ca)
 csi_past <- mask(csi_past, ca)
 
-files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")
+files <- list.files(here("data", "env", "stability", "Layers", "future"), full.names = TRUE, pattern = "csi*")
 csi_future <- rast(map(files, rast))
 csi_future <- crop(csi_future, ca)
 csi_future <- mask(csi_future, ca)
 
 csi_stack <- c(csi_past, csi_future)
 names(csi_stack) <- c("Past",  "SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
-writeRaster(csi_stack, here("data", "env", "csi", "csi.tif"), overwrite = TRUE)
+writeRaster(csi_stack, here("data", "env", "stability", "csi.tif"), overwrite = TRUE)
 csi_df <- 
   terra::as.data.frame(csi_stack, xy = TRUE) %>% 
   pivot_longer(-c(x, y), 
@@ -168,7 +169,7 @@ csi_mod_df <- data.frame(csi = 1 - extract(csi_past, coords, ID = FALSE), coords
 
 # Hypothesis 3: Genetic diversity explained by admixture
 ```{r}
-q <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
+q <- read_csv(here("analysis", "admixture", "outputs_old_nov16", "Q9.csv"))
 
 q_mod_df <- 
   q %>%
@@ -179,21 +180,15 @@ q_mod_df <-
 
 # Hypothesis 4: Genetic diversity explained by current environment 
 ```{r}
-bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
-ndvi <- rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
-ghm <- rast(here("data", "env", "california_global_human_modification_2016.tif"))
-
-env_mod_df <- data.frame(
-  SampleID = coords$SampleID,
-  NDVI = terra::extract(ndvi, coords, ID = FALSE)[,1],
-  gHM = terra::extract(ghm, coords, ID = FALSE)[,1],
-  terra::extract(bioclim, coords, ID = FALSE)
-)
+env_data <- rast(here("data", "env", "california_env_stack.tif"))
+env_data$BurnDate <- as.numeric(env_data$BurnDate > 0)
+env_mod_df <- data.frame(terra::extract(env_data, coords, ID = FALSE))
+env_mod_df$SampleID <- coords$SampleID
 ```
 
 ```{r}
 coords_buffer <- st_buffer(coords, 10000)
-gHM_buffer <- extract(ghm, coords_buffer, fun = mean, na.rm = TRUE)
+gHM_buffer <- extract(env_data[["gHM"]], coords_buffer, fun = mean, na.rm = TRUE)
 
 env_mod_df$gHM <- gHM_buffer$gHM
 env_mod_df$buffer <- 10000
@@ -213,7 +208,17 @@ glacier_mod_df <-
 ```
 
 # Hypothesis 6: Genetic diversity explained by recent climate change
-PRISM mean temperature data from historical data: https://prism.oregonstate.edu/historical/
+Download PRISM mean temperature data from historical data: https://prism.oregonstate.edu/historical/
+
+Data can be downloaded for all years using:
+wget -r ftp://prism.oregonstate.edu/monthly/tmean/
+
+mv prism.oregonstate.edu/monthly/tmean/* .
+
+for year in {1895..2024}
+do
+  unzip '/media/wanglab/798f0e01-89d1-4d0f-8ed8-ef323be70ab91/Anusha/GitHub/ccgpscelop/data/env/prism/TEMP/'$year'/*.zip' -d '/media/wanglab/798f0e01-89d1-4d0f-8ed8-ef323be70ab91/Anusha/GitHub/ccgpscelop/data/env/prism/TEMP/'$year
+done
 
 ```{r}
 coords <- get_coords(sf = TRUE)
@@ -252,8 +257,6 @@ tmean_dif_r <- tmean_cur_r - tmean_his_r
 tmean_dif_r <- crop(tmean_dif_r, ca)
 tmean_dif_r <- mask(tmean_dif_r, st_transform(ca, st_crs(tmean_dif_r)))
 
-writeRaster(tmean_dif_r, here("data", "env", "tmean_dif.tif"), overwrite = TRUE)
-
 tmean_mod_df <- 
   left_join(tmean_his, tmean_cur) %>% 
   mutate(tmean_dif = tmean_cur - tmean_his) %>%
@@ -263,11 +266,9 @@ tmean_mod_df <-
 
 ```{r}
 env_list <- list(
-  paleo_change = bio1_dif_cur_lig, 
+  paleo_change = bio1_dif_lig, 
   csi_past = 1 - csi_past, 
-  NDVI = ndvi, 
-  gHM = ghm,
-  bioclim = bioclim,
+  env_data = env_data, 
   glacier = lgm_glaciers, 
   tmean_dif = tmean_dif_r
   )
@@ -286,12 +287,17 @@ low_depth <-
   filter(MEAN_DEPTH < 8) %>% 
   pull(INDV)
 low_depth
-# Check if low depth individuals are in the genetic data
-low_depth %in% het$SampleID
+
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(Ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  rename(SampleID = IID) %>%
+  dplyr::select(SampleID, Ho)
 
 mod_df <- 
   get_coords() %>% 
-  left_join(get_het()) %>%
+  left_join(genes) %>%
   left_join(env_mod_df) %>%
   left_join(paleoclim_mod_df) %>%
   left_join(q_mod_df) %>%
@@ -354,24 +360,7 @@ high_corr_pairs
 # paleo_change is correlated with CHELSA_bio1_1981.2010_V.2.1, gHM, and csi_past
 ```
 
-```{r}
-export_df <- 
-  st_drop_geometry(mod_df_imputed) %>% 
-  select(SampleID, x, y, everything(), -paleo_change_lgm, -paleo_change_cur, -geometry)
-write_csv(export_df, here(outpath, "model_df.csv"))
-```
 
-```{r}
-test <- mod_df_imputed_scaled %>% left_join(depth, by = c("SampleID" = "INDV"))
-png(here("analysis", "genetic_diversity", "outputs", "deleteme.png"))
-ggplot(test, aes(x = paleo_change, y = Ho)) +
-  geom_point(aes(col = MEAN_DEPTH)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  stat_cor() +
-  scale_color_viridis_c(option = "turbo") 
-dev.off()
-```
 
 ```{r}
 library(nlme)
@@ -447,7 +436,7 @@ dframe$null_resids <- null_resids
 
 gg_df <- dframe %>% pivot_longer(cols = contains("resids"), names_to = "resid_type", values_to = "resids")
 
-pdf(here(plotpath, "full_model_residuals.pdf"), width = 12, height = 6)
+pdf(here(outpath, "full_model_residuals.pdf"), width = 12, height = 6)
 ggplot(gg_df) + 
   geom_sf(data = ca) + 
   geom_sf(aes(col = resids)) +
@@ -542,7 +531,9 @@ best_model_f <- dredge_result %>% filter(AIC == min(AIC))
 
 ```{r}
 # Fit the best model
-f <- formula("Ho ~ paleo_change + Q")
+# NOTE: BIO1 loses significance in spatial models
+#summary(lm(Ho ~ CHELSA_bio1_1981.2010_V.2.1 + tmean_dif + Q + NDVI, data = dframe))
+f <- formula("Ho ~ NDVI + tmean_dif + Q")
 null.model.best <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = "ML")
 exp.sp.best <- update(null.model.best, correlation = corExp(1, form = ~ x + y), method = "ML")
 summary(exp.sp.best)
@@ -721,12 +712,11 @@ plt <-
     strip.text.x = element_text(hjust = 0, size = 14),
     axis.title = element_text(size = 14))
 
-pdf(here(plotpath, "future_plot.pdf"), width = 12, height = 3.5)
+pdf(here(outpath, "future_plot.pdf"), width = 12, height = 3.5)
 plt
 dev.off()
 ```
 
-# Plots and tables
 
 ```{r}
 make_pretty_names <- function(vars){
@@ -774,7 +764,7 @@ best_model_table <-
   )
 
 # export to html
-gt::gtsave(best_model_table, filename = here(plotpath, "best_model_table.html"))
+gt::gtsave(best_model_table, filename = here(outpath, "best_model_table.html"))
 ```
 
 ```{r}
@@ -840,7 +830,7 @@ plt4 <-
       scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
 })
 
-pdf(here(plotpath, "ho.pdf"), width = 4.5, height = 4.5)
+pdf(here(outpath, "ho.pdf"), width = 4.5, height = 4.5)
 ggplot(gg_df) +
   geom_sf(data = ca) +
   geom_point(aes(x = x, y = y, col = Ho)) +
@@ -883,14 +873,14 @@ plt2_ls <- c(plt2, list(plt2_glacier))
 plt3_ls <- c(plt3, list(plt3_glacier))
 
 # use cowplot to combine plots
-pdf(here(plotpath, "linear_model_plot1.pdf"), width = 11, height = 24)
+pdf(here(outpath, "linear_model_plot1.pdf"), width = 11, height = 24)
 ordered_plts <- pmap(list(plt3_ls, plt1_ls, plt2_ls), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1_ls))))
 ordered_plts <- pmap(list(plt3_ls, plt2_ls, plt4), ggpubr::ggarrange, nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1_ls))))
 dev.off()
 
-pdf(here(plotpath, "linear_model_plot.pdf"), width = 8.5, height = 24)
+pdf(here(outpath, "linear_model_plot.pdf"), width = 8.5, height = 24)
 ordered_plts <- pmap(list(plt3_ls, plt2_ls), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1_ls))))
 dev.off()
@@ -922,7 +912,7 @@ partial_plot <- function(x, mod_vars) {
 mod_vars <- c("NDVI", "paleo_change", "Q")
 partial_df <- map(mod_vars, ~partial_plot(.x, mod_vars)) %>% bind_rows()
 
-pdf(here(plotpath, "partial_plot.pdf"), width = 8.5, height = 4)
+pdf(here(outpath, "partial_plot.pdf"), width = 8.5, height = 4)
 ggplot(partial_df, aes(x = partial_var, y = partial_Ho)) +
   geom_point(aes(x = partial_var, y = partial_Ho)) +
   geom_smooth(aes(x = partial_var, y = partial_Ho), method = "lm") +
@@ -935,7 +925,7 @@ dev.off()
 ```
 ```{r}
 plot_resid <- function(x){
-  vars <- c("glacier", "paleo_change", "Q")
+  vars <- c("tmean_dif", "NDVI", "Q")
   mod_vars <- vars[vars != x]
   mod <- lm(formula(paste0("Ho ~ ", paste(mod_vars, collapse = " + "))), data = mod_df_imputed_scaled)
   resids <- residuals(mod)
@@ -948,11 +938,11 @@ plot_resid <- function(x){
 }
 
 resid_plts <- 
-  map(c("glacier", "paleo_change", "Q"), plot_resid) %>% 
+  map(c("NDVI", "tmean_dif", "Q"), plot_resid) %>% 
   bind_rows() %>%
   mutate(name = map_chr(name, ~make_pretty_names(.x)))
 
-pdf(here(plotpath, "residual_plot.pdf"), width = 8.5, height = 4)
+pdf(here(outpath, "residual_plot.pdf"), width = 8.5, height = 4)
 ggplot(resid_plts, aes(x = value, y = residuals)) +
   geom_point() +
   geom_smooth(method = "lm") +
@@ -992,7 +982,7 @@ varpart_plt <-
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
 cormat <- cor(mod_df_imputed_scaled[, mod_vars])
 
-png(here(plotpath, "deleteme.png"))
+png(here(outpath, "deleteme.png"))
 plot(mod_df_imputed_scaled$tmean_dif, mod_df_imputed_scaled$Ho)
 dev.off()
 cor_df <- 
@@ -1041,7 +1031,7 @@ missig_plt <-
   stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE)) 
 
 combo <- plot_grid(cor_plt, varpart_plt, nrow = 1, rel_widths = c(5, 3), labels = c("A", "B"))
-pdf(here(plotpath, "confounding.pdf"), width = 15, height = 8)
+pdf(here(outpath, "confounding.pdf"), width = 15, height = 8)
 plot_grid(combo, missig_plt, nrow = 2, rel_heights = c(0.6, 0.35), labels = c("", "C"))
 dev.off()
 ```
@@ -1061,7 +1051,7 @@ plot_points <- function(var){
     geom_point(aes(col = .data[[var]]), alpha = 0.8) +
     geom_smooth(method = "lm", color = "black") +
     theme_classic() +
-    labs(x = make_pretty_names(var), y = "Ho") +
+    labs(x = make_pretty_names(var), y = "Adaptive Ho") +
     scale_color_viridis_c(option = "mako") +
     stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
     labs(col = gsub(" ", "\n", make_pretty_names(var))) +
@@ -1080,13 +1070,15 @@ mod_plt <-
   stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE) - 0.0001) +
   theme(legend.position = "none")
 
-pdf(here(plotpath, "main_figure.pdf"), width = 12.5, height = 7.5) 
+pdf(here(outpath, "main_figure.pdf"), width = 14.5, height = 7.5) 
 plot_grid(
   plot_map("Ho"),
-  plot_map("paleo_change"),
+  plot_map("NDVI"),
+  plot_map("tmean_dif"),
   plot_map("Q"), 
   mod_plt,
-  plot_points("paleo_change"), 
+  plot_points("NDVI"), 
+  plot_points("tmean_dif"), 
   plot_points("Q"), 
   labels = c("A", "B", "C", "D", "E", "F"),
   nrow = 2)

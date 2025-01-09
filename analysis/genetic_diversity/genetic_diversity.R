@@ -1,4 +1,16 @@
-
+make_pretty_names <- function(vars){
+  map_chr(vars, \(x){
+    if (x == "paleo_change") return("Paleoclimate temperature change")
+    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
+    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
+    if (grepl("csi", x)) return("Past climate stability")
+    if (grepl("gHM", x)) return("Human modification")
+    if (grepl("glacier", x)) return("Glacier (inside/outside)")
+    if (grepl("Q", x)) return("Admixture")
+    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    return(x)
+  })
+}
 get_het <- function(){
   # callable sites for denominator
   callable <- read.csv(here("data_processing", "callable_counts.csv"))

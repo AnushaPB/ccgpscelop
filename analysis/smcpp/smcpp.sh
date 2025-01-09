@@ -118,7 +118,7 @@ BASE_PATH="../.."
 MUTATION_RATE=1.17e-8
 
 # Files
-VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_clean_snps.vcf.gz"
+VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
 # Index the vcf file
@@ -149,17 +149,27 @@ do
 done
 wait
 
-[1] 1967561
-[2] 1967562
-[3] 1967563
-[4] 1967565
-[5] 1967567
-[6] 1967570
+for i in {1..9}
+do
+    (eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop$i.txt" | paste -sd, -)
+    pop="inds_pop${i}"
+    process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
+done
+wait
+[1] 2495414
+[2] 2495415
+[3] 2495416
+[4] 2495418
+[5] 2495420
+[6] 2495423
+[7] 2495427
+[8] 2495433
+[9] 2495438
 
 # Run all populations together
 # Combine all populations into one
-combined_pop=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop"{1..9}".txt" | paste -sd, -)
-process_population "pop_all" "${combined_pop}" 2> pop_all.stderr
+#combined_pop=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop"{1..9}".txt" | paste -sd, -)
+#process_population "pop_all" "${combined_pop}" 2> pop_all.stderr
 
 # Check the status of the background jobs
 jobs

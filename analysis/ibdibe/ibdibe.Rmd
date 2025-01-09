@@ -32,6 +32,9 @@ rm_inds <- c("JEM16-001-S14_na", "Scelocci_CCGPMC_MW01-3-14", "Scelocci_CHI1382_
 gendist <- get_gendist() 
 gendist <- gendist[!rownames(gendist) %in% rm_inds, !colnames(gendist) %in% rm_inds]
 
+genedist <- get_genedist()
+genedist <- genedist[!rownames(genedist) %in% rm_inds, !colnames(genedist) %in% rm_inds]
+
 gendist_coords <- 
   coords %>% 
   filter(SampleID %in% row.names(gendist)) %>%
@@ -39,7 +42,7 @@ gendist_coords <-
   arrange(SampleID)
 
 stopifnot(gendist_coords$SampleID == row.names(gendist))
-
+stopifnot(gendist_coords$SampleID == row.names(genedist))
 ```
 
 ```{r}
@@ -165,7 +168,51 @@ ggplot(mmrr_df, aes(x = X, y = Y)) +
 dev.off()
 ```
 
+# GENE GDM
 
+```{r}
+coords_proj <- 
+  gendist_coords[,c("x", "y")] %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  st_transform(3310)
+
+env <- terra::extract(envstack, coords_proj, ID = FALSE)
+
+gdm <- gdm_do_everything(gendist = genedist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
+
+print(gdm$coeff_df)
+
+gdm_plot_isplines(gdm$model)
+
+pdf(here("analysis", "ibdibe", "plots", "gene_gdm.pdf"), width = 5, height = 5)
+maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = TRUE)
+dev.off()
+
+rgb_mask <- mask(maps$pcaRastRGB, get_range())
+#plotRGB(rgb_mask)
+#rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
+#plotRGB(rgb_envonly)
+#points(coords_proj, pch = 1, cex = 1)
+
+rgb_df <- 
+  as.data.frame(rgb_mask, xy = TRUE) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+ca_proj <- ca %>% st_transform(3310) 
+coords_rgb <-
+  cbind(coords_proj, terra::extract(rgb_mask, coords_proj, ID = FALSE)) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
+
+
+pdf(here("analysis", "ibdibe", "plots", "gdm_genes.pdf"), width = 5, height = 5)
+ggplot(rgb_df) +
+  geom_sf(data = ca_proj) +
+  geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
+  geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 0.7) +
+  theme_void() +
+  scale_fill_identity() +
+  theme(legend.position = "none")
+dev.off()
+```
 
 ## Paleoclimate
 

@@ -1,0 +1,129 @@
+```{r}
+library(tidyverse)
+library(here)
+outpath <- here("analysis", "genetic_diversity", "outputs")
+wpi <- read_table(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus_10kb_windowpi.windowed.pi"))
+
+i  <- 
+  wpi %>% 
+  count(CHROM) %>% 
+  arrange(desc(n)) %>% 
+  filter(n > 1000) %>% 
+  pull(CHROM)
+
+gg_df <-
+  wpi %>%
+  filter(CHROM %in% i) %>%
+  mutate(CUMSUM = cumsum(BIN_START)) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) 
+
+pdf(here(outpath, "windowed_pi.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(aes(xintercept = BIN_START, col = PI), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "-log(mean p) (10kb window)") 
+dev.off()
+```
+
+```{r}
+gea <- read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv"))
+hsp <-
+  gea %>% 
+  filter(grepl("Heat shock protein", full_name)) %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  # mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n()) 
+
+top <- 
+  gea %>%
+  #head(1000) %>% 
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+
+# Check difference in number of SNPs counted
+print((sum(top$pcount) - nrow(gea)))
+
+
+outpath <- here("analysis", "gea", "plots")
+pdf(here(outpath, "windowed_pi_gea.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(data = top, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)") 
+
+dev.off()
+```
+
+```{r}
+# manhattan plots
+pdf(here(outpath, "mahattan_hex.pdf"), width = 2, height = 20)
+ggplot() +
+  geom_hex(data = sig, aes(x = start, y = -log(p.adj)), bins = 50) +
+  scale_fill_viridis_c(option = "plasma") +
+  facet_wrap(~scaffold, ncol = 1) +
+  theme_classic() +
+  labs(x = "Position", y = "-log(p)", col = "Chromosome") +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") 
+dev.off()
+```
+
+```{r}
+top100k <- 
+  gea %>%
+  #head(1000) %>% 
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 100000) * 100000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+
+pdf(here(outpath, "windowed_gea.pdf"), width = 12, height = 10)
+ggplot(top100k) +
+  geom_line(aes(x = BIN_START, y = (pcount)), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") 
+dev.off()
+```
