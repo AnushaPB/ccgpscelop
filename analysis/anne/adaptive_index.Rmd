@@ -29,10 +29,11 @@ source(here("general_functions.R"))
 
 -   [1a. Get input files]
 -   [1b. Get input files]
--   [2. Calculate adaptive index]
--   [3. Build map of adaptive index]
--   [4. Build biplots]
--   [5. Knit everything together and export]
+-   [2. Run RDA on outlier genes only]
+-   [3. Calculate adaptive index]
+-   [4. Build map of adaptive index]
+-   [5. Build biplots]
+-   [6. Knit everything together and export]
 
 # 1a. Get input files
 

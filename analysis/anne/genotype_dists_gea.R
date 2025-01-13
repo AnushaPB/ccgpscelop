@@ -52,6 +52,7 @@ coordsF <- coords[overlap,]
 # Check order
 coordsF <- coordsF[match(genID, coordsF$INDV),]
 
+# Subset supersig to match vcf/dosage matrix (n=284)
 supersig <- supersig %>% filter(locus %in% colnames(dos))
 
 
@@ -111,13 +112,16 @@ pc3 <- plot_genotypes(envlayer = env[[3]], subset, locus = chr)
 plot_grid(pc1, pc2, pc3, ncol = 3)
 ggsave(here("analysis/anne/outputs/testpc.pdf"))
 
-# # Try to plot a different way
-# pt_dat <- terra::as.data.frame(env[[1]], xy = TRUE, na.rm = TRUE)
-# pt_dat$x <- round(pt_dat$x, 2)
+# Plot different way -----------------------------------------------------------
 
-# pt_dat <- left_join(pt_dat, subset)
+# Extract environmental values for SNPs
+env_vals <- terra::extract(env, coordsF %>% dplyr::select(x, y))
+env_vals <- bind_cols(env_vals, coordsF)
 
-# ggplot(pt_dat %>% na.omit()) +
-#     geom_point(aes(x = GT, y = PC1))
-#     # geom_histogram(aes(x = PC1))
+gts <- as.data.frame(dos) %>% rownames_to_column(var = "INDV") %>% pivot_longer(cols = 2:285, names_to = "locus", values_to = "GT")
+gts$GT <- as.factor(gts$GT)
+dat <- left_join(gts, env_vals)
+
+# plot <- ggplot(data = dat, aes(x = GT, y = PC1, group = GT)) +
+#     geom_boxplot()
 # ggsave(here("analysis/anne/outputs/test.pdf"))
