@@ -135,146 +135,6 @@ final_plot
 dev.off()
 ```
 
-# Future correlations
-```{r}
-files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")
-csi_future <- rast(map(files, rast))
-csi_future <- crop(csi_future, ca)
-csi_future <- mask(csi_future, ca)
-names(csi_future) <- c("SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
-
-df_sf <- 
-  get_coords(sf = TRUE) %>% 
-  right_join(df, by = c("SampleID" = "IID")) %>%
-  mutate(csi_future = extract(csi_future, .)[,2]) 
-
-
-pdf(here(plotpath, "future.pdf"), width = 9, height = 4)
-plt1 <-
-  ggplot(df_sf, aes(x = 1 - csi_future, y = neutral_ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  labs(x = "Future climate stability", y = "Genome-wide heterozygosity") +
-  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$neutral_ho))
-plt2 <-
-  ggplot(df_sf, aes(x = 1 - csi_future, y = genes_ho)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  labs(x = "Future climate stability", y = "Adaptive heterozygosity") +
-  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$genes_ho))
-plot_grid(plt1, plt2, nrow = 1)
-dev.off()
-
-```
-
-## Lm residuals
-
-### All variables
-```{r}
-# Residuals
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "paleo_change_cur_lgm", "Q")
-f <- paste("resid ~", paste(mod_vars, collapse = " + "))
-resid_mod_df <- mod_df %>% mutate(across(all_of(mod_vars), scale)) %>% mutate(resid = scale(resid))
-mod <- lm(f, data = resid_mod_df, na.action = "na.fail")
-
-# Dredge
-dredge_result <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge_result, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = resid_mod_df)
-summary(mod)
-car::vif(mod) # paleo_change_cur_lgm + csi_past have VIF > 5
-
-best_mod_vars <- all.vars(best_model_f)[-1]
-best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "lm_resids.pdf"), width = 24, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resid", resid_mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resid", f = best_mod_vars, df = resid_mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-dev.off()
-```
-
-
-### Select variables
-```{r}
-# Residuals
-mod_vars <- c("gHM", "paleo_change", "tmean_dif", "paleo_change_cur_lgm", "Q")
-f <- paste("resid ~", paste(mod_vars, collapse = " + "))
-resid_mod_df <- mod_df %>% mutate(across(all_of(mod_vars), scale)) %>% mutate(resid = scale(resid))
-mod <- lm(f, data = resid_mod_df, na.action = "na.fail")
-
-# Dredge
-dredge_result <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge_result, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = resid_mod_df)
-summary(mod)
-car::vif(mod)
-
-best_mod_vars <- all.vars(best_model_f)[-1]
-best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "lm_resids.pdf"), width = 24, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resid", resid_mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resid", f = best_mod_vars, df = resid_mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-dev.off()
-```
-
-
-### Contemporary variables
-```{r}
-cor.test(mod_df$paleo_change, mod_df$paleo_change_cur_lgm)
-# Residuals
-mod_vars <- c("gHM", "tmean_dif", "paleo_change_cur_lgm", "Q")
-f <- paste("resid ~", paste(mod_vars, collapse = " + "))
-resid_mod_df <- mod_df %>% mutate(across(all_of(mod_vars), scale)) %>% mutate(resid = scale(resid))
-mod <- lm(f, data = resid_mod_df, na.action = "na.fail")
-
-# Dredge
-dredge_result <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge_result, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = resid_mod_df)
-summary(mod)
-car::vif(mod)
-
-best_mod_vars <- all.vars(best_model_f)[-1]
-best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "lm_resids.pdf"), width = 12, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resid", resid_mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resid", f = best_mod_vars, df = resid_mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-dev.off()
-```
-
-```{r}
-bio <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
-bio_df <- extract(bio, sf_df, ID = FALSE)
-names(bio_df) <- gsub("_1981-2010_V.2.1", "", gsub("CHELSA_", "", names(bio_df)))
-
-cor.test(sf_df$genes_ho, bio_df$bio1)
-cor.test(sf_df$genes_ho, bio_df$bio5)
-# BIO2 = mean diurnal range
-cor.test(sf_df$genes_ho, bio_df$bio2)
-# BIO3 = isothermality
-cor.test(sf_df$genes_ho, bio_df$bio3)
-# BIO4 = temperature seasonality
-cor.test(sf_df$genes_ho, bio_df$bio4)
-# BIO7 = temperature annual range
-cor.test(sf_df$genes_ho, bio_df$bio7)
-
-cor(sf_df$genes_ho, bio_df, use = "pairwise.complete.obs")
-```
-
-
 # Spatial models
 
 ```{r}
@@ -491,6 +351,41 @@ do.call(
   c(c(gglm_ls, ggpartial_ls), nrow = 2)
 )
 dev.off()
+```
+
+
+# Future correlations
+```{r}
+files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")
+csi_future <- rast(map(files, rast))
+csi_future <- crop(csi_future, ca)
+csi_future <- mask(csi_future, ca)
+names(csi_future) <- c("SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
+
+df_sf <- 
+  get_coords(sf = TRUE) %>% 
+  right_join(df, by = c("SampleID" = "IID")) %>%
+  mutate(csi_future = extract(csi_future, .)[,2]) 
+
+
+pdf(here(plotpath, "future.pdf"), width = 9, height = 4)
+plt1 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = neutral_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Genome-wide heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$neutral_ho))
+plt2 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = genes_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Adaptive heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$genes_ho))
+plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+
 ```
 
 # PCA
