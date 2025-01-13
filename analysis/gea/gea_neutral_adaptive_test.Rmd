@@ -201,7 +201,6 @@ Msp
 null_M$observed
 Msp$observed
 
-
 dframe$resids <- resids
 dframe$null_resids <- null_resids
 
@@ -254,15 +253,15 @@ plot_grid(plt1, plt2, plt3, nrow = 1, rel_widths = c(5, 4, 4))
 dev.off()
 ```
 
-
-## Spatial Residuals
+## Residuals
 
 Check spatial autocorrelation in residuals of residual model:
 ```{r}
+mod_df <- read.csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "paleo_change_cur_lgm", "Q")
-dframe <- left_join(dframe, mod_df) %>% drop_na(all_of(mod_vars))
+mod_df <- left_join(dframe, mod_df) %>% drop_na(all_of(mod_vars))
 # Drop the island coordinate:
-coords_drop <- coords %>% filter(SampleID %in% dframe$SampleID)
+coords_drop <- coords %>% filter(SampleID %in% mod_df$SampleID)
 
 # Calculate pairwise geographic distances
 geoMat <- st_distance(st_as_sf(coords_drop))
@@ -275,25 +274,25 @@ spdata.IDW <- 1 / geoMat
 diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
 
 f <- paste("resids ~", paste(mod_vars, collapse = " + "))
-null.model <- lme(formula(f), data = dframe, random = ~ 1 | dummy, method = "ML")
+null.model <- lme(formula(f), data = mod_df, random = ~ 1 | dummy, method = "ML")
 ape::Moran.I(residuals(null.model), spdata.IDW) # significant, but very weak spatial autocorrelation (M = 0.05), so I think it is safe to use a non-spatial model
 ```
 
 ### All variables
 ```{r}
-mod_df <- read.csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "paleo_change_cur_lgm", "Q")
-mod_df <- left_join(dframe, mod_df) %>% st_drop_geometry() %>% drop_na(all_of(mod_vars))
-
-f <- paste("resids ~", paste(mod_vars, collapse = " + "))
+f <- paste("scale(resids) ~", paste(paste0("scale(", mod_vars, ")"), collapse = " + "))
 mod <- lm(f, data = mod_df, na.action = "na.fail")
 dredge <- MuMIn::dredge(mod)
 best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-summary(lm(best_model_f, data = mod_df))
+mod <- lm(best_model_f, data = mod_df)
+summary(mod)
+AIC(mod) # 247.1698
+car::vif(mod) # csi_past & paleo_change_cur_lgm VIF > 5, paleo_change > 4
 
-best_mod_vars <- all.vars(best_model_f)[-1]
-best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "sp_resids.pdf"), width = 24, height = 6)
+best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df"))
+
+pdf(here(plotpath, "sp_resids_all.pdf"), width = 24, height = 6)
 gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
 ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
 do.call(
@@ -305,19 +304,19 @@ dev.off()
 
 ### Select variables (historical + contemporary)
 ```{r}
-mod_df <- read.csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 mod_vars <- c("gHM", "paleo_change", "csi_past", "tmean_dif", "paleo_change_cur_lgm", "Q")
-mod_df <- left_join(dframe, mod_df) %>% st_drop_geometry() %>% drop_na(all_of(mod_vars))
-
-f <- paste("resids ~", paste(mod_vars, collapse = " + "))
+f <- paste("scale(resids) ~", paste(paste0("scale(", mod_vars, ")"), collapse = " + "))
 mod <- lm(f, data = mod_df, na.action = "na.fail")
 dredge <- MuMIn::dredge(mod)
 best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-summary(lm(best_model_f, data = mod_df))
+mod <- lm(best_model_f, data = mod_df)
+summary(mod)
+AIC(mod) # 267.1322
+car::vif(mod) # csi_past & paleo_change_cur_lgm VIF > 4
 
 best_mod_vars <- all.vars(best_model_f)[-1]
 best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "sp_resids.pdf"), width = 20, height = 6)
+pdf(here(plotpath, "sp_resids_select.pdf"), width = 20, height = 6)
 gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
 ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
 do.call(
@@ -328,22 +327,22 @@ dev.off()
 ```
 
 
-### Select variables (contemporary)
+### Select variables (contemporary + LGM or LIG)
 
 ```{r}
-mod_df <- read.csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 mod_vars <- c("gHM", "tmean_dif", "paleo_change_cur_lgm", "Q")
-mod_df <- left_join(dframe, mod_df) %>% st_drop_geometry() %>% drop_na(all_of(mod_vars))
-
-f <- paste("resids ~", paste(mod_vars, collapse = " + "))
+f <- paste("scale(resids) ~", paste(paste0("scale(", mod_vars, ")"), collapse = " + "))
 mod <- lm(f, data = mod_df, na.action = "na.fail")
 dredge <- MuMIn::dredge(mod)
 best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-summary(lm(best_model_f, data = mod_df))
+mod <- lm(best_model_f, data = mod_df)
+summary(mod)
+AIC(mod) # 391.2942
+car::vif(mod) # All VIF < 2
 
 best_mod_vars <- all.vars(best_model_f)[-1]
 best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
-pdf(here(plotpath, "sp_resids.pdf"), width = 11, height = 6)
+pdf(here(plotpath, "sp_resids_contemporaryLGM.pdf"), width = 11, height = 6)
 gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
 ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
 do.call(
@@ -353,6 +352,52 @@ do.call(
 dev.off()
 ```
 
+```{r}
+mod_vars <- c("gHM", "tmean_dif", "paleo_change", "Q")
+f <- paste("scale(resids) ~", paste(paste0("scale(", mod_vars, ")"), collapse = " + "))
+mod <- lm(f, data = mod_df, na.action = "na.fail")
+dredge <- MuMIn::dredge(mod)
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod <- lm(best_model_f, data = mod_df)
+summary(mod)
+AIC(mod) # 373.4025
+car::vif(mod) # All VIF < 2
+
+best_mod_vars <- all.vars(best_model_f)[-1]
+best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
+pdf(here(plotpath, "sp_resids_contemporaryLIG.pdf"), width = 11, height = 6)
+gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
+ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
+do.call(
+  cowplot::plot_grid,
+  c(c(gglm_ls, ggpartial_ls), nrow = 2)
+)
+dev.off()
+```
+
+
+```{r}
+mod_vars <- c("gHM", "tmean_dif", "paleo_change",  "paleo_change_cur_lgm", "Q")
+f <- paste("scale(resids) ~", paste(paste0("scale(", mod_vars, ")"), collapse = " + "))
+mod <- lm(f, data = mod_df, na.action = "na.fail")
+dredge <- MuMIn::dredge(mod)
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod <- lm(best_model_f, data = mod_df)
+summary(mod)
+AIC(mod) # 286.7274
+car::vif(mod) # All VIF < 4, paleo_change_cur_lgm VIF = 3.45
+
+best_mod_vars <- all.vars(best_model_f)[-1]
+best_mod_vars <- best_mod_vars[-length(best_mod_vars)]
+pdf(here(plotpath, "sp_resids_contemporary_LGMLIG.pdf"), width = 15, height = 6)
+gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
+ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
+do.call(
+  cowplot::plot_grid,
+  c(c(gglm_ls, ggpartial_ls), nrow = 2)
+)
+dev.off()
+```
 
 # Future correlations
 ```{r}
