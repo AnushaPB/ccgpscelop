@@ -4,7 +4,7 @@
 # Intersect with the annotated .gff
 conda activate ccgpscelop
 GFF=../../data/annotated_genome/annotation/protein-coding.w_func_relabelled.gff
-PCA=outputs/rda_sig_p01.bed
+PCA=outputs/gea.bed
 BIO1=outputs/bio1_sig.bed
 
 # Grep out all genes from the annotation

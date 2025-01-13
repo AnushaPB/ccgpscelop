@@ -2,7 +2,7 @@
 source activate ccgpscelop
 
 # Get plink 
-PLINK=../../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6
+PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
 
 # Subset plink file with RDA snps (created using p1_process_rda.R)
 plink --bfile $PLINK \
@@ -52,19 +52,6 @@ plink --bfile outputs/gea --allow-extra-chr --autosome-num 95 --pca 3 --out outp
 plink --bfile outputs/genes --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/genes
 plink --bfile outputs/nogea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/nogea
 
-# Calculate heterozygosity stats for different numbers of GEA SNPs
-plink --bfile outputs/gea -extract outputs/gea_gene_ids_top1000.txt --make-bed --out outputs/gea_genes_top1000 --allow-extra-chr
-plink --bfile outputs/gea_genes_top1000 --het --out outputs/gea_genes_top1000 --allow-extra-chr
-
-plink --bfile outputs/gea -extract outputs/gea_gene_ids_top10000.txt --make-bed --out outputs/gea_genes_top10000 --allow-extra-chr
-plink --bfile outputs/gea_genes_top10000 --het --out outputs/gea_genes_top10000 --allow-extra-chr
-
-plink --bfile outputs/gea -extract outputs/gea_gene_ids_top100000.txt --make-bed --out outputs/gea_genes_top100000 --allow-extra-chr
-plink --bfile outputs/gea_genes_top100000 --het --out outputs/gea_genes_top100000 --allow-extra-chr
-
-plink --bfile outputs/gea -extract outputs/gea_gene_ids_top1000000.txt --make-bed --out outputs/gea_genes_top1000000 --allow-extra-chr
-plink --bfile outputs/gea_genes_top1000000 --het --out outputs/gea_genes_top1000000 --allow-extra-chr
-
 # WINDOWED PI -------------------------------------------------------------------------
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 vcftools --gzvcf $VCF --window-pi 10000 --out outputs/58-Sceloporus_10kb_windowpi
@@ -72,5 +59,5 @@ vcftools --gzvcf $VCF --window-pi 100000 --out outputs/58-Sceloporus_100kb_windo
 
 # WINGEN FILES -------------------------------------------------------------------------
 # Create dosage files
-plink --bfile outputs/genes --recode A --out outputs/genes # creates genes.raw
-plink --bfile outputs/nogea_thinned --recode A --out outputs/nogea_thinned # creates nogea_thinned.raw
+plink --bfile outputs/genes --recode A --allow-extra-chr --out outputs/genes # creates genes.raw
+plink --bfile outputs/nogea_thinned --recode A --allow-extra-chr --out outputs/nogea_thinned # creates nogea_thinned.raw
