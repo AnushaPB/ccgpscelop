@@ -6,13 +6,19 @@ library(tidyverse)
 library(terra)
 library(vcfR)
 source(here("general_functions.R"))
+plotpath <- here("analysis", "gea", "plots")
 ```
 
 ```{r}
 gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
 dos <- read_table(here("analysis", "gea", "outputs", "nogea_thinned.raw"))
 
-coords <- get_coords(sf = TRUE) %>% filter(SampleID %in% gea_dos$IID) %>% st_transform(3310)
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
 gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
 dos <- dos[dos$IID %in% coords$SampleID, ]
 
@@ -28,52 +34,206 @@ gea_het <- matrix(ifelse(gea_het == 1, 1, 0), nrow = nrow(gea_het), ncol = ncol(
 
 # Confirm conversion works (same number of 1s)
 stopifnot(sum(het == 1, na.rm = TRUE) == sum(dos[, -(1:6)] == 1, na.rm = TRUE))
-stopifnor(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+stopifnot(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+
+# Make test dataset with calculate heterozygosity
+test_df <- data.frame(Ho_gea = rowMeans(gea_het, na.rm = TRUE), Ho = rowMeans(het, na.rm = TRUE), coords)
 ```
 
 ```{r}
-lyr <- coords_to_raster(coords, res = 10000)
+tmean_dif <- rast(here("data", "env", "tmean_dif.tif")) %>% project("EPSG:3310")
+lyr <- tmean_dif
+lyr[lyr == 0] <- NA
 
-png(here("analysis", "gea", "plots", "gea_genes.png"), width = 800, height = 800)
-#sc <- preview_gd(lyr, coords, wdim = 7)
+png(here(plotpath, "gea_genes.png"), width = 800, height = 800)
+sc <- preview_gd(lyr, coords, wdim = 11, sample_count = FALSE)
 #sc[sc == 0] <- NA
 #plot(sc)
-wg2 <- wg
-wg2[wg2 < 0.04] <- NA
-plot_gd(wg2)
 dev.off()
 
+run_wingen <- function(wdim, min_n = 1, cache = TRUE) {
+  path = here("analysis", "gea", "outputs", paste0("windowed_ho_gea_wdim_", wdim, "_min_n_", min_n, ".tif"))
 
-# setup parallel session
-future::plan("multisession", workers = 10)
+  if (file.exists(path) && cache) {
+    stack <- rast(path)
+    return(stack)
+  }
 
-wg <- window_general(het, coords, lyr, stat = "Ho", wdim = 7, min_n = 1)
-wg_gea <- window_general(gea_het, coords, lyr, stat = "Ho", wdim = 7, min_n = 1)
-future::plan("sequential")
+  future::plan("multisession", workers = 10)
+  wg <- window_general(het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
+  wg_gea <- window_general(gea_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
+  
+  tmean_dif_vals <- terra::extract(tmean_dif, coords, ID = FALSE)[,1]
+  custom <- function(x) mean(x, na.rm = TRUE)
+  wdif <- window_general(tmean_dif_vals, coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+  future::plan("sequential")
 
+  stack <- c(wg[["Ho"]], wg_gea[["Ho"]], wdif[["custom"]])
+  names(stack) <- c("Ho", "Ho_gea", "tmean_dif")
+  writeRaster(stack, filename = path, overwrite = TRUE)
 
+  return(stack)
+}
 
+stack <- run_wingen(wdim = 11, min_n = 1)
+stack2 <- run_wingen(wdim = 15, min_n = 1)
 
-# Read in climate data
-env_data <- rast(here("data", "env", "california_env_stack.tif"))
-bio1 <- env_data[["CHELSA_bio1_1981-2010_V.2.1"]]
-bio1 <- terra::extract(bio1, coords, ID = FALSE)[,1]
+png(here(plotpath, "wingen.png"), width = 1600, height = 1600)
+par(mfrow = c(2, 3))
+plot_gd(stack[[1]], main = "Ho", col = viridis::viridis(100))
+plot_gd(stack[[2]], main = "Ho_gea", col = viridis::viridis(100))
+plot_gd(stack[[3]], main = "tmean_dif", col = viridis::viridis(100))
 
-custom <- function(x) var(x, na.rm = TRUE)
-wenv <- window_general(bio1, coords, lyr, stat = custom, wdim = 7, min_n = 1)
+plot_gd(stack2[[1]], main = "Ho", col = viridis::viridis(100))
+plot_gd(stack2[[2]], main = "Ho_gea", col = viridis::viridis(100))
+plot_gd(stack2[[3]], main = "tmean_dif", col = viridis::viridis(100))
+dev.off()
+```
 
+# Models
 
-png(here("analysis", "gea", "plots", "wingen.png"), width = 1600, height = 800)
-par(mfrow = c(1, 3))
-wg2 <- wg
-wg2[wg2 < 0.03] <- NA
-plot_gd(wg2)
-points(coords)
-wg_gea2 <- wg_gea
-wg_gea2[wg_gea2 < 0.10] <- NA
-plot_gd(wg_gea2)
-points(coords)
-plot_gd(wenv)
-points(coords)
+## wdim = 11
+```{r}
+df <- as.data.frame(stack, xy = TRUE)
+lm(Ho ~ tmean_dif, data = df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif, data = df) %>% broom::tidy()
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
+test_df$Ho_wg <- extract(stack[["Ho"]], coords, ID = FALSE)[,1]
+test_df$Ho_gea_wg <- extract(stack[["Ho_gea"]], coords, ID = FALSE)[,1]
+lm(Ho_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+
+library(ggpubr)
+ca <- get_ca() %>% st_transform(st_crs(stack))
+plt1 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void() 
+
+plt2 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <- 
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange") 
+
+pltB <- 
+  ggplot(df, aes(x = tmean_dif, y = resids)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Contemporary temperature change", y = "Residuals") 
+
+pdf(here("analysis", "gea", "plots", "wingen.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+```
+
+## wdim = 15
+```{r}
+df <- as.data.frame(stack2, xy = TRUE)
+lm(Ho ~ tmean_dif, data = df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif, data = df) %>% broom::tidy()
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
+test_df$Ho_wg <- extract(stack2[["Ho"]], coords, ID = FALSE)[,1]
+test_df$Ho_gea_wg <- extract(stack2[["Ho_gea"]], coords, ID = FALSE)[,1]
+lm(Ho_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+
+library(ggpubr)
+ca <- get_ca() %>% st_transform(st_crs(stack2))
+plt1 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void()
+
+plt2 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <-
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange")
+
+pltB <-
+  ggplot(df, aes(x = tmean_dif, y = resids)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Contemporary temperature change", y = "Residuals")
+
+pdf(here("analysis", "gea", "plots", "wingen2.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model2.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
 dev.off()
 ```

@@ -2,6 +2,7 @@
 library(tidyverse)
 library(here)
 outpath <- here("analysis", "genetic_diversity", "outputs")
+plotpath <- here("analysis", "genetic_diversity", "plots")
 wpi <- read_table(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus_10kb_windowpi.windowed.pi"))
 
 i  <- 
@@ -47,7 +48,7 @@ hsp <-
   group_by(CHROM, BIN_START) %>%
   summarise(pcount = n()) 
 
-top <- 
+snpcount <- 
   gea %>%
   #head(1000) %>% 
   rename(CHROM = scaffold) %>%
@@ -59,13 +60,13 @@ top <-
   drop_na(CHROM)
 
 # Check difference in number of SNPs counted
-print((sum(top$pcount) - nrow(gea)))
+print((sum(snpcount$pcount) - nrow(gea)))
 
 
 outpath <- here("analysis", "gea", "plots")
 pdf(here(outpath, "windowed_pi_gea.pdf"), width = 12, height = 10)
 ggplot(gg_df) +
-  geom_vline(data = top, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
   geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
   scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
   scale_y_continuous(labels = scales::comma) +
@@ -82,6 +83,290 @@ ggplot(gg_df) +
 dev.off()
 ```
 
+# Looking at genes with many SNPs
+```{r}
+gea <- 
+  gea %>% 
+  mutate(
+    id = str_extract(full_name, "GNX-\\d+"),
+    name = str_extract(full_name, "(?<=Name=)[^\\[]+"),
+    uniprotid = str_extract(full_name, "(?<=\\[)[^:]+")
+  )
+
+id_counts <-
+  gea %>% 
+  group_by(id, name, uniprotid, full_name) %>% 
+  summarize(
+    n = n(), 
+    start = min(start), 
+    end = max(end), 
+    approxsize = end - start, 
+    ratio = n/approxsize
+  ) %>%
+  filter(n > 10) %>%
+  arrange(desc(n))
+
+# ITPR2 - known to play a role in heat stress; https://www.nature.com/articles/s41598-021-95816-8
+id_counts$name[1:10]
+
+id_counts %>% select(name, n) %>% filter(grepl("shock", name)) 
+```
+
+```{r}
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+
+# Fix names by removing lagging _letter
+names(gea_dos) <- gsub("_[A-Z]$", "", names(gea_dos))
+
+# Confirm orders are the same
+stopifnot(all(coords$SampleID == gea_dos$IID))
+```
+
+```{r}
+hsp70 <- gea %>% filter(grepl("Heat shock 70", full_name))
+hsp70_dos <- gea_dos[, c("IID", hsp70$locus)]
+hsp70_df <- 
+  left_join(coords, hsp70_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(c(-SampleID, -geometry), names_to = "locus", values_to = "value") %>%
+  left_join(gea)
+
+ca <- get_ca()
+
+hsp70_df_split <- 
+  hsp70_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+hsp70_pca <- 
+  hsp70_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+    pca_df <- data.frame(PC = scale(pca$x[,1]), SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1]) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+
+pdf(here(plotpath, "hsp70.pdf"), width = 12, height = 10)
+ggplot(hsp70_df) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = value)) +
+  scale_color_viridis_c() +
+  facet_wrap(id~locus) +
+  theme_void() 
+
+ggplot(hsp70_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC)) +
+  scale_color_viridis_c(option = "turbo") +
+  facet_wrap(~id) +
+  theme_void() 
+
+ggplot(gg_df) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= rename(hsp70_df, CHROM = scaffold), aes(xintercept = start), col = "cyan", lwd = 2) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)") 
+dev.off()
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(hsp70_pca, mod_df)
+
+cor_test <- 
+  mod_df %>% 
+  group_by(id) %>% 
+  summarise(cor = cor(PC, CHELSA_bio1_1981.2010_V.2.1, use = "pairwise.complete.obs"))
+  
+```
+
+
+```{r}
+epas1 <- gea %>% filter(grepl("Endothelial PAS domain-containing protein 1", full_name))
+epas1_dos <- gea_dos[, c("IID", epas1$locus)]
+epas1_df <- 
+  left_join(coords, epas1_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(c(-SampleID, -geometry), names_to = "locus", values_to = "value") %>%
+  left_join(gea)
+
+epas1_df_split <- 
+  epas1_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+epas1_pca <- 
+  epas1_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+    pca_df <- data.frame(PC = scale(pca$x[,1]), SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1]) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+
+pdf(here(plotpath, "epas1.pdf"), width = 12, height = 10)
+ggplot(epas1_df) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = value)) +
+  scale_color_viridis_c() +
+  facet_wrap(id~locus) +
+  theme_void() 
+
+ggplot(epas1_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC)) +
+  scale_color_viridis_c(option = "turbo") +
+  facet_wrap(~id) +
+  theme_void() 
+dev.off()
+
+```
+
+```{r}
+itpr2 <- gea %>% filter(grepl("Q14571.2", full_name))
+itpr2_dos <- gea_dos[, c("IID", itpr2$locus)]
+itpr2_df <- 
+  left_join(coords, itpr2_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(c(-SampleID, -geometry), names_to = "locus", values_to = "value") %>%
+  left_join(gea)
+
+itpr2_df_split <- 
+  itpr2_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+itpr2_pca <- 
+  itpr2_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+    pca_df <- data.frame(PC = scale(pca$x[,1]), SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1]) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+pdf(here(plotpath, "itpr2.pdf"), width = 5, height = 5)
+ggplot(itpr2_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC)) +
+  scale_color_viridis_c(option = "turbo") +
+  facet_wrap(~uniprotid) +
+  theme_void() 
+dev.off()
+
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(itpr2_pca, mod_df)
+
+cor_test <- 
+  mod_df %>% 
+  group_by(id) %>% 
+  summarise(cor = cor(PC, CHELSA_bio1_1981.2010_V.2.1, use = "pairwise.complete.obs"))
+  
+
+```
+
+
+```{r}
+top <- id_counts %>% arrange(desc(n)) %>% head(5)
+gea_top <- 
+  gea %>%
+  filter(full_name %in% top$full_name)
+
+# FIGURE OUT WHY THESE SNPS DONT ALIGN
+gea_top <- gea_top %>% filter(!(locus %in% c("chr1_164589865_GAAC_AAAC", "chr6_83176211_GGT_AGT", "chr7_16205953_CGTTT_GGTTT", "chr8_35636840_TTCC_CTCC", "chr9_22710183_CTT_TTT", "chr8_35502410_TA_CA")))
+
+top_dos <- gea_dos[, unique(c("IID", gea_top$locus))]
+top_df <- 
+  left_join(coords, top_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(c(-SampleID, -geometry), names_to = "locus", values_to = "value") %>%
+  left_join(distinct(gea, id, uniprotid, name, locus), by = "locus")
+
+ca <- get_ca()
+
+top_df_split <- 
+  top_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+top_pca <- 
+  top_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+    pca_df <- data.frame(PC = scale(pca$x[,1]), SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1]) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+pdf(here(plotpath, "genes_with_many_snps.pdf"), width = 20, height = 5)
+ggplot(top_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC)) +
+  scale_color_viridis_c(option = "turbo") +
+  facet_wrap(~id+uniprotid, nrow = 2) +
+  theme_void() 
+dev.off()
+
+```
+
+# OLD:
+
 ```{r}
 # manhattan plots
 pdf(here(outpath, "mahattan_hex.pdf"), width = 2, height = 20)
@@ -93,33 +378,6 @@ ggplot() +
   labs(x = "Position", y = "-log(p)", col = "Chromosome") +
   scale_x_continuous(expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
-  theme(axis.text.x = element_blank(), 
-        axis.title.x = element_blank(), 
-        axis.line.x = element_blank(),
-        strip.background = element_blank(),
-        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") 
-dev.off()
-```
-
-```{r}
-top100k <- 
-  gea %>%
-  #head(1000) %>% 
-  rename(CHROM = scaffold) %>%
-  mutate(CHROM = factor(CHROM, levels = i)) %>%
-  mutate(BIN_START = floor(start / 100000) * 100000) %>%
-  group_by(CHROM, BIN_START) %>%
-  summarise(pcount = n()) %>%
-  ungroup() %>%
-  drop_na(CHROM)
-
-pdf(here(outpath, "windowed_gea.pdf"), width = 12, height = 10)
-ggplot(top100k) +
-  geom_line(aes(x = BIN_START, y = (pcount)), alpha = 0.9, lwd = 0.5) +
-  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
-  scale_y_continuous(labels = scales::comma) +
-  theme_classic() +
-  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
   theme(axis.text.x = element_blank(), 
         axis.title.x = element_blank(), 
         axis.line.x = element_blank(),
