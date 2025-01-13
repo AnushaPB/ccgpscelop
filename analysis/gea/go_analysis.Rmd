@@ -5,6 +5,8 @@ library(here)
 library(topGO)
 library(cowplot)
 library(gprofiler2)
+plotpath <- here("analysis", "gea", "plots")
+outpath <- here("analysis", "gea", "outputs")
 ```
 ```{r}
 genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
@@ -63,18 +65,18 @@ write_csv(go_hsapien$result, here("analysis", "gea", "outputs", "hsapiens.csv"))
 head(go_hsapien$result[,1:11], 3)
 #gostplot(go_hsapien, capped = FALSE, interactive = TRUE)
 p <- gostplot(go_hsapien, capped = FALSE, interactive = FALSE)
-pdf(here("analysis", "gea", "plots", "hsapiens.pdf"))
+pdf(here(plotpath, "hsapiens.pdf"))
 print(p)
 dev.off()
 
 go_hsapien_result <- 
-  read_csv(here("analysis", "gea", "outputs", "hsapiens.csv")) %>% 
+  read_csv(here(outpath, "hsapiens.csv")) %>% 
   filter(p_value < 0.05) %>%
   arrange(p_value) %>%
   as_tibble() %>%
   # Just keep GO terms
   filter(grepl("GO", source)) %>%
-  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection )
+  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection)
 
 head(go_hsapien_result)
 
@@ -102,13 +104,8 @@ bp_hsapien %>% arrange(desc(recall)) %>% head(10)
 
 # Run GO analysis for chickens
 go_ggallus <- run_go("ggallus")
-write_csv(go_ggallus$result, here("analysis", "gea", "outputs", "ggallus.csv"))
+write_csv(go_ggallus$result, here(outpath, "ggallus.csv"))
 head(go_ggallus$result, 3)
-#gostplot(go_hsapien, capped = FALSE, interactive = TRUE)
-p <- gostplot(go_ggallus, capped = FALSE, interactive = FALSE)
-pdf(here("analysis", "gea", "plots", "ggallus.pdf"))
-print(p)
-dev.off()
 
 go_ggallus_result <- 
   go_ggallus$result %>% 
@@ -117,7 +114,7 @@ go_ggallus_result <-
   as_tibble() %>%
   # Just keep GO terms
   filter(grepl("GO", source)) %>%
-  dplyr::select(p_value, precision, recall, query_size, term_name, source, intersection)
+  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection)
 bp_ggallus <- 
   go_ggallus_result %>% 
   filter(source == "GO:BP") 
@@ -175,13 +172,13 @@ create_gt_table <- function(df, n = 5) {
 }
 
 library(gt)
-gtsave(create_gt_table(bp_hsapien), here("analysis", "gea", "plots", "hsapien_gt_bp.html"))
-gtsave(create_gt_table(mf_hsapien), here("analysis", "gea", "plots", "hsapien_gt_mf.html"))
-gtsave(create_gt_table(go_hsapien_result), here("analysis", "gea", "plots", "hsapien_gt.html"))
+gtsave(create_gt_table(bp_hsapien), here(plotpath, "hsapien_gt_bp.html"))
+gtsave(create_gt_table(mf_hsapien), here(plotpath, "hsapien_gt_mf.html"))
+gtsave(create_gt_table(go_hsapien_result), here(plotpath, "hsapien_gt.html"))
 
 # Repeat for chicken 
-gtsave(create_gt_table(bp_ggallus), here("analysis", "gea", "plots", "ggallus_gt_bp.html"))
-gtsave(create_gt_table(mf_ggallus), here("analysis", "gea", "plots", "ggallus_gt_mf.html"))
+gtsave(create_gt_table(bp_ggallus), here(plotpath, "ggallus_gt_bp.html"))
+gtsave(create_gt_table(mf_ggallus), here(plotpath, "ggallus_gt_mf.html"))
 
 
 # PLOTS
@@ -202,10 +199,10 @@ plot_bp <- function(bp){
 }
 
 
-pdf(here("analysis", "gea", "plots", "hsapiens.pdf"),width = 12, height = 10)
+pdf(here(plotpath, "plot_bp.pdf"),width = 12, height = 10)
 plt1 <- plot_bp(bp_hsapien)
 plt2 <- plot_bp(bp_ggallus)
-plot_grid(plt1, plt2, plt3, nrow = 3, labels = c("Human", "Chicken"))
+plot_grid(plt1, plt2, nrow = 2, labels = c("Human", "Chicken"))
 # Precision: Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set
 dev.off()
 ```
@@ -213,10 +210,6 @@ dev.off()
 ```{r}
 
 # Proteins of interest
-
-# Heat shock proteins (4)
-genes_org %>% filter(grepl("HSP", full_name) | grepl("heat shock", full_name))
-
 search <- function(x, y = NULL){
   if (is.null(y)) y <- genes_org 
   y %>% filter(grepl(x, full_name)) %>% pull(full_name)
@@ -226,7 +219,7 @@ search <- function(x, y = NULL){
 search("HSP70")
 search("HSP")
 search("Heat shock") # many of these! Heat shock 70 kDA is included in the list
-search("Heat shock 70")
+search("Heat shock 70") # found!
 length(search("Heat shock"))
 search("heat shock")
 #UCP1 (Uncoupling Protein 1): Found in brown adipose tissue, UCP1 is involved in thermogenesis, helping humans generate heat in cold environments.
@@ -268,6 +261,7 @@ search("Heat shock") # found HSP 70!
 search("UCP") 
 #TRPV4 (Transient Receptor Potential Vanilloid 4): This protein is involved in temperature sensation and regulation.
 #TRP in general is associated with thermosensation
+# https://www.sciencedirect.com/science/article/abs/pii/S0959438815000306
 search("TRPV4")
 search("TRPV")
 search("Transient receptor potential")
@@ -282,6 +276,22 @@ search("Aquaporin")
 search("Leptin")
 search("leptin")
 
+# From this paper on mammals: https://www.nature.com/articles/s41598-021-95816-8
+# specific candidate variants and genes are related to the neuronal system (ITPR1, ITPR2, and GRIA4) and neuroactive ligand–receptor interaction functions for heat tolerance (NPFFR2, CALCR, and GHR), providing a novel insight that can help to develop genetic and management approaches to combat heat stress.
+search("Inositol 1,4,5-trisphosphate receptor type 1") # found! (ITPR1)
+search("Inositol 1,4,5-trisphosphate receptor type 2") # found! (ITPR2)
+search("Glutamate receptor ionotropic") # Found Glutamate receptor ionotropic but not type 4 (only GRIK and GRIN, not GRIA)
+search("Neuropeptide FF receptor 1") # Found! (NPFFR2)
+search("Calcitonin receptor") # Found! (CALCR)
+search("Growth hormone receptor") # Found! (GHR)
+
+# From this paper on sticklebacks: https://www.nature.com/articles/s41598-021-95816-8
+# We determined maximum critical thermal limits (CTmax) and the associated gene expression responses in three heat shock (hsp60, hsp70, hsp90) and two key metabolic (idh2, fbp2) genes at ecologically relevant moderate heat stress (26 °C) as well as at the critical thermal limit (CTmax)
+search("Heat shock 70") # found!
+search("Heat shock 90")
+search("Heat shock 60")
+search("Isocitrate dehydrogenase") # Found IDH but not IDH2
+search("bisphosphatase") # Found FBP 
 
 # Look at genes associated with biological regulation in humans
 br_genes <- 
@@ -343,7 +353,7 @@ top <-
   left_join(dplyr::select(gg_df, scaffold, start, BPcum), by = c("scaffold", "start")) 
 print(dplyr::select(top, gene_name, organism))
 
-png(here("analysis", "gea", "plots", "manhattan.png"), width = 25, height = 3, units = "in", res = 300)
+png(here(plotpath, "manhattan.png"), width = 25, height = 3, units = "in", res = 300)
 # Manhattan plot
 ggplot(gg_df, aes(x = BPcum, y = logp, color = as.factor(scaffold))) +
   geom_point(alpha = 0.8, size = 1.3) +
@@ -365,6 +375,88 @@ dev.off()
 # GT TABLES
 ```
 
+
+# ALL GENES:
+```{r}
+ids <- 
+  read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv")) %>% 
+  pull(uniprot_id)
+
+go_result_all <-
+  gost(
+      query = ids, 
+      organism = "hsapiens", ordered_query = FALSE, 
+      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = TRUE, 
+      user_threshold = 0.05, correction_method = "g_SCS", 
+      domain_scope = "annotated", custom_bg = NULL, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+  )
+
+write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_hsapiens.csv"))
+
+all_genes <- 
+  read_csv(here(outpath, "all_genes_hsapiens.csv")) %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(term_id, intersection_size, query_size, term_size, p_value)
+names(all_genes)[-1] <- paste0(names(all_genes), "_all")[-1]
+
+gea_genes <- 
+  read_csv(here(outpath, "hsapiens.csv")) %>% 
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(intersection_size, query_size, term_size, term_name, source, term_id, p_value)
+
+comparison <- 
+  right_join(all_genes, gea_genes, by = "term_id") %>%
+  # Remove rows where the term is not found in all genes [TEMP NEED TO RERUN INCLUDING N.S. TERMS]
+  drop_na(query_size_all) %>%
+  rowwise() %>%
+  mutate(fish_p = go_fish(query_size, term_size, intersection_size, query_size_all, intersection_size_all))
+
+comparison %>%
+ filter(term_name == "biological regulation") %>% 
+ select(query_size, intersection_size, query_size_all, intersection_size_all, term_size)
+
+# Term size all and term size should be the same
+stopifnot(comparison$term_size_all == comparison$term_size)
+
+go_fish <- function(query_size, term_size, intersection_size, query_size_all, intersection_size_all) {
+  # Calculate the counts for the contingency table
+  a <- intersection_size  # Number of GEA genes in the category
+  b <- query_size - intersection_size  # Number of GEA genes not in the category
+  c <- intersection_size_all - intersection_size  # Number of non-GEA Sceloporus genes in the category
+  d <- query_size_all - intersection_size_all  # Number of non-GEA Sceloporus genes not in the category
+  
+  # Create the contingency table
+  contingency_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
+  
+  # Perform Fisher's exact test
+  result <- fisher.test(contingency_table)
+  
+  # Return the p-value
+  return(result$p.value)
+}
+
+sig <- 
+  comparison %>% 
+  filter(fish_p < 0.05) %>% 
+  arrange(fish_p) %>% 
+  dplyr::select(term_name, term_id, source, fish_p, query_size_all, intersection_size)
+
+comparison %>% filter(grepl("biological regulation", term_name)) %>% select(query_size, intersection_size, query_size_all, intersection_size_all)
+sig %>% filter(source == "GO:BP") %>% arrange(desc(intersection_size)) %>% head(10)
+ ```
+
+ # NETWORK
+ 
 ```{r}
 bphaspien <- read_csv(here("analysis", "gea", "outputs", "hsapiens.csv"))
 # Install required packages if not already installed
@@ -469,8 +561,7 @@ plot_go_network <- function(network, layout_type = "fr") {
 # plot_go_network(network)
 # Example usage:
 
-outpath <- here("analysis", "gea", "plots")
-hsapiens <- read_csv(here("analysis", "gea", "outputs", "hsapiens.csv"))
+hsapiens <- read_csv(here(outpath, "hsapiens.csv"))
 go_terms <- 
   hsapiens %>% 
   filter(source == "GO:BP") %>%
@@ -635,84 +726,3 @@ cat(bp_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 cat(mf_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 cat(cc_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 ```
-
-# ALL GENES:
-```{r}
-ids <- 
-    read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv")) %>% 
-    pull(uniprot_id)
-
-go_result_all <-
-  gost(
-      query = ids, 
-      organism = "hsapiens", ordered_query = FALSE, 
-      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
-      measure_underrepresentation = FALSE, evcodes = TRUE, 
-      user_threshold = 0.05, correction_method = "g_SCS", 
-      domain_scope = "annotated", custom_bg = NULL, 
-      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
-  )
-
-write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_hsapiens.csv"))
-
-all_genes <- 
-  read_csv(here("analysis", "gea", "outputs", "all_genes_hsapiens.csv")) %>% 
-  filter(p_value < 0.05) %>%
-  arrange(p_value) %>%
-  as_tibble() %>%
-  # Just keep GO terms
-  filter(grepl("GO", source)) %>%
-  dplyr::select(term_id, intersection_size, query_size, term_size, p_value)
-names(all_genes)[-1] <- paste0(names(all_genes), "_all")[-1]
-
-gea_genes <- 
-  read_csv(here("analysis", "gea", "outputs", "hsapiens.csv")) %>% 
-  filter(p_value < 0.05) %>%
-  arrange(p_value) %>%
-  as_tibble() %>%
-  # Just keep GO terms
-  filter(grepl("GO", source)) %>%
-  dplyr::select(intersection_size, query_size, term_size, term_name, source, term_id, p_value)
-
-comparison <- 
-  right_join(all_genes, gea_genes, by = "term_id") %>%
-  # Remove rows where the term is not found in all genes [TEMP NEED TO RERUN INCLUDING N.S. TERMS]
-  drop_na(query_size_all) %>%
-  rowwise() %>%
-  mutate(fish_p = go_fish(query_size, term_size, intersection_size, query_size_all, intersection_size_all))
-
-comparison %>%
- filter(term_name == "biological regulation") %>% 
- select(query_size, intersection_size, query_size_all, intersection_size_all, term_size)
-
-# Term size all and term size should be the same
-stopifnot(comparison$term_size_all == comparison$term_size)
-
-# I DONT THINK A FISHER TEST IS WHAT I WANT
-go_fish <- function(query_size, term_size, intersection_size, query_size_all, intersection_size_all) {
-  # Calculate the counts for the contingency table
-  a <- intersection_size  # Number of GEA genes in the category
-  b <- query_size - intersection_size  # Number of GEA genes not in the category
-  c <- intersection_size_all - intersection_size  # Number of non-GEA Sceloporus genes in the category
-  d <- query_size_all - intersection_size_all  # Number of non-GEA Sceloporus genes not in the category
-  
-  # Create the contingency table
-  contingency_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
-  
-  # Perform Fisher's exact test
-  result <- fisher.test(contingency_table)
-  
-  # Return the p-value
-  return(result$p.value)
-}
-
-
-sig <- 
-  comparison %>% 
-  filter(fish_p < 0.05) %>% 
-  arrange(fish_p) %>% 
-  dplyr::select(term_name, term_id, source, fish_p, query_size_all, intersection_size)
-
-comparison %>% filter(grepl("biological regulation", term_name)) %>% select(query_size, intersection_size, query_size_all, intersection_size_all)
-sig %>% filter(source == "GO:BP") %>% arrange(desc(intersection_size)) %>% head(10)
- ```
