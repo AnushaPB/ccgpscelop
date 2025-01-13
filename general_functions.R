@@ -79,3 +79,50 @@ get_range <- function(){
   sf::st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1")) %>% 
     st_transform(3310)
 }
+
+gglm <- function(x, y, df){
+  ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+    geom_point(aes(col = .data[[x]])) +
+    geom_smooth(method = "lm", col = "black") +
+    labs(x = make_pretty_names(x), y = make_pretty_names(y)) +
+    ggpubr::stat_cor(method = "pearson", label.y = min(df[[y]], na.rm = TRUE), label.x = min(df[[x]], na.rm = TRUE)) +
+    theme_classic() +
+    scale_color_viridis_c(option = "mako") +
+    theme(legend.position = "none") 
+}
+
+ggpartial <- function(x, y, f, df){
+  diff <- setdiff(f, x)
+  response_f <- paste0(y, " ~ ", paste(diff, collapse = " + "))
+  predictor_f <- paste0(x, " ~ ", paste(diff, collapse = " + "))
+  
+  response_resid <- residuals(lm(response_f, data = df))
+  predictor_resid <- residuals(lm(predictor_f, data = df))
+
+  df$response_resid <- response_resid
+  df$predictor_resid <- predictor_resid
+
+  ggplot(df, aes(x = predictor_resid, y = response_resid)) +
+    geom_point(aes(col = .data[[x]])) +
+    geom_smooth(method = "lm", col = "black") +
+    labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", y)) +
+    ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
+    scale_color_viridis_c(option = "mako") +
+    theme_classic() +
+    theme(legend.position = "none")
+}
+
+make_pretty_names <- function(vars){
+  map_chr(vars, \(x){
+    if (x == "paleo_change") return("Paleoclimate temperature change (LIG)")
+    if (x == "paleo_change_cur_lgm") return("Paleoclimate temperature change (LGM)")
+    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
+    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
+    if (grepl("csi", x)) return("Past climate stability")
+    if (grepl("gHM", x)) return("Human modification")
+    if (grepl("glacier", x)) return("Glacier (inside/outside)")
+    if (grepl("Q", x)) return("Admixture")
+    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    return(x)
+  })
+}
