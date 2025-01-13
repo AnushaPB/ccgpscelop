@@ -1,22 +1,11 @@
-make_pretty_names <- function(vars){
-  map_chr(vars, \(x){
-    if (x == "paleo_change") return("Paleoclimate temperature change")
-    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
-    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
-    if (grepl("csi", x)) return("Past climate stability")
-    if (grepl("gHM", x)) return("Human modification")
-    if (grepl("glacier", x)) return("Glacier (inside/outside)")
-    if (grepl("Q", x)) return("Admixture")
-    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
-    return(x)
-  })
-}
+
+
 get_het <- function(){
   # callable sites for denominator
   callable <- read.csv(here("data_processing", "callable_counts.csv"))
   callable_sites <- callable %>% pull(callable_sites)
 
-  het <- format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus_clean_snps.het"), callable_sites = callable_sites)
+  het <- format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus.het"), callable_sites = callable_sites)
   
   if ("IID" %in% names(het)) het$SampleID <- het$IID
   if ("INDV" %in% names(het)) het$SampleID <- het$INDV
@@ -87,3 +76,68 @@ geosummarize <- function(coords, stat = "Ho", res = 50000){
 }
 
 
+
+spatial_dredge <- function(full_formula, data, coords = c("x", "y"), 
+                          random = "~ 1 | dummy", method = "ML", corFunction = corExp) {
+  
+  # Get all predictor variables from formula
+  predictors <- all.vars(full_formula[[3]])
+  
+  # Create all possible combinations of predictors
+  n_preds <- length(predictors)
+  combinations <- lapply(1:n_preds, 
+                        function(k) combn(predictors, k, simplify = FALSE))
+  combinations <- unlist(combinations, recursive = FALSE)
+
+  # Add null model (intercept only)
+  combinations <- c(list(character(0)), combinations)
+  
+  # Function to fit a model and return its metrics
+  fit_model <- function(predictors) {
+    tryCatch({
+      # Construct formula
+      if(length(predictors) == 0) {
+        # Null model (intercept only)
+        current_formula <- as.formula(paste("Ho ~ 1"))
+      } else {
+        # Model with predictors
+        current_formula <- as.formula(
+          paste("Ho ~", paste(predictors, collapse = " + "))
+        )
+      }
+      
+      # Fit spatial model
+      current_model <- lme(fixed = current_formula,
+                          data = data,
+                          random = as.formula(random),
+                          correlation = corFunction(1, form = as.formula(
+                            paste("~", paste(coords, collapse = " + "))
+                          )),
+                          method = method)
+      
+      # Return results
+      return(data.frame(
+        model_formula = paste(deparse(current_formula), collapse = ""),
+        AIC = AIC(current_model),
+        BIC = BIC(current_model),
+        logLik = logLik(current_model),
+        stringsAsFactors = FALSE
+      ))
+      
+    }, error = function(e) {
+      cat("Error fitting model:", deparse(current_formula), "\n")
+      cat("Error message:", conditionMessage(e), "\n")
+      return(NULL)
+    })
+  }
+  
+  # Run models for each combination using purrr::map
+  model_results <- future_map_dfr(combinations, fit_model, .progress = TRUE)
+
+  # Sort results by AIC
+  model_results <- 
+    model_results %>%
+    arrange(AIC)
+  
+  return(model_results)
+}
