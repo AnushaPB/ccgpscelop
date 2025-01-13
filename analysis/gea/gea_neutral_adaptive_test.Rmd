@@ -550,56 +550,6 @@ ggplot(paleoclim_mod_df, aes(x = paleo_change, y = resids)) +
 dev.off()
 ```
 
-# Models
-
-```{r}
-mod_vars <- c("gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "NDVI", "Q")
-
-mod_df <- 
-  read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>% 
-  left_join(genes, by = c("SampleID" = "IID")) %>%
-  left_join(neutral, by = c("SampleID" = "IID")) %>%
-  mutate(across(all_of(mod_vars), scale)) 
-
-unimod <-
-  map(mod_vars, ~{
-    mod <- lm(genes_ho ~ ., data = mod_df %>% select(all_of(.x), genes_ho))
-    broom::tidy(mod) %>% filter(term != "(Intercept)") %>% mutate(r2 =  summary(mod)$r.squared)
-  }) %>% bind_rows()
-
-sig <- 
-  unimod %>%
-  filter(p.value < 0.05) %>%
-  arrange(desc(r2))
-
-lm(genes_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
-lm(neutral_ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
-lm(Ho ~ Q + paleo_change + CHELSA_bio1_1981.2010_V.2.1 + tmean_dif, data = mod_df) %>% broom::tidy() %>% filter(p.value < 0.05)
-
-
-pdf(here("analysis", "gea", "plots", "univariate_models.pdf"), width = 15, height = 9)
-gg_df <-  mod_df %>% pivot_longer(c(Q, paleo_change, CHELSA_bio1_1981.2010_V.2.1, tmean_dif)) %>% mutate(name = make_pretty_names(name))
-plt1 <- ggplot(gg_df, aes(x = value, y = Ho)) + 
-  geom_point() + 
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  ggpubr::stat_cor(method = "pearson") +
-  labs(y = "Genome-wide heterozygosity") +
-  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
-  theme(strip.placement = "outside", strip.background = element_blank())
-plt2 <- ggplot(gg_df, aes(x = value, y = genes_ho)) + 
-  geom_point() + 
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  ggpubr::stat_cor(method = "pearson") +
-  labs(y = "Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
-  theme(strip.placement = "outside", strip.background = element_blank())
-
-cowplot::plot_grid(plt1, plt2, nrow =2)
-dev.off()
-```
-
 # Outliers
 ```{r}
 outliers <- sf_df %>% filter(resid_both > 0.04 & y > 36)
