@@ -50,9 +50,13 @@ paleoclim_mod_df <-
   data.frame(
     SampleID = coords$SampleID,
     paleo_change = terra::extract(bio1_dif_cur_lig, coords, ID = FALSE)[,1],
-    paleo_change_lgm = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
-    paleo_change_cur = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1]
+    paleo_change_lgm_lig = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
+    paleo_change_cur_lgm = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1]
     )
+
+# All paleovariables are highly correlated
+# paleo_change_cur_lgm and paleo_change_lgm_lig have a correlation of almost 1
+cor(paleoclim_mod_df[, - 1], use = "pairwise.complete.obs")
 
 # Plots of climate change
 gg_df <-
@@ -126,11 +130,13 @@ Note: Bioclimatic variables do not contain Bio 2 or Bio 5, but they do contain o
 csi_past <- rast(here("data", "env", "csi", "Layers", "past", "csi_past.tif"))
 csi_past <- crop(csi_past, ca)
 csi_past <- mask(csi_past, ca)
+csi_past <- 1 - csi_past
 
 files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")
 csi_future <- rast(map(files, rast))
 csi_future <- crop(csi_future, ca)
 csi_future <- mask(csi_future, ca)
+csi_future <- 1 - csi_future
 
 csi_stack <- c(csi_past, csi_future)
 names(csi_stack) <- c("Past",  "SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
@@ -150,7 +156,7 @@ df_past <- data.frame(csi_past = csi_vals[,1], coords)
 ```{r, fig.height = 4, fig.width = 16}
 csi_vals <- extract(csi_future, coords, ID = FALSE)
 df_future <- 
-  data.frame(1 - csi_vals, coords) %>% 
+  data.frame(csi_vals, coords) %>% 
   pivot_longer(starts_with("csi"), names_to = "future_model", values_to = "csi") %>%
   mutate(model_name = case_when(
     future_model == "csi_future_ssp126" ~ "SSP 1-2.6",
@@ -163,7 +169,7 @@ df_future <-
 ```{r}
 coords <- get_coords(sf = TRUE)
 # Do 1 - to make the values more intuitive
-csi_mod_df <- data.frame(csi = 1 - extract(csi_past, coords, ID = FALSE), coords)
+csi_mod_df <- data.frame(csi = extract(csi_past, coords, ID = FALSE), coords)
 ```
 
 # Hypothesis 3: Genetic diversity explained by admixture
@@ -264,7 +270,7 @@ tmean_mod_df <-
 ```{r}
 env_list <- list(
   paleo_change = bio1_dif_cur_lig, 
-  csi_past = 1 - csi_past, 
+  csi_past = csi_past, 
   NDVI = ndvi, 
   gHM = ghm,
   bioclim = bioclim,
@@ -276,18 +282,7 @@ env_list <- list(
 
 # Models
 ```{r}
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "CHELSA_bio12_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_lgm", "paleo_change_cur", "x", "y")
-
-# Get individuals with low depth
-depth <- read_table(here("data", "ccgp_data", "58-Sceloporus.idepth"))  
-low_depth <- 
-  depth %>% 
-  filter(INDV %in% het$SampleID) %>%
-  filter(MEAN_DEPTH < 8) %>% 
-  pull(INDV)
-low_depth
-# Check if low depth individuals are in the genetic data
-low_depth %in% het$SampleID
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_cur_lgm", "x", "y")
 
 mod_df <- 
   get_coords() %>% 
@@ -301,9 +296,7 @@ mod_df <-
   dplyr::select(Ho, SampleID, geometry, all_of(mod_vars)) %>%
   drop_na(Ho) %>%
   # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
-  # Drop samples with low depth (<8x)
-  filter(!(SampleID %in% low_depth))
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
 
 # Count NAs in each column
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
@@ -357,7 +350,7 @@ high_corr_pairs
 ```{r}
 export_df <- 
   st_drop_geometry(mod_df_imputed) %>% 
-  select(SampleID, x, y, everything(), -paleo_change_lgm, -paleo_change_cur, -geometry)
+  select(SampleID, x, y, everything(), -geometry)
 write_csv(export_df, here(outpath, "model_df.csv"))
 ```
 
@@ -400,7 +393,7 @@ dummy <- rep(1, nrow(dframe))
 dframe <- cbind(dframe, dummy) # Add it to the data frame
 
 # Fit a null model
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q", "paleo_change_cur_lgm")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 null.model <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = "ML")
 summary(null.model)
@@ -433,6 +426,7 @@ best
 best_model <- get(best)
 
 summary(best_model)
+car::vif(best_model) # All VIF < 5
 
 # Residuals are spatially autocorrelated
 resids <- residuals(best_model)
@@ -464,74 +458,14 @@ high_corr_pairs %>% pivot_longer(cols = c(Var1, Var2)) %>% distinct(value)
 ```
 
 ```{r}
-spatial_dredge <- function(full_formula, data, coords = c("x", "y"), 
-                          random = "~ 1 | dummy", method = "ML") {
-  
-  # Get all predictor variables from formula
-  predictors <- all.vars(full_formula[[3]])
-  
-  # Create all possible combinations of predictors
-  n_preds <- length(predictors)
-  combinations <- lapply(1:n_preds, 
-                        function(k) combn(predictors, k, simplify = FALSE))
-  combinations <- unlist(combinations, recursive = FALSE)
-
-  # Add null model (intercept only)
-  combinations <- c(list(character(0)), combinations)
-  
-  # Function to fit a model and return its metrics
-  fit_model <- function(predictors) {
-    tryCatch({
-      # Construct formula
-      if(length(predictors) == 0) {
-        # Null model (intercept only)
-        current_formula <- as.formula(paste("Ho ~ 1"))
-      } else {
-        # Model with predictors
-        current_formula <- as.formula(
-          paste("Ho ~", paste(predictors, collapse = " + "))
-        )
-      }
-      
-      # Fit spatial model
-      current_model <- lme(fixed = current_formula,
-                          data = data,
-                          random = as.formula(random),
-                          correlation = corExp(1, form = as.formula(
-                            paste("~", paste(coords, collapse = " + "))
-                          )),
-                          method = method)
-      
-      # Return results
-      return(data.frame(
-        model_formula = paste(deparse(current_formula), collapse = ""),
-        AIC = AIC(current_model),
-        BIC = BIC(current_model),
-        logLik = logLik(current_model),
-        stringsAsFactors = FALSE
-      ))
-      
-    }, error = function(e) {
-      cat("Error fitting model:", deparse(current_formula), "\n")
-      cat("Error message:", conditionMessage(e), "\n")
-      return(NULL)
-    })
-  }
-  
-  # Run models for each combination using purrr::map
-  model_results <- map_dfr(combinations, fit_model, .progress = TRUE)
-
-  # Sort results by AIC
-  model_results <- 
-    model_results %>%
-    arrange(AIC)
-  
-  return(model_results)
-}
-
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
+library(furrr)
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q", "paleo_change_cur_lgm")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+
+# This uses parallelization, but can also be run without it (remove plan() calls)
+plan(multisession, workers = 10)
 dredge_result <- spatial_dredge(full_formula = f, data = dframe, method = "ML")
+plan(sequential)
 
 # Look at top 3 models
 dredge_result %>% head(3)
@@ -692,7 +626,7 @@ lm_variance_partition <- function(predictor_sets, response, scale_vars = TRUE) {
 #   response = genetic_diversity
 # )
 
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q", "paleo_change_cur_lgm")
 predictor_sets <- mod_df_imputed_scaled %>% select(all_of(mod_vars)) %>% as.list()
 response <- mod_df_imputed_scaled$Ho
 varpart_result <- lm_variance_partition(predictor_sets, response, scale_vars =TRUE)
@@ -727,22 +661,6 @@ dev.off()
 ```
 
 # Plots and tables
-
-```{r}
-make_pretty_names <- function(vars){
-  map_chr(vars, \(x){
-    if (x == "paleo_change") return("Paleoclimate temperature change")
-    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
-    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
-    if (grepl("csi", x)) return("Past climate stability")
-    if (grepl("gHM", x)) return("Human modification")
-    if (grepl("glacier", x)) return("Glacier (inside/outside)")
-    if (grepl("Q", x)) return("Admixture")
-    if (grepl("tmean_dif", x)) return("Contemporary temperature change")
-    return(x)
-  })
-}
-```
 
 ```{r}
 # Turn into a nice gt table
@@ -785,14 +703,15 @@ gg_df <-
   mutate(glacier = factor(glacier, levels = c(0, 1), labels = c("Outside", "Inside"))) %>%
   rename(
       Admixture = Q, 
-      `Paleoclimate\ntemperature\nchange` = paleo_change, 
+      `Paleoclimate\ntemperature\nchange (LIG)` = paleo_change, 
+      `Paleoclimate\ntemperature\nchange (LGM)` = paleo_change_cur_lgm, 
       `Contemporary\ntemperature` = CHELSA_bio1_1981.2010_V.2.1,
       `Human\nmodification` = gHM,
       `Past climate\nstability` = csi_past,
       `Contemporary\ntemperature\nchange` = tmean_dif,
       `Glacier` = glacier) 
 
-vars <- c("Paleoclimate\ntemperature\nchange", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange", "NDVI")
+vars <- c("Paleoclimate\ntemperature\nchange (LIG)", "Paleoclimate\ntemperature\nchange (LGM)", "Contemporary\ntemperature", "Admixture", "Human\nmodification", "Past climate\nstability", "Contemporary\ntemperature\nchange", "NDVI")
 varcols <- c("inferno", "rocket", "viridis", "rocket", "mako", "inferno")
 varcols <- rep("mako", length(vars))
 
@@ -890,7 +809,7 @@ ordered_plts <- pmap(list(plt3_ls, plt2_ls, plt4), ggpubr::ggarrange, nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1_ls))))
 dev.off()
 
-pdf(here(plotpath, "linear_model_plot.pdf"), width = 8.5, height = 24)
+pdf(here(plotpath, "linear_model_plot2.pdf"), width = 8.5, height = 24)
 ordered_plts <- pmap(list(plt3_ls, plt2_ls), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
 do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1_ls))))
 dev.off()
@@ -919,7 +838,7 @@ partial_plot <- function(x, mod_vars) {
 }
 
 
-mod_vars <- c("NDVI", "paleo_change", "Q")
+mod_vars <- c("paleo_change", "Q")
 partial_df <- map(mod_vars, ~partial_plot(.x, mod_vars)) %>% bind_rows()
 
 pdf(here(plotpath, "partial_plot.pdf"), width = 8.5, height = 4)
@@ -935,7 +854,7 @@ dev.off()
 ```
 ```{r}
 plot_resid <- function(x){
-  vars <- c("glacier", "paleo_change", "Q")
+  vars <- c("paleo_change", "Q")
   mod_vars <- vars[vars != x]
   mod <- lm(formula(paste0("Ho ~ ", paste(mod_vars, collapse = " + "))), data = mod_df_imputed_scaled)
   resids <- residuals(mod)
@@ -948,7 +867,7 @@ plot_resid <- function(x){
 }
 
 resid_plts <- 
-  map(c("glacier", "paleo_change", "Q"), plot_resid) %>% 
+  map(c("paleo_change", "Q"), plot_resid) %>% 
   bind_rows() %>%
   mutate(name = map_chr(name, ~make_pretty_names(.x)))
 
@@ -989,7 +908,7 @@ varpart_plt <-
         axis.text.y = element_text(size = 12))
 
 # Correlation plot
-mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "paleo_change", "paleo_change_cur_lgm", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
 cormat <- cor(mod_df_imputed_scaled[, mod_vars])
 
 png(here(plotpath, "deleteme.png"))
@@ -1041,7 +960,7 @@ missig_plt <-
   stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE)) 
 
 combo <- plot_grid(cor_plt, varpart_plt, nrow = 1, rel_widths = c(5, 3), labels = c("A", "B"))
-pdf(here(plotpath, "confounding.pdf"), width = 15, height = 8)
+pdf(here(plotpath, "confounding.pdf"), width = 18, height = 9)
 plot_grid(combo, missig_plt, nrow = 2, rel_heights = c(0.6, 0.35), labels = c("", "C"))
 dev.off()
 ```
@@ -1095,7 +1014,7 @@ dev.off()
 
 # Test of model without correlated variables
 
-recent climate chagne (tmean_dif) seems uncorrelated with paleo_change so I wanted to build a model with all variables not correlated with paleo_change to see what pops out as significant. In the lm() tmean_dif is significant but in the spatial model it is not.
+recent climate change (tmean_dif) seems uncorrelated with paleo_change so I wanted to build a model with all variables not correlated with paleo_change to see what pops out as significant. In the lm() tmean_dif is significant but in the spatial model it is not.
 ```{r}
 uncor_vars <-
   cor_df %>% 
