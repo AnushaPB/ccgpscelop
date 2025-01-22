@@ -11,6 +11,7 @@ library("spdep")
 library("spatialreg")
 library("MuMIn")
 library("cowplot")
+library("performance")
 
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
@@ -34,13 +35,22 @@ if (file.exists(paleopath)){
 } else {
   env_list <- get_paleovars()
   env_rast <- 
-    imap(env_list[c("cur", "lgm", "lig")], ~{
+    imap(env_list[c("lgm", "lig")], ~{
       names(.x) <- paste0(.y, "_", names(.x))
       return(.x)
     })
-  paleovars <- c(env_rast[["cur"]], env_rast[["lgm"]], env_rast[["lig"]])
+  paleovars <- c(env_rast[["lgm"]], env_rast[["lig"]])
+  paleovars <- paleovars/10 # Convert to degrees C
   writeRaster(paleovars, paleopath, overwrite = TRUE, datatype = "FLT4S")
 }
+
+# Get current climate data (NOTE: not using paleoclim data because they use V1.2 instead of V2.1)
+bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+cur_bio_1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
+# Resample to match paleoclim data
+cur_bio_1 <- resample(cur_bio_1, paleovars[[1]], method = "bilinear")
+# Add to paleovars 
+paleovars$cur_bio_1 <- cur_bio_1
 
 # Get variables for change in climate
 bio1_dif_cur_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
@@ -60,7 +70,7 @@ cor(paleoclim_mod_df[, - 1], use = "pairwise.complete.obs")
 
 # Plots of climate change
 gg_df <-
-  as.data.frame(paleovars[[c("cur_bio_1", "lgm_bio_1", "lig_bio_1")]]/10, xy = TRUE) %>%
+  as.data.frame(paleovars[[c("cur_bio_1", "lgm_bio_1", "lig_bio_1")]], xy = TRUE) %>%
   mutate(
          dif_lgm = cur_bio_1 - lgm_bio_1,
          dif_lig = cur_bio_1 - lig_bio_1) 
@@ -279,7 +289,6 @@ env_list <- list(
   )
 ```
 
-
 # Models
 ```{r}
 mod_vars <- c("NDVI", "gHM", "paleo_change", "CHELSA_bio1_1981.2010_V.2.1", "Q", "csi_past", "glacier", "tmean_dif", "paleo_change_cur_lgm", "x", "y")
@@ -464,7 +473,7 @@ f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
 # This uses parallelization, but can also be run without it (remove plan() calls)
 plan(multisession, workers = 10)
-dredge_result <- spatial_dredge(full_formula = f, data = dframe, method = "ML")
+dredge_result <- spatial_dredge(full_formula = f, data = dframe)
 plan(sequential)
 
 # Look at top 3 models
@@ -481,6 +490,13 @@ null.model.best <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = 
 exp.sp.best <- update(null.model.best, correlation = corExp(1, form = ~ x + y), method = "ML")
 summary(exp.sp.best)
 best_model <- exp.sp.best
+
+# Model diagnostics
+pdf(here(plotpath, "model_check.pdf"), width = 8, height = 6)
+plot(check_model(best_model, check = c("linearity", "vif", "normality")))
+# Compare to normal linear model
+plot(check_model(lm(Ho ~ paleo_change + Q, data = dframe), check = c("linearity", "vif", "normality")))
+dev.off()
 ```
 
 # Variance partioning analysis
@@ -909,11 +925,8 @@ varpart_plt <-
 
 # Correlation plot
 mod_vars <- c("NDVI", "gHM", "paleo_change", "paleo_change_cur_lgm", "CHELSA_bio1_1981.2010_V.2.1", "csi_past", "glacier", "tmean_dif", "Q")
-cormat <- cor(mod_df_imputed_scaled[, mod_vars])
+cormat <- cor(mod_df_imputed[, mod_vars])
 
-png(here(plotpath, "deleteme.png"))
-plot(mod_df_imputed_scaled$tmean_dif, mod_df_imputed_scaled$Ho)
-dev.off()
 cor_df <- 
   cormat %>%
   as.data.frame() %>%
@@ -941,12 +954,12 @@ cor_plt <-
 
 # Plot variables correlated with Ho that are not in the final model
 names(mod_vars) <- mod_vars
-sig_vars <- map(mod_vars, ~cor.test(mod_df_imputed_scaled$Ho, mod_df_imputed_scaled[[.x]])$p.value) < 0.05
+sig_vars <- map(mod_vars, ~cor.test(mod_df_imputed$Ho, mod_df_imputed[[.x]])$p.value) < 0.05
 sig_vars <- names(sig_vars[sig_vars])
 sig_vars <- sig_vars[!(sig_vars %in% names(best_model$coefficients$fixed))]
 
 missig_plt <-
-  mod_df_imputed_scaled %>%
+  mod_df_imputed %>%
   pivot_longer(all_of(sig_vars)) %>%
   mutate(name = make_pretty_names(name)) %>%
   ggplot(aes(x = value, y = Ho)) +
@@ -957,7 +970,7 @@ missig_plt <-
   scale_color_viridis_c(option = "mako") +
   facet_wrap(~name, scales = "free", strip.position = "bottom", nrow = 1) +
   theme(strip.placement = "outside", strip.background = element_blank()) +
-  stat_cor(label.y = min(mod_df_imputed_scaled$Ho, na.rm = TRUE)) 
+  stat_cor(label.y = min(mod_df_imputed$Ho, na.rm = TRUE)) 
 
 combo <- plot_grid(cor_plt, varpart_plt, nrow = 1, rel_widths = c(5, 3), labels = c("A", "B"))
 pdf(here(plotpath, "confounding.pdf"), width = 18, height = 9)
@@ -967,7 +980,7 @@ dev.off()
 
 ```{r}
 plot_map <- function(var){
-  ggplot(st_as_sf(mod_df_imputed_scaled)) +
+  ggplot(st_as_sf(mod_df_imputed)) +
     geom_sf(data = ca) +
     geom_sf(aes(fill = .data[[var]]), pch = 21, col = rgb(0,0,0,0), cex = 2) +
     theme_void() +
@@ -976,7 +989,7 @@ plot_map <- function(var){
 }
 
 plot_points <- function(var){
-  ggplot(mod_df_imputed_scaled, aes(x = .data[[var]], y = Ho)) +
+  ggplot(mod_df_imputed, aes(x = .data[[var]], y = Ho)) +
     geom_point(aes(col = .data[[var]]), alpha = 0.8) +
     geom_smooth(method = "lm", color = "black") +
     theme_classic() +
@@ -987,10 +1000,10 @@ plot_points <- function(var){
     theme(legend.position = "none")
 }
 
-mod_df_imputed_scaled$predicted <- best_model$fitted[, "fixed"]
+mod_df_imputed$predicted <- best_model$fitted[, "fixed"]
 
 mod_plt <-
-  ggplot(mod_df_imputed_scaled, aes(x = predicted, y = Ho)) +
+  ggplot(mod_df_imputed, aes(x = predicted, y = Ho)) +
   geom_point(aes(col = Ho), alpha = 0.8) +
   geom_smooth(method = "lm", color = "black") +
   theme_classic() +
