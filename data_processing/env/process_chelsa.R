@@ -33,3 +33,11 @@ library(RStoolbox)
 pca <- rasterPCA(scale(chelsa_mask))
 
 writeRaster(pca$map[[1:3]], here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"), overwrite = TRUE)
+
+# Read in trace data
+files <- list.files(here("data", "env", "chelsa_trace21k"), full.names = TRUE, pattern = "CHELSA_TraCE21k_bio01")
+trace <- rast(files)
+trace <- crop(trace, ca)
+trace <- mask(trace, ca)
+# Calculate variance
+trace_var <- app(trace, var, na.rm = TRUE)

@@ -20,6 +20,7 @@ rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.coor
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_annotated.vcf.gz ../data/ccgp_data
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_annotated.vcf.gz.csi ../data/ccgp_data
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_pruned_0.6.vcf.gz ../data/ccgp_data
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_pruned_0.6.vcf.gz.csi ../data/ccgp_data
 
 # Depth and missingness:
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.idepth ../data/ccgp_data

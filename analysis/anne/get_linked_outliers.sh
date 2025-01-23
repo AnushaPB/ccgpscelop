@@ -11,7 +11,7 @@ mamba activate ccgpscelop
 awk -F "\"*,\"*" '{print $5}' ../../outputs/RDA/58-Sceloporus_RDA_outliers_full_rdadapt.csv | uniq | tail -n +2 > RDA_scaffolds
 mv RDA_scaffolds ./outputs
 
-# Retrieve first two cols (CHROM and POS) from bed file with GEA genes; gea_genes.bed copied from macewindu
+# Retrieve first two cols (CHROM and POS) from bed file with GEA genes
 awk '{print $1,$2 > "gea_genes.bed"}' ../gea/outputs/gea_genes.bed
 mv gea_genes.bed ./outputs
 

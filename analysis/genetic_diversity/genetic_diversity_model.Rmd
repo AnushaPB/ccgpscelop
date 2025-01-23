@@ -35,11 +35,11 @@ if (file.exists(paleopath)){
 } else {
   env_list <- get_paleovars()
   env_rast <- 
-    imap(env_list[c("lgm", "lig")], ~{
+    imap(env_list[c("cur", "lgm", "lig")], ~{
       names(.x) <- paste0(.y, "_", names(.x))
       return(.x)
     })
-  paleovars <- c(env_rast[["lgm"]], env_rast[["lig"]])
+  paleovars <- c(env_rast[["cur"]], env_rast[["lgm"]], env_rast[["lig"]])
   paleovars <- paleovars/10 # Convert to degrees C
   writeRaster(paleovars, paleopath, overwrite = TRUE, datatype = "FLT4S")
 }
@@ -47,15 +47,17 @@ if (file.exists(paleopath)){
 # Get current climate data (NOTE: not using paleoclim data because they use V1.2 instead of V2.1)
 bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
 cur_bio_1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
+cur_bio_1 <- paleovars[["cur_bio_1"]]
+cur_bio_1 <- resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear")
 # Resample to match paleoclim data
-cur_bio_1 <- resample(cur_bio_1, paleovars[[1]], method = "bilinear")
+#cur_bio_1_resample <- resample(cur_bio_1, paleovars[[1]], method = "bilinear")
 # Add to paleovars 
-paleovars$cur_bio_1 <- cur_bio_1
+#paleovars$cur_bio_1 <- cur_bio_1_resample
 
 # Get variables for change in climate
-bio1_dif_cur_lig <- paleovars$cur_bio_1 - paleovars$lig_bio_1
+bio1_dif_cur_lig <- cur_bio_1 - paleovars$lig_bio_1
 bio1_dif_lgm_lig <- paleovars$lgm_bio_1 - paleovars$lig_bio_1
-bio1_dif_cur_lgm <- paleovars$cur_bio_1 - paleovars$lgm_bio_1
+bio1_dif_cur_lgm <- cur_bio_1 - paleovars$lgm_bio_1
 paleoclim_mod_df <- 
   data.frame(
     SampleID = coords$SampleID,
@@ -63,6 +65,44 @@ paleoclim_mod_df <-
     paleo_change_lgm_lig = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
     paleo_change_cur_lgm = terra::extract(bio1_dif_cur_lgm, coords, ID = FALSE)[,1]
     )
+
+test_df <- left_join(paleoclim_mod_df, get_het())
+lm(Ho ~ paleo_change, data = test_df) %>% summary()
+
+png("delete.png", width = 10, height = 9, units = "in", res = 300)
+par(mfrow = c(3, 3))
+plot(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], main = "CHELSA V2")
+plot(resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear"), main = "CHELSA V2 resampled")
+plot(paleovars$cur_bio_1, main = "Paleo cur")
+plot(paleovars$cur_bio_1 - resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear"), main = "CHELSA V2 resampled - Paleo cur")
+plot(paleovars$cur_bio_1 - paleovars$lig_bio_1, main = "Paleo cur - Paleo LIG")
+plot(resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear") - paleovars$lig_bio_1, main = "CHELSA V2 resampled - Paleo LIG")
+plot(paleovars$cur_bio_1 - paleovars$lgm_bio_1, main = "Paleo cur - Paleo LGM")
+plot(resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear") - paleovars$lgm_bio_1, main = "CHELSA V2 resampled - Paleo LGM")
+dev.off()
+
+cur_test <-
+  data.frame(
+    SampleID = coords$SampleID,
+    cur1 = terra::extract(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], coords, ID = FALSE)[,1],
+    cur2 = terra::extract(paleovars$cur_bio_1, coords, ID = FALSE)[,1],
+    cur3 = terra::extract(resample(bioclim[["CHELSA_bio1_1981-2010_V.2.1"]], paleovars[[1]], method = "bilinear"), coords, ID = FALSE)[,1],
+    lig = terra::extract(paleovars$lig_bio_1, coords, ID = FALSE)[,1],
+    lgm = terra::extract(paleovars$lgm_bio_1, coords, ID = FALSE)[,1]
+  ) %>%
+  left_join(
+    get_het()
+  ) %>%
+  mutate(
+    dif1 = cur1 - lgm,
+    dif2 = cur2 - lgm,
+    dif3 = cur3 - lgm
+  )
+cor(cur_test[, c("cur1", "cur2", "cur3")], use = "pairwise.complete.obs")
+cor(cur_test[, c("dif1", "dif2", "dif3")], use = "pairwise.complete.obs")
+lm(Ho ~ dif1, data = cur_test) %>% summary()
+lm(Ho ~ dif2, data = cur_test) %>% summary()
+lm(Ho ~ dif3, data = cur_test) %>% summary()
 
 # All paleovariables are highly correlated
 # paleo_change_cur_lgm and paleo_change_lgm_lig have a correlation of almost 1
@@ -125,6 +165,53 @@ plt3 <-
   labs(fill = "Mean\nTemperature\nChange\n(scaled)")
 
 #cowplot::plot_grid(plt1, plt2, plt3, nrow = 3)
+```
+
+```{r}
+
+lgm <- rast(here("data", "env", "chelsa_pmip", "CHELSA_PMIP_CCSM4_BIO_01.tif"))
+lgm <- mask(crop(lgm, ca), ca)
+# Convert from K/10 to C
+lgm <- lgm/10 - 273.15
+bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+cur_bio_1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
+png("delete.png")
+par(mfrow = c(2,2))
+plot(lgm)
+plot(paleovars$lgm_bio_1)
+plot(paleovars$cur_bio_1 - paleovars$lgm_bio_1, main = "Paleo cur - Paleo LGM")
+plot(cur_bio_1 - lgm, main = "CHELSA V2 - CHELSA LGM")
+dev.off()
+
+test_df <-
+  data.frame(
+    SampleID = coords$SampleID,
+    paleo_change_paleo = extract(paleovars$cur_bio_1 - paleovars$lgm_bio_1, coords, ID = FALSE)[,1],
+    paleo_change_chelsa = extract(cur_bio_1 - lgm, coords, ID = FALSE)[,1]
+  ) %>% left_join(get_het())
+
+summary(lm(scale(Ho) ~ scale(paleo_change_chelsa), data = test_df))
+summary(lm(scale(Ho) ~ scale(paleo_change_paleo), data = test_df))
+
+test_df$agg <- extract(aggregate(cur_bio_1, 5) - aggregate(lgm, 5), coords, ID = FALSE)[,1]
+png("delete.png", width = 12, height = 4, units = "in", res = 300)
+plot_grid(
+gglm("paleo_change_chelsa", "Ho", test_df),
+gglm("paleo_change_paleo", "Ho", test_df),
+gglm("agg", "Ho", test_df),
+nrow = 1
+)
+dev.off()
+```
+
+```{r}
+paleoclim_mod_df <- 
+  data.frame(
+    SampleID = coords$SampleID,
+    paleo_change = terra::extract(bio1_dif_cur_lig, coords, ID = FALSE)[,1],
+    paleo_change_lgm_lig = terra::extract(bio1_dif_lgm_lig, coords, ID = FALSE)[,1],
+    paleo_change_cur_lgm = terra::extract(lgm, coords, ID = FALSE)[,1]
+    )
 ```
 
 # Hypothesis 2: Genetic diversity explained by past climate stability
@@ -485,7 +572,7 @@ best_model_f <- dredge_result %>% filter(AIC == min(AIC))
 
 ```{r}
 # Fit the best model
-f <- formula("Ho ~ paleo_change + Q")
+f <- formula(best_model_f$model_formula)
 null.model.best <- lme(fixed = f, data = dframe, random = ~ 1 | dummy, method = "ML")
 exp.sp.best <- update(null.model.best, correlation = corExp(1, form = ~ x + y), method = "ML")
 summary(exp.sp.best)
@@ -1015,10 +1102,10 @@ mod_plt <-
 pdf(here(plotpath, "main_figure.pdf"), width = 12.5, height = 7.5) 
 plot_grid(
   plot_map("Ho"),
-  plot_map("paleo_change"),
+  plot_map("csi_past"),
   plot_map("Q"), 
   mod_plt,
-  plot_points("paleo_change"), 
+  plot_points("csi_past"), 
   plot_points("Q"), 
   labels = c("A", "B", "C", "D", "E", "F"),
   nrow = 2)

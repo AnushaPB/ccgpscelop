@@ -105,7 +105,7 @@ ggpartial <- function(x, y, f, df){
   ggplot(df, aes(x = predictor_resid, y = response_resid)) +
     geom_point(aes(col = .data[[x]])) +
     geom_smooth(method = "lm", col = "black") +
-    labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", y)) +
+    labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", make_pretty_names(y))) +
     ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
     scale_color_viridis_c(option = "mako") +
     theme_classic() +
@@ -123,6 +123,9 @@ make_pretty_names <- function(vars){
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
     if (grepl("Q", x)) return("Admixture")
     if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    if (grepl("resid", x)) return("Residuals")
+    if (grepl("genes_ho", x)) return("Adaptive heterozygosity")
+    if (grepl("Ho", x)) return("Genome-wide heterozygosity")
     return(x)
   })
 }

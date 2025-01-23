@@ -5,6 +5,7 @@ library(sf)
 library(tidyverse)
 library(terra)
 library(vcfR)
+library(cowplot)
 source(here("general_functions.R"))
 plotpath <- here("analysis", "gea", "plots")
 ```
@@ -19,6 +20,14 @@ coords <-
   st_transform(3310) %>%
   # REMOVE CHANNEL ISLAND
   filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+q <-
+  read_csv(here("analysis", "admixture", "outputs", "Q9.csv")) %>%
+  dplyr::select(SampleID, Q) %>%
+  # Do 1- to make the values more intuitive
+  mutate(Q = 1 - Q) 
+q <- left_join(coords, q)
+
 gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
 dos <- dos[dos$IID %in% coords$SampleID, ]
 
@@ -41,7 +50,28 @@ test_df <- data.frame(Ho_gea = rowMeans(gea_het, na.rm = TRUE), Ho = rowMeans(he
 ```
 
 ```{r}
+# Get LGM
+ca <- get_ca()
+lgm <- rast(here("data", "env", "chelsa_pmip", "CHELSA_PMIP_CCSM4_BIO_01.tif"))
+lgm <- crop(lgm, ca)
+lgm <- project(lgm, "EPSG:3310")
+lgm <- mask(lgm, st_transform(ca, "EPSG:3310"))
+# Convert from K/10 to C
+lgm <- lgm/10 - 273.15
+
+# Get bioclim
+bio1 <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))[[1]] %>% project("EPSG:3310")
+
+# Calc change
+paleo_change <- bio1 - lgm
+
+# Get tmean difference
 tmean_dif <- rast(here("data", "env", "tmean_dif.tif")) %>% project("EPSG:3310")
+
+# Resample bio1/lgm (1km) to tmean_dif (5km)
+cur <- resample(bio1, tmean_dif, method = "bilinear")
+lgm <- resample(lgm, tmean_dif, method = "bilinear")
+paleochange <- resample(paleo_change, tmean_dif, method = "bilinear")
 lyr <- tmean_dif
 lyr[lyr == 0] <- NA
 
@@ -60,23 +90,28 @@ run_wingen <- function(wdim, min_n = 1, cache = TRUE) {
   }
 
   future::plan("multisession", workers = 10)
+
   wg <- window_general(het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
   wg_gea <- window_general(gea_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
   
-  tmean_dif_vals <- terra::extract(tmean_dif, coords, ID = FALSE)[,1]
   custom <- function(x) mean(x, na.rm = TRUE)
-  wdif <- window_general(tmean_dif_vals, coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+  w_tmean_dif <- window_general(terra::extract(tmean_dif, coords, ID = FALSE)[,1], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+  w_paleo_change <- window_general(terra::extract(paleo_change, coords, ID = FALSE)[,1], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+  w_tmean <- window_general(terra::extract(cur, coords, ID = FALSE)[,1], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+  stopifnot(q$SampleID == coords$SampleID)
+  w_q <- window_general(q$Q, coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+
   future::plan("sequential")
 
-  stack <- c(wg[["Ho"]], wg_gea[["Ho"]], wdif[["custom"]])
-  names(stack) <- c("Ho", "Ho_gea", "tmean_dif")
+  stack <- c(wg[["Ho"]], wg_gea[["Ho"]], w_tmean_dif[["custom"]], w_paleo_change[["custom"]], w_tmean[["custom"]], w_q[["custom"]])
+  names(stack) <- c("Ho", "Ho_gea", "tmean_dif", "paleo_change", "tmean", "Q")
   writeRaster(stack, filename = path, overwrite = TRUE)
 
   return(stack)
 }
 
-stack <- run_wingen(wdim = 11, min_n = 1)
-stack2 <- run_wingen(wdim = 15, min_n = 1)
+stack <- run_wingen(wdim = 11, min_n = 1, cache = TRUE)
+stack2 <- run_wingen(wdim = 15, min_n = 1, cache = TRUE)
 
 png(here(plotpath, "wingen.png"), width = 1600, height = 1600)
 par(mfrow = c(2, 3))
@@ -95,15 +130,39 @@ dev.off()
 ## wdim = 11
 ```{r}
 df <- as.data.frame(stack, xy = TRUE)
-lm(Ho ~ tmean_dif, data = df) %>% broom::tidy()
-lm(Ho_gea ~ tmean_dif, data = df) %>% broom::tidy()
+scale_df <- df %>% mutate_all(scale)
+lm(Ho ~ tmean_dif + paleo_change + tmean + Q, data = scale_df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif + paleo_change + tmean + Q, data = scale_df) %>% broom::tidy()
 df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
 
 test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
+test_df$paleo_change <- extract(paleo_change, coords, ID = FALSE)[,1]
+test_df$tmean <- extract(cur, coords, ID = FALSE)[,1]
 test_df$Ho_wg <- extract(stack[["Ho"]], coords, ID = FALSE)[,1]
 test_df$Ho_gea_wg <- extract(stack[["Ho_gea"]], coords, ID = FALSE)[,1]
-lm(Ho_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
-lm(Ho_gea_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+
+test_df <- 
+  test_df %>% 
+  left_join(q) %>%
+  mutate_at(vars(Ho_wg, Ho_gea_wg, tmean_dif, paleo_change, tmean, Q), scale)
+lm(Ho_wg ~ tmean_dif + paleo_change + tmean + Q, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif + paleo_change + tmean + Q, data = test_df) %>% broom::tidy()
+
+mod_vars <- c( "paleo_change", "tmean_dif", "tmean", "Q")
+pdf(here(plotpath, "wingen_lm_wdim11.pdf"), width = 12, height = 12)
+plot_list1 <- purrr::map(mod_vars, ~ gglm(.x, "Ho", scale_df))
+partial_plot_list1 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho", mod_vars, drop_na(scale_df)))
+plot_list2 <- purrr::map(mod_vars, ~ gglm(.x, "Ho_gea", scale_df))
+partial_plot_list2 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(scale_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+
+
+plot_list1 <- purrr::map(mod_vars, ~ gglm(.x, "Ho", test_df))
+partial_plot_list1 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho", mod_vars, drop_na(test_df)))
+plot_list2 <- purrr::map(mod_vars, ~ gglm(.x, "Ho_gea", test_df))
+partial_plot_list2 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(test_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+dev.off()
 
 library(ggpubr)
 ca <- get_ca() %>% st_transform(st_crs(stack))
@@ -168,15 +227,32 @@ dev.off()
 ## wdim = 15
 ```{r}
 df <- as.data.frame(stack2, xy = TRUE)
-lm(Ho ~ tmean_dif, data = df) %>% broom::tidy()
-lm(Ho_gea ~ tmean_dif, data = df) %>% broom::tidy()
+scale_df <- df %>% mutate_all(scale)
+lm(Ho ~ tmean_dif + paleo_change + tmean, data = scale_df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif + paleo_change + tmean, data = scale_df) %>% broom::tidy()
 df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
 
 test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
-test_df$Ho_wg <- extract(stack2[["Ho"]], coords, ID = FALSE)[,1]
-test_df$Ho_gea_wg <- extract(stack2[["Ho_gea"]], coords, ID = FALSE)[,1]
-lm(Ho_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
-lm(Ho_gea_wg ~ tmean_dif, data = test_df) %>% broom::tidy()
+test_df$paleo_change <- extract(paleo_change, coords, ID = FALSE)[,1]
+test_df$tmean <- extract(cur, coords, ID = FALSE)[,1]
+test_df$Ho_wg <- extract(stack[["Ho"]], coords, ID = FALSE)[,1]
+test_df$Ho_gea_wg <- extract(stack[["Ho_gea"]], coords, ID = FALSE)[,1]
+test_df <- test_df %>% mutate_at(vars(Ho_wg, Ho_gea_wg, tmean_dif, paleo_change, tmean), scale)
+lm(Ho_wg ~ tmean_dif + paleo_change + tmean, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif + paleo_change + tmean, data = test_df) %>% broom::tidy()
+
+mod_vars <- c("tmean_dif", "paleo_change", "tmean")
+pdf(here(plotpath, "wingen_lm_wdim15.pdf"))
+plot_grid(
+  gglm("paleo_change", "Ho", scale_df),
+  gglm("tmean_dif", "Ho", scale_df),
+  gglm("tmean", "Ho", scale_df),
+  ggpartial("paleo_change", "Ho", mod_vars, drop_na(scale_df)),
+  ggpartial("tmean_dif", "Ho", mod_vars, drop_na(scale_df)),
+  ggpartial("tmean", "Ho", mod_vars, drop_na(scale_df))
+)
+dev.off()
+
 
 library(ggpubr)
 ca <- get_ca() %>% st_transform(st_crs(stack2))
