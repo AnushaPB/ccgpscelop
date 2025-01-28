@@ -80,7 +80,7 @@ get_range <- function(){
     st_transform(3310)
 }
 
-gglm <- function(x, y, df){
+gglm <- function(x, y, df, col = TRUE){
   ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
     geom_point(aes(col = .data[[x]])) +
     geom_smooth(method = "lm", col = "black") +
@@ -91,11 +91,11 @@ gglm <- function(x, y, df){
     theme(legend.position = "none") 
 }
 
-ggpartial <- function(x, y, f, df){
+ggpartial <- function(x, y, f, df, col = TRUE){
   diff <- setdiff(f, x)
   response_f <- paste0(y, " ~ ", paste(diff, collapse = " + "))
   predictor_f <- paste0(x, " ~ ", paste(diff, collapse = " + "))
-  
+
   response_resid <- residuals(lm(response_f, data = df))
   predictor_resid <- residuals(lm(predictor_f, data = df))
 
@@ -114,11 +114,12 @@ ggpartial <- function(x, y, f, df){
 
 make_pretty_names <- function(vars){
   map_chr(vars, \(x){
-    if (x == "paleo_change") return("Paleoclimate temperature change (LIG)")
-    if (x == "paleo_change_cur_lgm") return("Paleoclimate temperature change (LGM)")
-    if (grepl("CHELSA_bio12", x)) return("Contemporary precipitation")
-    if (grepl("CHELSA_bio1", x)) return("Contemporary temperature")
-    if (grepl("csi", x)) return("Past climate stability")
+    if (x == "cur_lig") return("Paleoclimate change (CUR - LIG)")
+    if (x == "cur_lgm") return("Paleoclimate change (CUR - LGM)")
+    if (x == "lgm_lig") return("Paleoclimate change (LGM - LIG)")
+    if (grepl("bio1", x)) return("Contemporary temperature")
+    if (grepl("csi_past", x)) return("Past climate stability")
+    if (grepl("csi_future", x)) return("Future climate stability")
     if (grepl("gHM", x)) return("Human modification")
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
     if (grepl("Q", x)) return("Admixture")
