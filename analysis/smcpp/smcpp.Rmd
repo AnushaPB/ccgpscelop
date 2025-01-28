@@ -9,8 +9,11 @@ output:
 library(here)
 library(tidyverse)
 library(scales)
+library(sf)
+library(terra)
 source(here("analysis", "smcpp", "smcpp.R"))
 source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "paleovars.R"))
 
 plotpath <- here("analysis", "smcpp", "plots")
 
@@ -22,6 +25,46 @@ knitr::opts_chunk$set(
   warning = FALSE,
   result = FALSE
 )
+```
+
+```{r}
+trace <- rast(here("data", "env", "california_chelsa_trace21k.tif"))
+
+# Extract values at coordinates
+coords <- get_coords(sf = TRUE)
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+time_key <- data.frame(timeid = rev(seq(-200, 20, 1)), timepoint = seq(0, 22, 0.1))
+trace_vals <- 
+  terra::extract(trace, coords, ID = FALSE) %>%
+  mutate(SampleID = coords$SampleID) %>% 
+  pivot_longer(-SampleID, names_to = "variable", values_to = "value") %>%
+  filter(grepl("_bio01_", variable)) %>%
+  mutate(timeid = gsub("_V1.0", "", gsub("CHELSA_TraCE21k_bio01_", "", variable))) %>%
+  mutate(timeid = as.numeric(timeid)) %>%
+  # Convert to k BP
+  left_join(time_key) %>%
+  # Convert to BP
+  mutate(yearbp = timepoint*1000) %>%
+  left_join(mod_df) %>%
+  drop_na(Ho)
+
+stopifnot(all(!is.na(trace_vals$yearbp)))
+
+pdf(here(plotpath, "trace21k_vals.pdf"))
+ggplot(trace_vals, aes(x = yearbp, y = value)) + 
+  geom_line(aes(group = SampleID, col = Ho)) + 
+  theme_classic() + 
+  xlab("Time (years ago)") + 
+  ylab("Temperature (C)") +
+  scale_color_viridis_c(option = "turbo")
+ggplot(trace_vals, aes(x = yearbp, y = value)) + 
+  geom_line(aes(group = SampleID, col = Ho), alpha = 0.1) + 
+  geom_line(data = filter(trace_vals, Q > 0.2), aes(group = SampleID, col = Ho)) + 
+  theme_classic() + 
+  xlab("Time (years ago)") + 
+  ylab("Temperature (C)") +
+  scale_color_viridis_c(option = "turbo")
+dev.off()
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
@@ -72,16 +115,26 @@ paleokey_split <-
   )))
 
 # get values
+clim_df <- extract(paleovars, coords, ID = FALSE) 
+clim_df$SampleID <- coords$SampleID
 change_df <- 
   clim_df %>%
-  pivot_longer(all_of(names(bio))) %>%
+  pivot_longer(all_of(names(paleovars))) %>%
   # split based on underscore using tidyvrse
   separate(name, into = c("name", "var", "varn"), sep = "_") %>%
   mutate(var = paste(var, varn, sep = "_")) %>%
+  filter(var == "bio_1") %>%
   left_join(paleokey_split, by = c("name" = "id")) %>%
   pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
   drop_na(time) %>%
   left_join(pop_df)
+
+all_mean_change <- 
+  change_df %>%
+  group_by(time) %>%
+  summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  # Scale value between high and low of pop size
+  mutate(value = scales::rescale(value, to = range(filter(smcpp, T == 2, !is.na(pop), years != 0)$y))) 
 
 
 # plot of population assignments
@@ -103,14 +156,14 @@ plt2 <-
 plt1 <-
   ggplot(data = filter(smcpp, T == 2, !is.na(pop), years != 0)) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
-  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
-  geom_vline(xintercept = 21e3, lwd = 1, col = "slategray2") +
-  geom_vline(xintercept = 130e3, lwd = 1, col = "slategray2") +
-  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
-  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
-  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
-  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_rect(aes(xmin = 20e3, xmax = 26e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_rect(aes(xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
   annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", lwd = 2) +
+  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
   geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
   scale_x_continuous(trans = "log10", limits = c(200, 4e5), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
@@ -130,7 +183,7 @@ dev.off()
 #4/5/1 are different
 
 gg_df <- 
-  filter(smcpp, T == 3, !is.na(pop), years != 0) %>%
+  filter(smcpp, T == 2, !is.na(pop), years != 0) %>%
   mutate(pop = factor(pop, levels = c( "4", "5", "1", "9", "8", "6", "7", "2", "3"))) %>%
   mutate(group = ifelse(pop %in% c("4", "5", "1"), "Group 2", "Group 1")) 
 
@@ -141,15 +194,15 @@ cs2 <- viridis::rocket(9-3, begin = 0.3, end = 0.9)
 plt1 <-
   ggplot(data = gg_df) +
   geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_rect(aes(xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  # geom_rect(aes(xmin = 14e3, xmax = 29e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  geom_rect(aes(xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
   geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
-  geom_vline(xintercept = 21e3, lwd = 1.5, col = "slategray2") +
-  geom_vline(xintercept = 130e3, lwd = 1.5, col = "slategray2") +
-  geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
-  geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
-  annotate("text", x = 25e3, y = 1e7, label = "LGM", hjust = 0, col = "#466e99", cex = 6, fontface = "bold")+
-  annotate("text", x = 160e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6, fontface = "bold") +
-  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#466e99", cex = 6, fontface = "bold") +
-  annotate("text", x = 4e2, y = 2.5e6, label = "Temperature", hjust = 0, col = "#466e99", cex = 5, fontface = "italic") +
+  #geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
   geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
   scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +

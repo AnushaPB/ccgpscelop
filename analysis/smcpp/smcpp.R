@@ -1,4 +1,4 @@
-get_smcpp <- function(folder = "outputs", K = 6){
+get_smcpp <- function(folder = "outputs", K = 9){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
   
