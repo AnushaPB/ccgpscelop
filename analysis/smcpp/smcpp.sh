@@ -66,13 +66,16 @@ process_population() {
         process_contig "$contig" "$output_dir" "$pop" "$inds"
     done
 
-    # SUBSET 10 CONTIGS: Select the first 10 *.smc.gz files listed in the output folder
-    local smc_files=$(ls "${output_dir}"/*_"${pop}".smc.gz | head -n 10)
+    # Select the *.smc.gz files listed in the output folder
+    local smc_files=$(ls "${output_dir}"/*_"${pop}".smc.gz)
 
     # Estimates population parameters using smc++ estimate
     # and outputs the results to a specified file
-    smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" "${output_dir}"/*_"${pop}".smc.gz --timepoints 1e2 1e5 > "${output_dir}/smcpp.out"
-    #smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" "${output_dir}"/*_"${pop}".smc.gz > "${output_dir}/smcpp.out"
+    # --timepoints: This command specifies the starting and ending time points of the model. It accepts two numbers t1 tK specifying the starting and ending time points of the model (in generations). If not specified, SMC++ will use an heuristic to calculate the model time points points automatically.
+    # timepoints are in generations, so we multiply by 2 assuming a generation time of 2 years
+    # Sceloporus diverged ~1 Ma (1e6 years) ago = 1e6/2 = 5e5 generations
+    # We will start at 100 generations ago (200 years ago)
+    smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" "${output_dir}"/*_"${pop}".smc.gz --timepoints 1e2 5e5 > "${output_dir}/smcpp.out"
 
     # Generates a plot for the population analysis
     smc++ plot "${output_dir}/${pop}.pdf" "${output_dir}/model.final.json" -c
@@ -88,12 +91,19 @@ process_contig() {
     # Defines the path for the output file for the current contig
     local output_file="${output_dir}/${contig}_${pop}.smc.gz"
 
+    # Pick a random individual from the population to distinguish the population
+    local distinguished_ind=$(echo $inds | tr ',' '\n' | shuf -n 1)
+
+    # Write the distinguished individual to a file
+    echo $distinguished_ind > "${output_dir}/${pop}_distinguished_ind.txt"
+
     # If the output file doesn't exist, it generates a new one
     if [[ ! -f "${output_file}" ]]; then
         # Converts VCF to SMC format for the given contig and population
-        smc++ vcf2smc "${VCF_FILE}" "${output_file}" "${contig}" \
-                          "${pop}:${inds}" \
-                          --mask "${MASK_FILE}"
+        smc++ vcf2smc -d ${distinguished_ind} ${distinguished_ind} \
+                        "${VCF_FILE}" "${output_file}" "${contig}" \
+                        "${pop}:${inds}" \
+                        --mask "${MASK_FILE}"     
     fi
 }
 
@@ -113,70 +123,62 @@ BASE_PATH="../.."
 # AVERAGE MUTATION RATE: 1.17 × 10−8 per site per generation
 
 # From Bouzid et al:
-# generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
-# Note: Bouzid et al. used a a human mutation rate of 1.0 × 10−8 substitutions per site per generation
-MUTATION_RATE=1.17e-8
+# Generation time of 2 years for S. occidentalis (Jameson & Allison, 1976).
+# Bouzid et al. used a a human mutation rate of 1.0 × 10−8 substitutions per site per generation
+MUTATION_RATE=1e-8
 
 # Files
 VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
-# Index the vcf file
-tabix -p vcf "${VCF_FILE}"
-
-# Extract contig information for contigs with length > 1Mb
-CONTIG_FILE="outputs/contigs.txt"
-mkdir -p outputs
-if [ -f $CONTIG_FILE ]; then
-    mapfile -t CONTIGS_ALL < "${CONTIG_FILE}"
-else
-    mapfile -t CONTIGS_ALL < <(zgrep '##contig=' "${VCF_FILE}" | awk -F'[<>,]' '{for(i=1;i<=NF;i++) {if($i ~ /ID=/) id=substr($i,4); if($i ~ /length=/) len=substr($i,8);} if(len+0 > 1000000) print id}')
-    # write contigs_all out to eht CONTIG FILE
-    printf "%s\n" "${CONTIGS_ALL[@]}" > "${CONTIG_FILE}"
+# Index the vcf file if it doesn't exist
+if [ ! -f "${VCF_FILE}.csi" ]; then
+    tabix -p vcf "${VCF_FILE}"
 fi
 
-# Subset contigs
-CONTIGS=("${CONTIGS_ALL[@]:0:10}")
+# Make outputs file
+mkdir -p outputs
+
+# Get top 10 longest scaffolds
+python get_top_scaffolds.py
+CONTIG_FILE="outputs/top_10_scaffolds.txt"
+mapfile -t CONTIGS < "${CONTIG_FILE}"
 # Print the contigs
 echo ${CONTIGS[@]}
 
 # Process each population
-for i in {1..6}
+mkdir -p outputs
+for j in {1..5}
 do
-    (eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k6_pop$i.txt" | paste -sd, -)
-    pop="inds_pop${i}"
-    process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
-done
-wait
+  # Create the outputs directories
+  mkdir -p outputs/outputs$j
 
-for i in {1..9}
-do
-    (eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop$i.txt" | paste -sd, -)
-    pop="inds_pop${i}"
-    process_population "pop${i}" "${!pop}" 2> pop$i.stderr) &
+  for i in {1..9}
+  do
+    (
+      eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop$i.txt" | paste -sd, -)
+      pop="inds_pop${i}"
+      process_population "pop${i}" "${!pop}" 2> pop$i.stderr
+      
+      # Move files into outputs
+      mv *stderr outputs/outputs$j
+      mv pop$i/ outputs/outputs$j/pop$i
+    ) &   
+  done
+  wait
 done
-wait
-[1] 2495414
-[2] 2495415
-[3] 2495416
-[4] 2495418
-[5] 2495420
-[6] 2495423
-[7] 2495427
-[8] 2495433
-[9] 2495438
 
-# Run all populations together
-# Combine all populations into one
-#combined_pop=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop"{1..9}".txt" | paste -sd, -)
-#process_population "pop_all" "${combined_pop}" 2> pop_all.stderr
+mv *bed* outputs
 
 # Check the status of the background jobs
 jobs
-# Move files into outputs
-mv *bed* outputs
-mv *stderr outputs
-for i in {1..9}
-do
-  mv pop$i/ outputs/pop$i
-done
+
+[1] 3777027
+[2] 3777028
+[3] 3777030
+[4] 3777031
+[5] 3777034
+[6] 3777038
+[7] 3777042
+[8] 3777046
+[9] 3777051
