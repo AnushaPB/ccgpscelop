@@ -20,6 +20,41 @@ library(gprofiler2)
 
 genes_org %>% count(organism) %>% arrange(desc(n)) %>% head(20)
 
+convert_to_orgcode <- function(organism) {
+  # Extract the genus and species
+  genus_species <- str_extract(organism, "^[A-Za-z]+ [a-z]+")
+  
+  # Extract the first letter of the genus and the full species name
+  genus <- substr(genus_species, 1, 1)
+  species <- str_extract(genus_species, " [a-z]+")
+  
+  # Concatenate the first letter of the genus and the species name
+  short_code <- tolower(paste0(genus, species))
+  
+  # Remove the space
+  short_code <- gsub(" ", "", short_code)
+  
+  return(short_code)
+}
+
+convert_ortho <- function(query, organism, target_organism){
+  # Convert to gprofiler format
+  source_organism <- convert_to_orgcode(organism)
+  if (source_organism == target_organism) return(query)
+  safe_gorth <- possibly(gorth, NA)
+  ortho <- safe_gorth(query = query, source_organism = source_organism, target_organism = target_organism)
+  return(ortho)
+}
+
+library(furrr)
+plan(multisession, workers = 8)
+genes_ortho_human <- 
+  genes_org %>%
+  drop_na(uniprot_id) %>%
+  select(uniprot_id, organism) %>%
+  future_pmap(\(uniprot_id, organism) convert_ortho(uniprot_id, organism, target_organism = "hsapiens"), .progress = TRUE) 
+plan(sequential)
+
 run_go <- function(org_key){  
     search_key <- substring(org_key, 2)
 
@@ -208,7 +243,7 @@ dev.off()
 ```
 
 ```{r}
-
+genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
 # Proteins of interest
 search <- function(x, y = NULL){
   if (is.null(y)) y <- genes_org 
@@ -292,6 +327,24 @@ search("Heat shock 90")
 search("Heat shock 60")
 search("Isocitrate dehydrogenase") # Found IDH but not IDH2
 search("bisphosphatase") # Found FBP 
+
+# From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
+#TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
+search("TRPP1L2")
+search("TRPP1L3")
+search("TRPV1")
+search("Transient receptor potential cation channel subfamily V member 1")
+#TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
+search("TRPV3")
+search("Transient receptor potential cation channel subfamily V member 3") # Found!
+search("TRPA1")
+search("Transient receptor potential cation channel subfamily A member 1") # Found!
+search("TRPM8") # Found!
+
+search("TRP")
+search("Transient receptor potential")
+search("Transient")
+
 
 # Look at genes associated with biological regulation in humans
 br_genes <- 
@@ -455,6 +508,8 @@ comparison %>% filter(grepl("biological regulation", term_name)) %>% select(quer
 sig %>% filter(source == "GO:BP") %>% arrange(desc(intersection_size)) %>% head(10)
  ```
 
+
+# IGNORE -----------------------------------------
  # NETWORK
  
 ```{r}
