@@ -141,3 +141,193 @@ spatial_dredge <- function(full_formula, data, coords = c("x", "y"),
   
   return(model_results)
 }
+
+sem_dredge <- function(full_formula, data, listw) {
+  
+  # Get all predictor variables from formula
+  predictors <- all.vars(full_formula[[3]])
+  
+  # Create all possible combinations of predictors
+  n_preds <- length(predictors)
+  combinations <- lapply(1:n_preds, 
+                        function(k) combn(predictors, k, simplify = FALSE))
+  combinations <- unlist(combinations, recursive = FALSE)
+
+  # Add null model (intercept only)
+  combinations <- c(list(character(0)), combinations)
+  
+  # Function to fit a model and return its metrics
+  fit_model <- function(predictors) {
+    tryCatch({
+      # Construct formula
+      if(length(predictors) == 0) {
+        # Null model (intercept only)
+        current_formula <- as.formula(paste("Ho ~ 1"))
+      } else {
+        # Model with predictors
+        current_formula <- as.formula(
+          paste("Ho ~", paste(predictors, collapse = " + "))
+        )
+      }
+      
+      # Fit spatial model
+      current_model <- errorsarlm(current_formula, data = data, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+      
+      # Return results
+      return(data.frame(
+        model_formula = paste(deparse(current_formula), collapse = ""),
+        AIC = AIC(current_model),
+        BIC = BIC(current_model),
+        logLik = logLik(current_model),
+        stringsAsFactors = FALSE
+      ))
+      
+    }, error = function(e) {
+      cat("Error fitting model:", deparse(current_formula), "\n")
+      cat("Error message:", conditionMessage(e), "\n")
+      return(NULL)
+    })
+  }
+  
+  # Run models for each combination using purrr::map
+  model_results <- future_map_dfr(combinations, fit_model, .progress = TRUE)
+
+  # Sort results by AIC
+  model_results <- 
+    model_results %>%
+    arrange(AIC)
+  
+  return(model_results)
+}
+
+lm_variance_partition <- function(predictor_sets, response, scale_vars = TRUE) {
+  # Validate inputs
+  if (length(predictor_sets) < 2) {
+    stop("At least two predictor sets are required")
+  }
+  
+  # Convert everything to data frames
+  predictor_sets <- map(predictor_sets, as.data.frame)
+  
+  # Validate dimensions
+  n_obs <- length(response)
+  walk2(
+    predictor_sets,
+    names(predictor_sets),
+    ~if (nrow(.x) != n_obs) {
+      stop(sprintf("Predictor set %s has different number of observations than response", .y))
+    }
+  )
+  
+  # Scale variables if requested
+  if (scale_vars) {
+    response <- scale(response) %>% as.vector()
+    predictor_sets <- map(predictor_sets, ~scale(.x) %>% as.data.frame())
+  }
+  
+  # Function to calculate R2 and adjusted R2
+  get_r2 <- function(model) {
+    sum <- summary(model)
+    c(
+      r2 = sum$r.squared,
+      adj_r2 = sum$adj.r.squared
+    )
+  }
+  
+  # Individual models for each predictor set
+  individual_models <- predictor_sets %>%
+    map(~lm(response ~ ., data = .x))
+  
+  # Full model with all predictors
+  all_predictors <- as.data.frame(predictor_sets)
+  names(all_predictors) <- names(predictor_sets)
+  full_model <- lm(response ~ ., data = all_predictors)
+  
+  # Get R2 values for individual models
+  individual_r2 <- map(individual_models, get_r2) %>%
+    bind_rows(.id = "predictor_set")
+  
+  # Function to get all possible combinations
+  get_combinations <- function(n) {
+    combn(names(predictor_sets), n, simplify = FALSE)
+  }
+  
+  # Get all combinations of predictor sets
+  all_combinations <- map(
+    2:length(predictor_sets),
+    get_combinations
+  ) %>%
+    flatten()
+  
+  # Calculate R2 for all combinations
+  combination_results <- all_combinations %>%
+    set_names(map_chr(., ~paste(.x, collapse = "+"))) %>%
+    map(~{
+      combined_predictors <- predictor_sets[.x] %>% as.data.frame()
+      names(combined_predictors) <- .x
+      model <- lm(response ~ ., data = combined_predictors)
+      get_r2(model)
+    }) %>%
+    bind_rows(.id = "combination")
+  
+  # Calculate unique contributions (Type III SS)
+  unique_contributions <- map2_dfr(
+    names(predictor_sets),
+    predictor_sets,
+    ~{
+      # Model without this predictor set
+      other_predictors <- predictor_sets[names(predictor_sets) != .x] %>% as.data.frame()
+      names(other_predictors) <- names(predictor_sets)[names(predictor_sets) != .x]
+      reduced_model <- lm(response ~ ., data = other_predictors)
+      
+      # Calculate unique contribution
+      unique_r2 <- get_r2(full_model)[2] - get_r2(reduced_model)[2]
+      
+      tibble(
+        predictor_set = .x,
+        unique_contribution = unique_r2
+      )
+    }
+  )
+  
+  # Calculate shared variance
+  total_r2 <- get_r2(full_model)[2]
+  shared_variance <- total_r2 - sum(unique_contributions$unique_contribution)
+  
+  # Prepare summary statistics
+  summary_stats <- tibble(
+    total_explained = total_r2,
+    shared = shared_variance,
+    unexplained = 1 - total_r2
+  )
+  
+  
+  # Print summary
+  cat("\nVariance Partitioning Summary:\n")
+  cat("----------------------------\n")
+  ind <- 
+    individual_r2 %>% 
+    mutate(across(where(is.numeric), ~scales::percent(.x, accuracy = 1)))
+  uniq <- 
+    unique_contributions %>% 
+    mutate(unique_contribution = scales::percent(unique_contribution, accuracy = 1))
+  summary_table <- left_join(ind, uniq, by = "predictor_set")
+  print(summary_table)
+
+  cat("\nSummary statistics:\n")
+  print(summary_stats %>% 
+        mutate(across(everything(), ~scales::percent(.x, accuracy = 1))))
+  
+  
+  # Create results list
+  results <- list(
+    summary_table = summary_table,
+    individual_models = individual_models,
+    full_model = full_model,
+    individual_r2 = individual_r2,
+    unique_contributions = unique_contributions,
+    combination_results = combination_results,
+    summary_stats = summary_stats
+  )
+  return(results)
+}
