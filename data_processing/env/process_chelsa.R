@@ -34,10 +34,38 @@ pca <- rasterPCA(scale(chelsa_mask))
 
 writeRaster(pca$map[[1:3]], here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"), overwrite = TRUE)
 
-# Read in trace data
+# Read in LGM data
+lgm <- rast(here("data", "env", "chelsa_pmip", "CHELSA_PMIP_CCSM4_BIO_01.tif"))
+lgm <- crop(lgm, ca)
+lgm <- mask(lgm, ca)
+# Convert from Kelvin/10 to Celsius
+lgm <- lgm/10 - 273.15
+writeRaster(lgm, here("data", "env", "california_chelsa_pmip_ccsm4.tif"), overwrite = TRUE)
+
+# Read in TraCE21K data
 files <- list.files(here("data", "env", "chelsa_trace21k"), full.names = TRUE, pattern = "CHELSA_TraCE21k_bio01")
 trace <- rast(files)
 trace <- crop(trace, ca)
 trace <- mask(trace, ca)
+
 # Calculate variance
 trace_var <- app(trace, var, na.rm = TRUE)
+trace_sd <- app(trace, sd, na.rm = TRUE)
+names(trace_var) <- c("trace21k_var")
+names(trace_sd) <- c("trace21k_sd")
+trace_stack <- c(trace_var, trace_sd)
+
+png(here("data_processing", "env", "trace21k_var.png"))
+plot(trace_stack)
+dev.off()
+
+df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+df$trace_sd <- terra::extract( trace_sd, df[,c("x", "y")], ID = FALSE)[,1]
+df$trace_var <- terra::extract( trace_var, df[,c("x", "y")], ID = FALSE)[,1]
+summary(lm(scale(Ho) ~ scale(trace_sd), data = df))
+summary(lm(scale(Ho) ~ scale(trace_var), data = df))
+
+pdf(here("data_processing", "env", "trace21k_var.pdf"), width = 4, height = 4)
+gglm("trace_sd", "Ho", df)
+gglm("trace_var", "Ho", df)
+dev.off()
