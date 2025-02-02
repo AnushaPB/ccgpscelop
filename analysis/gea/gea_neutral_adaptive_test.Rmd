@@ -136,6 +136,78 @@ final_plot
 dev.off()
 ```
 
+```{r}
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID)
+coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
+
+gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
+genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
+coords$gea_resid <- residuals(gea_mod)
+coords$genes_resid <- residuals(genes_mod)
+
+gg_df <- 
+  coords %>% 
+  pivot_longer(cols = c("gea_resid", "genes_resid"), names_to = "type", values_to = "Residuals") %>%
+  mutate(type = case_when(
+    type == "gea_resid" ~ "GEA",
+    type == "genes_resid" ~ "GEA genes"
+  )) %>%
+  filter(type == "GEA genes")
+
+ca <- get_ca()
+plt1 <- 
+  ggplot(coords) +
+  geom_point(aes(x = neutral_ho, y = genes_ho, fill = genes_resid), pch = 21, cex = 2) +
+  geom_smooth(aes(x = neutral_ho, y = genes_ho), method = "lm") +
+  theme_classic() +
+  scale_color_manual(values = cols) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(col = "", fill = "Residuals") +
+  xlab("Genome-wide genetic diversity") +
+  ylab("Adaptive genetic diversity") 
+
+plt2 <- 
+  ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = Residuals), pch = 21, col = "gray20", cex = 2) + 
+  # divergent color scale
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  facet_wrap(~type) +
+  theme_void()
+
+plt3a <- 
+  ggplot(coords) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = neutral_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "Genome-wide\ngenetic diversity") +
+    theme_void()
+
+plt3c <- 
+  ggplot(coords) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = genes_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "Adaptive\ngenetic diversity") +
+    theme_void()
+
+
+library(cowplot)
+# Arrange plt3a, plt3b, plt3c in a single row
+plt3 <- plot_grid(plt3a, plt3c, nrow = 1)
+
+# Arrange plt1 and plt2 in a single row
+plt12 <- plot_grid(plt1, plt2, nrow = 1, rel_widths = c(2, 3), labels = c("B", "C"))
+
+# Arrange plt3 and plt12 in two rows
+final_plot <- plot_grid(plt3, plt12, nrow = 2, labels = c("A", "", ""))
+
+pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_resid.pdf"), width = 10, height = 7)
+final_plot
+dev.off()
+```
+
+
 # Spatial models
 
 ```{r}
@@ -170,7 +242,7 @@ summary(null.model)
 # Residuals are spatially autocorrelated
 null_resids <- residuals(null.model)
 null_M <- ape::Moran.I(null_resids, spdata.IDW)
-null_M
+null_M$observed
 
 exp.sp <- update(null.model, correlation = corExp(1, form = ~ X + Y), method = "ML")
 writeLines("Results for exponential spatial correlation:\n")
@@ -199,6 +271,8 @@ summary(best_model)
 resids <- residuals(best_model)
 Msp <- ape::Moran.I(resids, spdata.IDW)
 Msp
+
+# MI is smaller for null model, so sticking to a linear model
 null_M$observed
 Msp$observed
 
@@ -259,6 +333,24 @@ plot(check_model(best_model, check = c("linearity", "vif", "normality")))
 dev.off()
 ```
 
+```{r}
+dframe_sf <- dframe %>% st_as_sf() %>% st_transform(3310)
+listw <- make_listw(dframe_sf)
+
+sem_result <- spatialreg::errorsarlm(genes_ho ~ neutral_ho, data = dframe, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+summary(sem_result)
+
+resids <- residuals(sem_result)
+Msp <- ape::Moran.I(resids, spdata.IDW)
+Msp$observed
+null_M$observed      
+```
+
+```{r}
+mod <- lm(genes_ho ~ neutral_ho, data = dframe)
+dframe$resids <- residuals(mod)
+```
+
 ## Residuals
 
 Check spatial autocorrelation in residuals of residual model:
@@ -314,7 +406,7 @@ car::vif(mod) # All VIF < 2
 # Get RSQ
 summary(mod) # R^2 = 0.53
 
-best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df"))
+best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df_scaled"))
 
 pdf(here(plotpath, "sp_resids_all.pdf"), width = 19, height = 6)
 gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
@@ -426,6 +518,9 @@ do.call(
 )
 check_model(mod)
 dev.off()
+```
+
+```{r}
 ```
 
 # Future correlations

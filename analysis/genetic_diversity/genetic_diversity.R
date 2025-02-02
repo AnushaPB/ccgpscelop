@@ -112,7 +112,7 @@ spatial_dredge <- function(full_formula, data, coords = c("x", "y"),
                           random = as.formula(random),
                           correlation = corFunction(1, form = as.formula(
                             paste("~", paste(coords, collapse = " + "))
-                          )),
+                          ), nugget = TRUE),
                           method = method)
       
       # Return results
@@ -140,6 +140,23 @@ spatial_dredge <- function(full_formula, data, coords = c("x", "y"),
     arrange(AIC)
   
   return(model_results)
+}
+
+make_listw <- function(coords, nbdist = 10000){
+  # Create a spatial weights matrix
+  listw <- 
+    spdep::nb2listw(
+      spdep::dnearneigh(
+        coords, 
+        d1 = 0, 
+        d2 = nbdist, 
+        longlat = TRUE
+      ),
+      zero.policy = TRUE
+    )
+
+  return(listw)
+  
 }
 
 sem_dredge <- function(full_formula, data, listw) {

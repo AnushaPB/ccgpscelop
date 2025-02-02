@@ -148,7 +148,7 @@ echo ${CONTIGS[@]}
 
 # Process each population
 mkdir -p outputs
-for j in {1..5}
+for j in {6..10}
 do
   # Create the outputs directories
   mkdir -p outputs/outputs$j
@@ -160,12 +160,13 @@ do
       pop="inds_pop${i}"
       process_population "pop${i}" "${!pop}" 2> pop$i.stderr
       
-      # Move files into outputs
-      mv *stderr outputs/outputs$j
       mv pop$i/ outputs/outputs$j/pop$i
     ) &   
   done
   wait
+
+  # Move error files into outputs
+  mv *stderr outputs/outputs$j
 done
 
 mv *bed* outputs
@@ -173,12 +174,12 @@ mv *bed* outputs
 # Check the status of the background jobs
 jobs
 
-[1] 3777027
-[2] 3777028
-[3] 3777030
-[4] 3777031
-[5] 3777034
-[6] 3777038
-[7] 3777042
-[8] 3777046
-[9] 3777051
+[1] 4090447
+[2] 4090448
+[3] 4090449
+[4] 4090450
+[5] 4090453
+[6] 4090455
+[7] 4090457
+[8] 4090463
+[9] 4090469

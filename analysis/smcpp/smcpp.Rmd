@@ -69,8 +69,8 @@ dev.off()
 
 ```{r, fig.width = 13, fig.height = 6}
 smcpp <- 
-  get_smcpp(K = 9) %>%
-  group_by(pop)
+  get_smcpp(K = 9, i = 10) %>%
+  group_by(pop, i)
 ```
 
 ```{r}
@@ -83,9 +83,8 @@ paleokey <- get_paleokey()
 div_df <- 
   data.frame(
     split = c("Initial", "SCA", "PNW-WSN", "ESN-GB"),
-    year = c(7.5e6, 391e3, 95.2e3, 87.4e3)
-  ) %>%
-  filter(split != "Initial") 
+    year = c(0.7e6, 391e3, 95.2e3, 87.4e3)
+  ) 
 
 pop_df <- 
   list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
@@ -146,7 +145,7 @@ plt2 <-
   #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta"))  +
   theme_void() +
   theme(
-    legend.position = c(0.8, 0.75),
+    legend.position.inside = c(0.8, 0.75),
     legend.key.size = unit(0.8, "cm"), # Increase the size of the legend keys
     legend.text = element_text(size = 14), # Increase the size of the legend text
     legend.title = element_text(size = 16) # Increase the size of the legend title
@@ -164,7 +163,7 @@ plt1 <-
   geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   geom_line(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", lwd = 2) +
   geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 1) +
-  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop), group = i), alpha = 0.9) +
   scale_x_continuous(trans = "log10", limits = c(200, 4e5), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
@@ -173,6 +172,18 @@ plt1 <-
   xlab("years") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
 
+ggdf <- filter(smcpp, T == 2, !is.na(pop), years != 0) %>% mutate(group = paste0(i, pop))
+
+plt1 <-
+  ggplot(ggdf) +
+  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop), group = group), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, 4e5), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  #scale_color_manual(values = c("purple2", "orange2", "turquoise4", "tomato", "blue2", "magenta", "cyan", "")) +
+  ylab("Ne") +
+  xlab("years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
 pdf(here(plotpath, "smcpp_k9.pdf"), width = 12, height = 5)
 cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(2, 3))
 dev.off()
@@ -180,39 +191,49 @@ dev.off()
 
 
 ```{r}
-#4/5/1 are different
-
+#4/5/1/7 are different
 gg_df <- 
   filter(smcpp, T == 2, !is.na(pop), years != 0) %>%
-  mutate(pop = factor(pop, levels = c( "4", "5", "1", "9", "8", "6", "7", "2", "3"))) %>%
-  mutate(group = ifelse(pop %in% c("4", "5", "1"), "Group 2", "Group 1")) 
+  mutate(pop = factor(pop, levels =c("7", "5", "4", "1", "9", "8", "6", "2", "3"))) %>%
+  mutate(group = ifelse(pop %in% c("7", "5", "4", "1"), "Group 2", "Group 1")) %>% 
+  mutate(index = paste0(i, pop)) 
+
+gg_df_mean <- 
+  gg_df %>%
+  group_by(pop, years, group) %>%
+  summarise(y_sd = sd(y, na.rm = TRUE), y_mean = mean(y, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(ymax = y_mean + y_sd, ymin = y_mean - y_sd) %>%
+  mutate(ymax = ifelse(ymax > 7e6, 7e6, ymax), ymin = ifelse(ymin < 0, 0, ymin))
+
 
 # Color scale one
-cs1 <- viridis::mako(3, begin = 0.3, end = 0.8)
-cs2 <- viridis::rocket(9-3, begin = 0.3, end = 0.9)
+cs1 <- viridis::mako(4, begin = 0.3, end = 0.8)
+names(cs1) <- c("7", "5", "4", "1")
+cs2 <- viridis::rocket(9-4, begin = 0.3, end = 0.9)
+names(cs2) <- c("9", "8", "6", "2", "3")
 
 plt1 <-
   ggplot(data = gg_df) +
-  geom_rect(aes(xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf), fill = "slategray1") +
-  geom_rect(aes(xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf), fill = "slategray1") +
-  # geom_rect(aes(xmin = 14e3, xmax = 29e3, ymin = 0, ymax = Inf), fill = "slategray1") +
-  geom_rect(aes(xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf), fill = "slategray1") +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
   annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
   annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
   annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
   geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   #geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
   #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
-  geom_line(lwd = 1, aes(x = years, y = y, col = factor(pop)), alpha = 0.9) +
+  #geom_ribbon(data = gg_df_mean, aes(x = years, ymin =  y_mean - y_sd, ymax = y_mean + y_sd, fill = factor(pop)), alpha = 0.2) +
+  geom_line(lwd = 0.1, aes(x = years, y = y, col = factor(pop), group = index), alpha = 0.2) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
   scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
   scale_color_manual(values = c(cs1, cs2)) +
   ylab("Ne") +
   xlab("Years") +
-  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) +
-  facet_wrap(~group)
-
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) 
 
 pop_gg_df <-
   pop_df %>%
@@ -231,15 +252,140 @@ plt2 <-
     legend.position = "none"
   )
 
-pdf(here(plotpath, "smcpp_k9.pdf"), width = 17, height = 5)
-cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(1, 3))
+pdf(here(plotpath, "smcpp_k9.pdf"), width = 13, height = 5)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.35, 0.65))
+dev.off()
+
+pop_label <- 
+  st_drop_geometry(pop_gg_df) %>% 
+  bind_cols(st_coordinates(pop_gg_df)) %>%
+  group_by(pop) %>%
+  summarize(x = mean(X), y = mean(Y)) %>%
+  left_join(distinct(select(gg_df_mean, group, pop)))
+
+gg_df2 <- gg_df %>% mutate(pop = factor(pop, levels = 1:9))
+
+plt3 <-
+  ggplot(data = gg_df2) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("text", x = 17e3, y = 5e6, label = "LGM", hjust = 0, col = "#5180b2", cex = 4)+
+  annotate("text", x = 100e3, y = 5e6, label = "LIG", hjust = 0, col = "#5180b2", cex = 4) +
+  annotate("text", x = 9e2, y = 5e6, label = "Holocene", hjust = 0, col = "#5180b2", cex = 4) +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  #geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
+  #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
+  #geom_ribbon(data = gg_df_mean, aes(x = years, ymin =  ymin, ymax = ymax, fill = factor(pop)), alpha = 0.2) +
+  geom_line(lwd = 0.1, aes(x = years, y = y, col = factor(pop), group = index), alpha = 0.6) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
+  geom_point(data = pop_label, aes(x = min(gg_df_mean$years) + 1e2, y = max(gg_df_mean$y_mean) + 3e6, col = factor(pop), group = group), cex = 6, alpha = 0.5) +
+  geom_text(data = pop_label, aes(x = min(gg_df_mean$years) + 1e2, y = max(gg_df_mean$y_mean) + 3e6, group = group, label = pop), cex = 4) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10", limits = c(NA, 7e6)) +
+  theme_classic() +
+  scale_color_manual(values = c(cs1, cs2)) +
+  ylab("Ne") +
+  xlab("Years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) +
+  facet_wrap(~pop) 
+
+plt4 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = pop_gg_df, aes(col = pop)) +
+  geom_point(data = pop_label, aes(x = x, y = y, col = pop), cex = 6, alpha = 0.5) +
+  geom_text(data = pop_label, aes(x = x, y = y, label = pop), cex = 4) +
+  labs(col = "Population") +
+  scale_color_manual(values = c(cs1, cs2))  +
+  theme_void() +
+  theme(
+    legend.position = "none"
+  )
+
+pdf(here(plotpath, "smcpp_k9_bypop.pdf"), width = 15, height = 6)
+cowplot::plot_grid(plt4, plt3, ncol = 2, rel_widths = c(0.3, 0.7))
+dev.off()
+
+```
+
+# Colored by paleoclimate change
+```{r}
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- pop_gg_df %>% left_join(mod_df)
+pop_mod_df <- mod_df %>% group_by(pop) %>% summarize(lgm_lig = mean(lgm_lig, na.rm = TRUE), csi_past = mean(csi_past, na.rm = TRUE))
+gg_df_mean <- gg_df_mean %>% left_join(pop_mod_df)
+
+plt1 <-
+  ggplot(data = gg_df_mean) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = csi_past, group = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  scale_color_viridis_c(option = "viridis") +
+  ylab("Ne") +
+  xlab("Years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) 
+
+# plot of population assignments
+plt2 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = pop_mod_df, aes(col = csi_past)) +
+  labs(col = make_pretty_names("csi_past")) +
+  scale_color_viridis_c(option = "viridis")  +
+  theme_void() +
+  theme(
+    legend.position = "right"
+  )
+
+
+plt3 <-
+  ggplot(data = gg_df_mean) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = lgm_lig, group = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  scale_color_viridis_c(option = "viridis") +
+  ylab("Ne") +
+  xlab("Years") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) 
+
+# plot of population assignments
+plt4 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = pop_mod_df, aes(col = lgm_lig)) +
+  labs(col =  "Paleoclimate change\n(LGM - LIG)") +
+  scale_color_viridis_c(option = "viridis")  +
+  theme_void() +
+  theme(
+    legend.position = "right"
+  )
+
+pdf(here(plotpath, "paleochange.pdf"), width = 13, height = 5)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.35, 0.65))
+cowplot::plot_grid(plt4, plt3, ncol = 2, rel_widths = c(0.35, 0.65))
 dev.off()
 ```
 
 # Nevada test
 ```{r}
 a <- get_paleovars(process = FALSE)
-plot(a[[1]][[1]])
 
 bio1 <- map(a, ~.x[[1]])[c("cur", "lh", "lgm", "lig")]
 
@@ -275,8 +421,10 @@ bio1_ca_df <-
   summarize(value = mean(value, na.rm = TRUE)) %>%
   mutate(name = factor(name, levels = c("cur", "lh", "lgm", "lig")))
 
+pdf(here(plotpath, "nevada_test.pdf"))
 ggplot() +
   geom_line(data = bio1_nv_df, aes(x = name, y = value, group = 1, col = "NV")) +
   geom_line(data = bio1_ca_df, aes(x = name, y = value, group = 1, col = "CA")) +
   theme_classic()
+dev.off()
 ```

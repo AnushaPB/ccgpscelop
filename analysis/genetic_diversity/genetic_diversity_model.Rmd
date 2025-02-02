@@ -219,7 +219,7 @@ mod_df <-
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
 have_nas
 
-# NDVI has some NA values (< 3), impute to the value of the closest sample
+# 1 point along the coast has NA values, impute to the value of the closest sample
 mod_sf <- mod_df %>% st_as_sf() %>% st_transform(3310)
 close_impute <- function(var, mod_sf){
   map_dbl(1:nrow(mod_sf), \(i){ 
@@ -364,12 +364,20 @@ high_corr_pairs %>% pivot_longer(cols = c(Var1, Var2)) %>% distinct(value)
 
 ```{r}
 library(furrr)
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
 # This uses parallelization, but can also be run without it (remove plan() calls)
 plan(multisession, workers = 10)
 dredge_result <- spatial_dredge(full_formula = f, data = dframe)
+
+
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "glacier", "tmean_dif")
+f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+mod <- lm(f, data = dframe, na.action = na.fail)
+dredge_result <- dredge(mod)
+best_model_f <- MuMIn::get.models(dredge_result, subset = 1)[[1]]$call
+summary(lm(best_model_f, data = dframe))
 plan(sequential)
 
 # Look at top 3 models
@@ -381,14 +389,15 @@ best_model_f <- dredge_result %>% filter(AIC == min(AIC))
 
 ```{r}
 # TEST OF SP 1
-
 mod_sf <- st_as_sf(mod_df_imputed_scaled)
-nb <- dnearneigh(mod_sf, d1 = 0, d2 = 1000)
+nb <- dnearneigh(mod_sf, d1 = 0, d2 = 100000)
 listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 edges <- nb2lines(nb, coords = st_coordinates(mod_sf))
 plot(edges)
 
 mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "glacier", "tmean_dif")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
 plan(multisession, workers = 10)
@@ -399,7 +408,6 @@ dredge_result %>% arrange(AIC) %>% head(3)
 best_model_f <- dredge_result %>% filter(AIC == min(AIC)) %>% pull(model_formula)
 mod <- errorsarlm(best_model_f, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 summary(mod)      
-
 ```
 
 ```{r}
@@ -875,6 +883,9 @@ spmod2
 
 # paleo_change_lgm_lig, Q, and tmean_dif are significant
 lmod
+
+
+mod <- lm("Ho ~ lgm_lig + tmean_dif + bio1", data = mod_df_imputed_scaled) 
 ```
 
 So once you account for spatial correlation structure, the signal from recent climate change disapears.

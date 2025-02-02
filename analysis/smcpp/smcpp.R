@@ -1,8 +1,18 @@
-get_smcpp <- function(folder = "outputs", K = 9){
+get_smcpp <- function(folder = "outputs", K = 9, i = 10){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
-  
-  result <- map(1:K, ~safe_csv(here("analysis", "smcpp", folder, paste0("pop", .x), paste0("pop", .x, ".csv")))) 
+
+  combos <- expand.grid(K = 1:K, i = 1:i)
+
+  get_file <- function(K, i){
+    folder <- paste0("outputs", i)
+    path <- here("analysis", "smcpp", "outputs", folder, paste0("pop", K), paste0("pop", K, ".csv"))
+    df <- safe_csv(path)
+    df$i <- i
+    return(df)
+  }
+
+  result <- pmap(combos, get_file)
   
   # drops anything NULL
   result <- compact(result)
