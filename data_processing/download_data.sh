@@ -29,3 +29,6 @@ rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.imis
 # RDA outputs:
 mkdir -p ../analysis/gea/outputs
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/ ../analysis/gea/outputs
+
+rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_cortest_full.csv
+rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers*

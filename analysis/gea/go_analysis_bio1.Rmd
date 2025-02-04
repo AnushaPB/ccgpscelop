@@ -28,18 +28,44 @@ run_go <- function(org_key){
 
     go_result <-
         gost(
+            # query: Character vector, or a (named) list of character vectors for multiple queries, that can consist of mixed types of gene IDs (proteins, transcripts, microarray IDs, etc), SNP IDs, chromosomal intervals or term IDs.
             query = ids, 
-            organism = org_key, ordered_query = FALSE, 
-            multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-            measure_underrepresentation = FALSE, evcodes = TRUE, 
-            user_threshold = 0.05, correction_method = "g_SCS", 
-            domain_scope = "annotated", custom_bg = NULL, 
-            numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+            # organism: Organism name. Organism names are constructed by concatenating the first letter of the name and the family name. Example: human - 'hsapiens', mouse - 'mmusculus'.
+            organism = org_key, 
+            # ordered_query: In case input gene lists are ranked this option may be used to get GSEA style p-values.
+            ordered_query = FALSE, 
+            # multi_query: In case of multiple gene lists, returns comparison table of these lists. 
+            multi_query = FALSE, 
+            # significant: Whether all or only statistically significant results should be returned.
+            significant = TRUE,
+            # exclude_iea: Exclude GO electronic annotations (IEA).
+            exclude_iea = FALSE, 
+            # measure_underrepresentation: Measure underrepresentation.
+            measure_underrepresentation = FALSE, 
+            # evcodes: Include evidence codes to the results. Note that this can decrease performance and make the query slower. 
+            evcodes = TRUE, 
+            # user_threshold: Custom p-value threshold for significance, results with smaller p-value are tagged as significant. We don't recommend to set it higher than 0.05.
+            user_threshold = 0.05, 
+            # correction_method: The algorithm used for multiple testing correction, one of "gSCS" (synonyms: "analytical", "g_SCS"), "fdr" (synonyms: "false_discovery_rate"), "bonferroni".
+            correction_method = "g_SCS", 
+            # domain_scope: How to define statistical domain, one of "annotated", "known", "custom" or "custom_annotated".
+            domain_scope = "annotated", 
+            # custom_bg: Vector of gene names to use as a statistical background. If given, the domain_scope is by default set to "custom", if domain_scope is set to "custom_annotated", then this is used instead.
+            custom_bg = NULL, 
+            # numeric_ns: Namespace to use for fully numeric IDs (list of available namespaces).
+            numeric_ns = "", 
+            # sources: A vector of data sources to use. Currently, these include GO (GO:BP, GO:MF, GO:CC to select a particular GO branch), KEGG, REAC, TF, MIRNA, CORUM, HP, HPA, WP.
+            sources = NULL, 
+            # as_short_link: Indicator to return results as short-link to the g:Profiler web tool. If set to TRUE, then the function returns the results URL as a character string instead of the data.frame.
+            as_short_link = FALSE, 
+            # highlight: Indicator to return a TRUE-FALSE column called 'highlighted' to indicate driver terms in GO.
+            highlight = TRUE
         )
 
     return(go_result)
 }
-
+```
+```{r}
 # Column descriptions for gprofiler output:
 # 
 # query: The name or identifier of the query. This indicates which query the results are associated with.
@@ -627,6 +653,36 @@ cat(bp_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 cat(mf_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 cat(cc_hsapien %>% arrange(p_value) %>% head(5) %>% pull(term_id), sep = ", ")
 ```
+# CUSTOM BG
+```{r}
+bkg_ids <- 
+    read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv")) %>% 
+    pull(uniprot_id)
+
+ids <- 
+  genes_org %>% 
+  pull(uniprot_id)
+
+go_custom <-
+  gost(
+      query = ids, 
+      organism = "hsapiens", 
+      ordered_query = FALSE, 
+      multi_query = FALSE, 
+      significant = FALSE, 
+      exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, 
+      evcodes = TRUE, 
+      user_threshold = 0.05, 
+      correction_method = "g_SCS", 
+      domain_scope = "custom", 
+      custom_bg = bkg_ids, 
+      numeric_ns = "", 
+      sources = NULL, 
+      as_short_link = FALSE, 
+      highlight = FALSE
+  )
+```
 
 # ALL GENES:
 ```{r}
@@ -637,12 +693,21 @@ ids <-
 go_result_all <-
   gost(
       query = ids, 
-      organism = "hsapiens", ordered_query = FALSE, 
-      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
-      measure_underrepresentation = FALSE, evcodes = TRUE, 
-      user_threshold = 0.05, correction_method = "g_SCS", 
-      domain_scope = "annotated", custom_bg = NULL, 
-      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE
+      organism = "hsapiens", 
+      ordered_query = FALSE, 
+      multi_query = FALSE, 
+      significant = FALSE, 
+      exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, 
+      evcodes = TRUE, 
+      user_threshold = 0.05, 
+      correction_method = "g_SCS", 
+      domain_scope = "annotated", 
+      custom_bg = NULL, 
+      numeric_ns = "", 
+      sources = NULL, 
+      as_short_link = FALSE, 
+      highlight = FALSE
   )
 
 write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_hsapiens.csv"))

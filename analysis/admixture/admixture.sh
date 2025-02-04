@@ -7,8 +7,7 @@ source activate ccgpscelop
 mkdir -p outputs
 
 # Specify prefix for file formatting
-PREFIX="58-Sceloporus_thinned1kb"
-
+PREFIX="58-Sceloporus_pruned_0.6_thinned_10kb"
 # based on code from: https://github.com/ccgproject/ccgpWorkflow/blob/227e6506cf03274be7295e9de6411bb34162d97c/workflow/modules/qc/Snakefile#L126
 # Copy plink files over from processed_data
 cp ../../data/ccgp_data/$PREFIX.bed .
@@ -20,7 +19,7 @@ awk '{$1=0;print $0}' $PREFIX.bim > $PREFIX.bim.tmp # make temp file
 mv $PREFIX.bim.tmp $PREFIX.bim # replace original file with temp file
 
 # Run ADMIXTURE
-for K in {1..12}; do
+for K in {1..15}; do
   admixture --cv $PREFIX.bed $K | tee $PREFIX.${K}.out
 done
 mv *$PREFIX* outputs/

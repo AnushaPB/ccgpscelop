@@ -1,4 +1,4 @@
-get_cv <- function(id = "58-Sceloporus_thinned1kb", K = 2:10){
+get_cv <- function(id = "58-Sceloporus_pruned_0.6_thinned_10kb", K = 2:15){
 
   # create a vector with file names
   file_names <- here("analysis", "admixture", "outputs", paste0(id, ".", K, ".out"))
@@ -22,7 +22,7 @@ get_cv <- function(id = "58-Sceloporus_thinned1kb", K = 2:10){
   return(df)
 }
 
-get_Q <- function(K, id = "58-Sceloporus_thinned1kb", qmat_only = FALSE){
+get_Q <- function(K, id = "58-Sceloporus_pruned_0.6_thinned_10kb", qmat_only = FALSE){
   # use fam to get sampleID order/names 
   fam <- data.frame(read_table(here("analysis", "admixture", "outputs", paste0(id, ".fam")), col_names = FALSE))
 

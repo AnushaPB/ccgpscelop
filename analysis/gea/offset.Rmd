@@ -1,0 +1,74 @@
+```{r}
+library(terra)
+library(here)
+library(sf)
+library(tidyverse)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
+
+plotpath <- here("analysis", "gea", "plots")
+adaptive_path <- here("analysis", "adaptive", "outputs")
+
+adapind_load_PCs <- rast(here(adaptive_path, "adapind_load_PCs.tif"))
+adapind_load <- rast(here(adaptive_path, "adapind_load.tif"))
+adapind_pred <- rast(here(adaptive_path, "adapind_pred.tif"))
+offset <- rast(here(adaptive_path, "offset_load.tif"))
+offset_total <- sum(offset)
+
+pdf(here(plotpath, "adaptive_index.pdf"), width = 10, height = 10)
+plot(adapind_load_PCs, main = "Adaptive index loadings (PCs)", axes = FALSE)
+plot(adapind_load, main = "Adaptive index loadings", axes = FALSE)
+plot(adapind_pred, main = "Adaptive index predictions", axes = FALSE)
+plot(offset, main = "Adaptive index offset", axes = FALSE)
+plot(offset_total, main = "Adaptive index offset (total)", axes = FALSE)
+dev.off()
+```
+
+```{r}
+coords <- get_coords(sf = TRUE)
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(Ho_genes = 1 - `O(HOM)`/`N(NM)`) %>%
+  rename(SampleID = IID) %>%
+  dplyr::select(SampleID, Ho_genes) %>%
+  left_join(get_het())
+
+offset_df <- 
+  terra::extract(offset_total, coords, ID = FALSE) %>%
+  mutate(SampleID = coords$SampleID) %>%
+  as_tibble() %>%
+  rename(offset = sum) %>%
+  left_join(genes) %>%
+  drop_na(Ho, Ho_genes) %>%
+  mutate(resids = residuals(lm(Ho_genes ~ Ho, data = .)))
+
+devtools::source_url("https://raw.githubusercontent.com/austinwpearce/SoilTestCocaCola/main/quad_plateau.R")
+
+
+pdf(here(plotpath, "offset_vs_ho.pdf"), width = 4, height = 4)
+ggplot(offset_df, aes(y = log(offset), x = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Future offset") +
+  ggpubr::stat_cor() +
+  theme_classic()
+
+ggplot(offset_df, aes(y = log(offset), x = Ho_genes)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlab("Adaptive heterozygosity") +
+  ylab("Future offset") +
+  ggpubr::stat_cor() +
+  theme_classic()
+
+ggplot(offset_df, aes(y = log(offset), x = resids)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlab("Residuals of adaptive heterozygosity") +
+  ylab("Future offset") +
+  ggpubr::stat_cor() +
+  theme_classic()
+dev.off()
+```

@@ -1,51 +1,75 @@
 library(here)
 library(tidyverse)
 r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
-gea <-  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
+r %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
+rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
+rdasig %>% filter(locus == "chr1_3757363_G_A" | locus == "chr1_3757379_T_C")
 
-# Get the SNPs correlated with the RDA SNPs
-rda_r <- 
-  r %>% 
-  filter(SNP_A %in% gea$locus | SNP_B %in% gea$locus)
+process_outputs <- function(input, outprefix){ 
+  # Output dir
+  outpath <- here("analysis", "gea", "outputs")
 
-# Pull out distinct SNPs
-snps_r <- 
-  rda_r %>%
-  select(SNP_A, SNP_B) %>%
-  pivot_longer(c(SNP_A, SNP_B)) %>%
-  distinct(value) %>%
-  pull(value)
+  # Get the SNPs correlated with the RDA SNPs
+  rda_r <- 
+    r %>% 
+    filter(SNP_A %in% input$locus | SNP_B %in% input$locus) %>%
+    select(SNP_A, SNP_B, R2)
 
-# Combine with original SNPs
-all_snps <- unique(c(gea$locus, snps_r))
+  # Create dataframe that includes which linked SNPs are correlated with which outliers
+  rda_r_out <-
+    bind_rows(
+      left_join(input, rda_r, by = c("locus" = "SNP_A")) %>% rename(linked_locus = SNP_B, outlier_locus = locus),
+      left_join(input, rda_r, by = c("locus" = "SNP_B")) %>% rename(linked_locus = SNP_A, outlier_locus = locus)
+    ) %>%
+    distinct()
 
-# Calculate number of added SNPs
-print(paste("Original number of SNPs:", nrow(gea)))
-print(paste("Number of added SNPs:", length(all_snps) - nrow(gea)))
+  write_csv(rda_r_out, here(outpath, paste0(outprefix, "_rda_linked_snps_info.csv")))
 
-# Make into df
-snp_df <- 
-  tibble(locus = all_snps) %>% 
-  mutate(
-    # Pull out the digit in ...[digit]_[bp]_[bp] pattern
-    start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
-    end = start,
-    scaffold = str_extract(locus, "^(Scaffold_[0-9]+__[0-9]+_contigs__length_[0-9]+|chr[0-9]+)")
-  )
+  # Pull out distinct SNPs
+  snps_r <- 
+    rda_r %>%
+    select(SNP_A, SNP_B) %>%
+    pivot_longer(c(SNP_A, SNP_B)) %>%
+    distinct(value) %>%
+    pull(value)
 
-# Write out txt file with just ids
-write.table(snp_df$locus, here("analysis", "gea", "outputs", "rda_ids.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE)
+  # Combine with original SNPs
+  all_snps <- unique(c(input$locus, snps_r))
 
-# Confirm that all loci have been formatted correctly
-stopifnot(all(complete.cases(snp_df)))
+  # Calculate number of added SNPs
+  print(paste("Original number of SNPs:", nrow(input)))
+  print(paste("Number of added SNPs:", length(all_snps) - nrow(input)))
 
-# Write out csv file
-write_csv(snp_df, here("analysis", "gea", "outputs", "rda_ids.csv"))
+  # Make into df
+  snp_df <- 
+    tibble(locus = all_snps) %>% 
+    mutate(
+      # Pull out the digit in ...[digit]_[bp]_[bp] pattern
+      start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
+      end = start,
+      scaffold = str_extract(locus, "^(Scaffold_[0-9]+__[0-9]+_contigs__length_[0-9]+|chr[0-9]+)")
+    )
 
-# Create bed file
-rda_bed <- 
-  snp_df %>%
-  select(scaffold, start, end) 
+  # Write out txt file with just ids
+  write.table(snp_df$locus, here(outpath, paste0(outprefix, "_rda_ids.txt")), quote = FALSE, row.names = FALSE, col.names = FALSE)
 
-# Write to table with no header
-write.table(rda_bed, here("analysis", "gea", "outputs", "gea.bed"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+  # Confirm that all loci have been formatted correctly
+  stopifnot(all(complete.cases(snp_df)))
+
+  # Write out csv file with more information
+  write_csv(snp_df, here(outpath,  paste0(outprefix, "_rda_ids.csv")))
+
+  # Create bed file
+  rda_bed <- 
+    snp_df %>%
+    select(scaffold, start, end) 
+
+  # Write to table with no header
+  write.table(rda_bed, here(outpath, paste0(outprefix, "_gea.bed")), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+}
+
+pca <-  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
+bio1_ndvi <-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_sig_p01.csv"))
+
+process_outputs(input = pca, outprefix = "pca")
+process_outputs(input = bio1_ndvi, outprefix = "bio1ndvi")

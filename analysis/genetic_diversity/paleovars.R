@@ -1,16 +1,14 @@
-get_paleovars <- function(cache = TRUE, process = TRUE){
+get_paleovars <- function(paleovars = c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur"), cache = FALSE, process = TRUE) {
   ca <- get_ca()
-  paleovars <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
   # download data
   walk(paleovars, ~ {
     rpaleoclim::paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env", "paleoclim"))
   })
 
-  # Print the dataframe
-  print(df) 
   # Define the file names and paths
   file_names <- c("MIS19_v1_r2_5m.zip", "LIG_v1_2_5m.zip", "chelsa_LGM_v1_2B_r2_5m.zip", "HS1_v1_2_5m.zip", "BA_v1_2_5m.zip", "YDS_v1_2_5m.zip", "EH_v1_2_5m.zip", "MH_v1_2_5m.zip", "LH_v1_2_5m.zip", "CHELSA_cur_V1_2B_r2_5m.zip")
-  file_paths <- here("data", "env", "paleoclim", file_names)
+  names(file_names) <- c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur")
+  file_paths <- here("data", "env", "paleoclim", file_names[paleovars])
 
   # Load and process the data using purrr
   if (process) {
@@ -29,9 +27,9 @@ get_paleovars <- function(cache = TRUE, process = TRUE){
  
   names(env_list) <- paleovars
 
-  # export
+  # Cache data
   path =  here("data", "env", "paleoclim", "paleoclim.tif")
-  if (!file.exists(path)){
+  if (!file.exists(path) && cache){
     # Add unique names
     # Note: doesn't work to just turn list into stack, the names will be the list names plus the index
     env_list_names <- unlist(imap(env_list, ~paste0(.y, "_", names(.x))))

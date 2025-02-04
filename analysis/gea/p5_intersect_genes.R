@@ -36,62 +36,63 @@ clean_gene_annotations <- function(gene_info) {
     return(result_df)
 }
 
+intersect_genes <- function(prefix){
+  # Outpath
+  outpath <- here("analysis", "gea", "outputs")
+  
+  # Read in GEA genes
+  genes <- read.table(here(outpath, paste0(prefix, "_gea_genes.bed")), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+  
+  # Get positions for SNPs in genes
+  gene_pos <- 
+    genes %>% 
+    dplyr::select(V1, V2, V3, V12) %>% 
+    dplyr::rename(scaffold = V1, start = V2, end = V3, full_name = V12) %>%
+    # Remove duplicates (if you don't you will get an error later with the joins)
+    distinct()
 
-# Get positions for SNPs in genes
-genes <- read.table(here("analysis", "gea", "outputs", "gea_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
-gene_pos <- 
-  genes %>% 
-  dplyr::select(V1, V2, V3, V12) %>% 
-  dplyr::rename(scaffold = V1, start = V2, end = V3, full_name = V12) %>%
-  # Remove duplicates (if you don't you will get an error later with the joins)
-  distinct()
+  # Get RDA positions which have SNP names
+  rda <- read_csv(here(outpath, paste0(prefix, "_rda_ids.csv")))
 
-# Get RDA positions which have SNP names
-rda <- read_csv(here("analysis", "gea", "outputs", "rda_ids.csv")) 
+  # Intersect the two to get SNP names for the SNPs in genes
+  gene_snp <- left_join(gene_pos, rda, by = c("scaffold", "start", "end"))
 
-# Intersect the two to get SNP names for the SNPs in genes
-gene_snp <- left_join(gene_pos, rda, by = c("scaffold", "start", "end"))
+  # Write out just the locus names for plink (heterozygosity calcs)
+  write.table(gene_snp$locus, here(outpath, paste0(prefix, "_gea_gene_ids.txt")), quote = FALSE, row.names = FALSE, col.names = FALSE)
 
-# Write out just the locus names for plink
-write.table(gene_snp$locus, here("analysis", "gea", "outputs", "gea_gene_ids.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE)
+  # Write out the full file for GO analysis
+  write.csv(gene_snp, here(outpath, paste0(prefix, "_gea_gene_snp.csv")), row.names = FALSE)
 
-write.csv(gene_snp, here("analysis", "gea", "outputs", "gea_gene_snp.csv"), row.names = FALSE)
+  # Clean gene names
+  gene_info <- unique(gene_snp$full_name)
+  genes_clean <- clean_gene_annotations(gene_info)
 
-# Clean gene names
-gene_info <- unique(gene_snp$full_name)
-genes_clean <- clean_gene_annotations(gene_info)
+  genes_org <- 
+    genes_clean %>% 
+    # Remove rows without uniprot_id
+    drop_na(uniprot_id) %>% 
+    # Edit ID to remove GNX-
+    mutate(ID = gsub("GNX-", "", ID))  %>% 
+    # remove version from uniprot_id
+    mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
 
-genes_org <- 
-  genes_clean %>% 
-  # Remove rows without uniprot_id
-  drop_na(uniprot_id) %>% 
-  # Edit ID to remove GNX-
-  mutate(ID = gsub("GNX-", "", ID))  %>% 
-  # remove version from uniprot_id
-  mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
+  write_csv(genes_org, here(outpath, paste0(prefix, "_genes_list.csv")))
 
-write_csv(genes_org, here("analysis", "gea", "outputs", "genes_list.csv"))
-
-# Calculate statistics
-cat(
-  "Summary Statistics:\n",
-  "-------------------\n",
-  sprintf("Number of RDA SNPs: %d\n", nrow(rda)),
-  sprintf("Number of SNPs in genes: %d\n", nrow(gene_pos)),
-  sprintf("Number of unique genes: %d\n", gene_pos$full_name %>% unique() %>% length()),
-  sprintf("Number of unique genes with UniProtID (GO genes): %d\n", genes_org$full_name %>% unique() %>% length())
-)
-
-# Write out top 1000, 10000, 100000, 1000000 SNPs
-walk(c(1000,10000,100000,1000000), ~{
-  gene_snp %>%
-    arrange(p.adj) %>%
-    head(.x) %>%
-    pull(locus) %>%
-    write.table(here("analysis", "gea", "outputs", sprintf("gea_gene_ids_top%d.txt", .x)), quote = FALSE, row.names = FALSE, col.names = FALSE)
-})
+  # Calculate statistics
+  cat(
+    "Summary Statistics:\n",
+    "-------------------\n",
+    sprintf("Number of RDA + Linked SNPs: %d\n", nrow(rda)),
+    sprintf("Number of SNPs in genes: %d\n", nrow(gene_pos)),
+    sprintf("Number of unique genes: %d\n", gene_pos$full_name %>% unique() %>% length()),
+    sprintf("Number of unique genes with UniProtID (GO genes): %d\n", genes_org$full_name %>% unique() %>% length())
+  )
+}
 
 
+# Get positions for GEA genes
+intersect_genes("pca")
+intersect_genes("bio1ndvi")
 
 # Get positions for all genes
 all_genes <- read.table(here("analysis", "gea", "outputs", "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
@@ -117,51 +118,3 @@ all_genes_org <-
   mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
 
 write_csv(all_genes_org, here("analysis", "gea", "outputs", "all_genes_list.csv"))
-
-
-# REPEAT FOR BIO1 (CLEAN UP)
-
-# Get positions for SNPs in genes
-bio1_genes <- read.table(here("analysis", "gea", "outputs", "bio1_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
-# Get RDA positions which have SNP names
-bio1_rda <- read_csv(here("analysis", "gea", "outputs", "bio1_sig.csv")) 
-
-bio1_gene_pos <- 
-  bio1_genes %>% 
-  dplyr::select(V1, V2, V3, V12) %>% 
-  dplyr::rename(scaffold = V1, start = V2, end = V3, full_name = V12) %>%
-  # Remove duplicates (if you don't you will get an error later with the joins)
-  distinct()
-
-# Intersect the two to get SNP names for the SNPs in genes
-bio1_gene_snp <- left_join(bio1_gene_pos, bio1_rda, by = c("scaffold", "start", "end"))
-
-# Write out just the locus names for plink
-write.table(bio1_gene_snp$locus, here("analysis", "gea", "outputs", "bio1_gene_ids.txt"), quote = FALSE, row.names = FALSE, col.names = FALSE)
-
-write.csv(bio1_gene_snp, here("analysis", "gea", "outputs", "bio1_gene_snp.csv"), row.names = FALSE)
-
-# Clean gene names
-bio1_gene_info <- unique(bio1_gene_snp$full_name)
-bio1_genes_clean <- clean_gene_annotations(bio1_gene_info)
-
-bio1_genes_org <- 
-  bio1_genes_clean %>% 
-  # Remove rows without uniprot_id
-  drop_na(uniprot_id) %>% 
-  # Edit ID to remove GNX-
-  mutate(ID = gsub("GNX-", "", ID))  %>% 
-  # remove version from uniprot_id
-  mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
-
-write_csv(bio1_genes_org, here("analysis", "gea", "outputs", "bio1_genes_list.csv"))
-
-# Calculate statistics
-cat(
-  "Summary Statistics:\n",
-  "-------------------\n",
-  sprintf("Number of RDA SNPs: %d\n", nrow(bio1_rda)),
-  sprintf("Number of RDA SNPs in genes: %d\n", nrow(bio1_gene_pos)),
-  sprintf("Number of unique genes: %d\n", bio1_gene_pos$full_name %>% unique() %>% length()),
-  sprintf("Number of unique genes with UniProtID (GO genes): %d\n", bio1_genes_org$full_name %>% unique() %>% length())
-)

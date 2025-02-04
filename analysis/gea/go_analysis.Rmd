@@ -5,9 +5,11 @@ library(here)
 library(topGO)
 library(cowplot)
 library(gprofiler2)
+source(here("analysis", "gea", "go.R"))
 plotpath <- here("analysis", "gea", "plots")
 outpath <- here("analysis", "gea", "outputs")
 ```
+
 ```{r}
 genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
 
@@ -20,54 +22,78 @@ library(gprofiler2)
 
 genes_org %>% count(organism) %>% arrange(desc(n)) %>% head(20)
 
-run_go <- function(org_key){  
-    search_key <- substring(org_key, 2)
+organisms <- unique(genes_org$organism)
+names(organisms) <- organisms
 
-    ids <- 
-        genes_org %>% 
-        #filter(grepl(search_key, organism)) %>%
-        pull(uniprot_id)
+ortho_hsapiens <- 
+  map(
+    organisms,
+    ~{
+      convert_ortho(
+        query = genes_org %>% filter(organism == .x) %>% pull(uniprot_id),
+        organism = .x,
+        target_organism = "hsapiens"
+      )
+    }, .progress = TRUE
+  ) 
 
-    go_result <-
-        gost(
-            query = ids, 
-            organism = org_key, ordered_query = FALSE, 
-            multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
-            measure_underrepresentation = FALSE, evcodes = TRUE, 
-            user_threshold = 0.05, correction_method = "g_SCS", 
-            domain_scope = "annotated", custom_bg = NULL, 
-            numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
-        )
+# Combine orthologs and original human genes to get the final query names
+genes_hsapiens <- 
+  ortho_hsapiens %>%
+  compact() %>%
+  bind_rows() %>%
+  dplyr::select(ortholog_name, uniprot_id = query) %>%
+  bind_rows(dplyr::select(filter(genes_org, organism == "Homo sapiens"), uniprot_id)) %>%
+  mutate(query = case_when(is.na(ortholog_name) ~ uniprot_id, TRUE ~ ortholog_name)) 
 
-    return(go_result)
-}
+# Count uniprotid duplicates (uniprot_id with more than one ortholog)
+genes_hsapiens %>% count(uniprot_id) %>% filter(n > 1) %>% nrow() #84
 
-# Column descriptions for gprofiler output:
-# 
-# query: The name or identifier of the query. This indicates which query the results are associated with.
-# significant: A logical value (TRUE or FALSE) indicating whether the term is significantly enriched.
-# p_value: The p-value for the enrichment of the term. It indicates the statistical significance of the enrichment.
-# term_size: The total number of genes associated with the GO term in the background set.
-# query_size: The total number of genes in the query set.
-# intersection_size: The number of genes in the query set that are also associated with the GO term.
-# *precision:* The precision of the enrichment, calculated as the ratio of intersection_size to query_size. Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set.
-# *recall:* The recall of the enrichment, calculated as the ratio of intersection_size to term_size. Recall measures the proportion of genes associated with the GO term that are present in the reference set.
-# term_id: The identifier of the GO term or other ontology term.
-# source: The source of the term, such as "GO:BP" for Gene Ontology Biological Process, "GO:MF" for Gene Ontology Molecular Function, or "GO:CC" for Gene Ontology Cellular Component.
-# term_name: The name of the GO term or other ontology term.
-# effective_domain_size: The effective domain size, which represents the number of genes in the background set that are considered for the enrichment analysis.
-# source_order: The order of the source in the results, which can be used for sorting or prioritizing results.
-# parents: The parent terms of the GO term or other ontology term. This provides hierarchical context for the term.
-# highlighted: A logical value (TRUE or FALSE) indicating whether the term is highlighted in the results. This can be used for visualization or emphasis in the output.
-# Run GO analysis for human genes
-go_hsapien <- run_go("hsapiens")
+# Take the first ortholog for each uniprot_id so no genes are overrepresented
+genes_hsapiens <- 
+  genes_hsapiens %>%
+  group_by(uniprot_id) %>%
+  dplyr::slice(1) %>%
+  ungroup()
+
+ortho_ggallus <- 
+  map(
+    organisms,
+    ~{
+      convert_ortho(
+        query = genes_org %>% filter(organism == .x) %>% pull(uniprot_id),
+        organism = .x,
+        target_organism = "ggallus"
+      )
+    }, .progress = TRUE
+  ) %>%
+  compact() %>%
+  bind_rows()
+```
+
+Column descriptions for gprofiler output:
+ 
+query: The name or identifier of the query. This indicates which query the results are associated with.
+significant: A logical value (TRUE or FALSE) indicating whether the term is significantly enriched.
+p_value: The p-value for the enrichment of the term. It indicates the statistical significance of the enrichment.
+term_size: The total number of genes associated with the GO term in the background set.
+query_size: The total number of genes in the query set.
+intersection_size: The number of genes in the query set that are also associated with the GO term.
+*precision:* The precision of the enrichment, calculated as the ratio of intersection_size to query_size. Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set.
+*recall:* The recall of the enrichment, calculated as the ratio of intersection_size to term_size. Recall measures the proportion of genes associated with the GO term that are present in the reference set.
+term_id: The identifier of the GO term or other ontology term.
+source: The source of the term, such as "GO:BP" for Gene Ontology Biological Process, "GO:MF" for Gene Ontology Molecular Function, or "GO:CC" for Gene Ontology Cellular Component.
+term_name: The name of the GO term or other ontology term.
+effective_domain_size: The effective domain size, which represents the number of genes in the background set that are considered for the enrichment analysis.
+source_order: The order of the source in the results, which can be used for sorting or prioritizing results.
+parents: The parent terms of the GO term or other ontology term. This provides hierarchical context for the term.
+highlighted: A logical value (TRUE or FALSE) indicating whether the term is highlighted in the results. This can be used for visualization or emphasis in the output.
+Run GO analysis for human genes
+
+```{r}
+go_hsapien <- run_go(ortho_hsapiens$query, "hsapiens")
 write_csv(go_hsapien$result, here("analysis", "gea", "outputs", "hsapiens.csv"))
 head(go_hsapien$result[,1:11], 3)
-#gostplot(go_hsapien, capped = FALSE, interactive = TRUE)
-p <- gostplot(go_hsapien, capped = FALSE, interactive = FALSE)
-pdf(here(plotpath, "hsapiens.pdf"))
-print(p)
-dev.off()
 
 go_hsapien_result <- 
   read_csv(here(outpath, "hsapiens.csv")) %>% 
@@ -103,7 +129,7 @@ bp_hsapien %>% arrange(p_value) %>% head(10)
 bp_hsapien %>% arrange(desc(recall)) %>% head(10)
 
 # Run GO analysis for chickens
-go_ggallus <- run_go("ggallus")
+go_ggallus <- run_go(ortho_ggallus$query, "ggallus")
 write_csv(go_ggallus$result, here(outpath, "ggallus.csv"))
 head(go_ggallus$result, 3)
 
@@ -208,7 +234,7 @@ dev.off()
 ```
 
 ```{r}
-
+genes_org <- read_csv(here("analysis", "gea", "outputs", "genes_list.csv"))
 # Proteins of interest
 search <- function(x, y = NULL){
   if (is.null(y)) y <- genes_org 
@@ -293,6 +319,24 @@ search("Heat shock 60")
 search("Isocitrate dehydrogenase") # Found IDH but not IDH2
 search("bisphosphatase") # Found FBP 
 
+# From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
+#TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
+search("TRPP1L2")
+search("TRPP1L3")
+search("TRPV1")
+search("Transient receptor potential cation channel subfamily V member 1")
+#TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
+search("TRPV3")
+search("Transient receptor potential cation channel subfamily V member 3") # Found!
+search("TRPA1")
+search("Transient receptor potential cation channel subfamily A member 1") # Found!
+search("TRPM8") # Found!
+
+search("TRP")
+search("Transient receptor potential")
+search("Transient")
+
+
 # Look at genes associated with biological regulation in humans
 br_genes <- 
   bp_hsapien %>% 
@@ -376,15 +420,141 @@ dev.off()
 ```
 
 
+
+# COMPARE NDVI AND BIO1
+```{r}
+cors <- 
+  read_csv(here(outpath, "bio1ndvi_genes_cortest.csv")) %>%
+  # Drop loci without significant correlations with NDVI or BIO1
+  drop_na(group) %>%
+  dplyr::select(locus, group) %>%
+  # [TODO: FIX] Some loci are currently duplicated so right now i am just taking the first one [NEED TO FIX]
+  group_by(locus) %>%
+  dplyr::slice(1) %>%
+  ungroup()
+
+# Link genes and snps
+rda_human_genes <-
+  # file from intersect_genes.R
+  read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv")) %>%
+  dplyr::select(locus, original_entry = full_name) %>%
+  # Join with genes
+  left_join(dplyr::select(genes_org, original_entry, uniprot_id)) %>%
+  drop_na(uniprot_id) %>%
+  # Join with orthologs
+  left_join(genes_hsapiens, by = "uniprot_id") %>%
+  # Some genes don't have human orthologs/query names, so drop them
+  drop_na(query) %>%
+  # Join with the correlation results 
+  # DISTINCT IS TEMPORARY TO DEAL WITH DUPLICATES (LUCKILY GROUPS ARE SAME FOR DUPLICATES)
+  # Drop group NA to remove loci without significant correlations with NDVI or BIO1
+  left_join(cors, by = "locus") 
+
+bio1_query <- rda_human_genes %>% filter(grepl("bio1", group)) %>% pull(query)
+length(bio1_query)
+ndvi_query <- rda_human_genes %>% filter(grepl("ndvi", group)) %>% pull(query)
+length(ndvi_query)
+
+go_bio1 <- run_go(bio1_query, "hsapiens")
+go_ndvi <- run_go(ndvi_query, "hsapiens")
+
+# TODO: check out if  HSP genes are associated with BIO1/NDVI or both
+
+```
+```{r}
+go_bio1_result <- 
+  go_bio1$result %>%
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection, query_size, term_size)
+
+head(go_bio1_result)
+
+bp_bio1 <- 
+  go_bio1_result %>% 
+  filter(source == "GO:BP") 
+head(bp_bio1)
+
+mf_bio1 <- 
+  go_bio1_result %>% 
+  filter(source == "GO:MF") 
+head(mf_bio1)
+```
+
+
+```{r}
+go_ndvi_result <- 
+  go_ndvi$result %>%
+  filter(p_value < 0.05) %>%
+  arrange(p_value) %>%
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(p_value, intersection_size, precision, recall, term_name, source, term_id, intersection, query_size, term_size)
+
+head(go_ndvi_result)
+
+bp_ndvi <- 
+  go_ndvi_result %>% 
+  filter(source == "GO:BP") 
+head(bp_ndvi)
+
+mf_ndvi <- 
+  go_ndvi_result %>% 
+  filter(source == "GO:MF") 
+head(mf_ndvi)
+```
+
+```{r}
+head(bp_bio1)
+head(bp_ndvi)
+```
+
+
 # ALL GENES:
 ```{r}
-ids <- 
-  read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv")) %>% 
-  pull(uniprot_id)
+all_genes <-read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv"))
+organisms <- unique(all_genes$organism)
+names(organisms) <- organisms
+
+all_ortho_hsapiens <- 
+  map(
+    organisms,
+    ~{
+      convert_ortho(
+        query = all_genes %>% filter(organism == .x) %>% pull(uniprot_id),
+        organism = .x,
+        target_organism = "hsapiens"
+      )
+    }, .progress = TRUE
+  ) 
+
+
+# Combine orthologs and original human genes to get the final query names
+all_genes_hsapiens <- 
+  all_ortho_hsapiens %>%
+  compact() %>%
+  bind_rows() %>%
+  dplyr::select(ortholog_name, uniprot_id = query) %>%
+  bind_rows(dplyr::select(filter(genes_org, organism == "Homo sapiens"), uniprot_id)) %>%
+  mutate(query = case_when(is.na(ortholog_name) ~ uniprot_id, TRUE ~ ortholog_name)) 
+
+# Count uniprotid duplicates (uniprot_id with more than one ortholog)
+all_genes_hsapiens %>% count(uniprot_id) %>% filter(n > 1) %>% nrow() #84
+
+# Take the first ortholog for each uniprot_id so no genes are overrepresented
+all_genes_hsapiens <- 
+  all_genes_hsapiens %>%
+  group_by(uniprot_id) %>%
+  dplyr::slice(1) %>%
+  ungroup()
 
 go_result_all <-
   gost(
-      query = ids, 
+      query = all_genes_hsapiens$query, 
       organism = "hsapiens", ordered_query = FALSE, 
       multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
       measure_underrepresentation = FALSE, evcodes = TRUE, 
@@ -406,7 +576,7 @@ all_genes <-
 names(all_genes)[-1] <- paste0(names(all_genes), "_all")[-1]
 
 gea_genes <- 
-  read_csv(here(outpath, "hsapiens.csv")) %>% 
+  go_ndvi_result %>% 
   filter(p_value < 0.05) %>%
   arrange(p_value) %>%
   as_tibble() %>%
@@ -423,27 +593,10 @@ comparison <-
 
 comparison %>%
  filter(term_name == "biological regulation") %>% 
- select(query_size, intersection_size, query_size_all, intersection_size_all, term_size)
+ dplyr::select(query_size, intersection_size, query_size_all, intersection_size_all, term_size)
 
 # Term size all and term size should be the same
 stopifnot(comparison$term_size_all == comparison$term_size)
-
-go_fish <- function(query_size, term_size, intersection_size, query_size_all, intersection_size_all) {
-  # Calculate the counts for the contingency table
-  a <- intersection_size  # Number of GEA genes in the category
-  b <- query_size - intersection_size  # Number of GEA genes not in the category
-  c <- intersection_size_all - intersection_size  # Number of non-GEA Sceloporus genes in the category
-  d <- query_size_all - intersection_size_all  # Number of non-GEA Sceloporus genes not in the category
-  
-  # Create the contingency table
-  contingency_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
-  
-  # Perform Fisher's exact test
-  result <- fisher.test(contingency_table)
-  
-  # Return the p-value
-  return(result$p.value)
-}
 
 sig <- 
   comparison %>% 
@@ -451,10 +604,12 @@ sig <-
   arrange(fish_p) %>% 
   dplyr::select(term_name, term_id, source, fish_p, query_size_all, intersection_size)
 
-comparison %>% filter(grepl("biological regulation", term_name)) %>% select(query_size, intersection_size, query_size_all, intersection_size_all)
+comparison %>% filter(grepl("biological regulation", term_name)) %>% dplyr::select(query_size, intersection_size, query_size_all, intersection_size_all)
 sig %>% filter(source == "GO:BP") %>% arrange(desc(intersection_size)) %>% head(10)
- ```
+sig %>% filter(source == "GO:BP") %>% arrange(fish_p) %>% head(10)
+```
 
+# IGNORE -----------------------------------------
  # NETWORK
  
 ```{r}
