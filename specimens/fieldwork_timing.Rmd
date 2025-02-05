@@ -1,0 +1,42 @@
+```{r}
+
+library(rvertnet)
+library(readxl)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(ggpubr)
+library(here)
+
+occ <-
+  searchbyterm(
+    scientificname = "Sceloporus occidentalis",
+    stateprovince = "California",
+    year = '>=2000',
+    limit = 10000
+  )
+
+occ <- occ_search(stateProvince = "California", limit = 10000, year = '2023', scientificName = "Sceloporus occidentalis")
+
+source("general_functions.R")
+ca <- get_ca()
+coords <- 
+  st_as_sf(occ$data, coords = c("decimallongitude", "decimallatitude"), crs = 4326) %>%
+  st_crop(ca)
+ggplot(coords) +
+  geom_sf()
+
+seasonal <-
+  occ$data %>%
+  # Filter to southern california
+  filter(decimalLatitude < 36) %>%
+  group_by(month) %>%
+  summarise(n = n()) %>%
+  drop_na()
+
+seasonal %>% filter(is.na(month))
+occ$data %>% filter(is.na(dateidentified)) %>% select(startdayofyear)
+
+ggplot(seasonal) +
+  geom_point(aes(x = factor(month), y = n))
+```

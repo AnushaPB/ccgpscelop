@@ -1,8 +1,10 @@
 import ee
 
-# Authenticate and initialize the Earth Engine API
+# Trigger the authentication flow.
 ee.Authenticate()
-ee.Initialize()
+
+# Initialize the library.
+ee.Initialize(project='ee-anushabishop')
 
 # Load California shape file
 states_dataset = ee.FeatureCollection('TIGER/2018/States')

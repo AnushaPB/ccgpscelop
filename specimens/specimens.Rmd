@@ -46,7 +46,7 @@ P4 - look for any uncaptured environmental diversity across the state (unlikely)
 # Read in CCGP sequencing data and CT specimens
 ```{r}
 # CCGP samples 
-ccgp_seq <- read_table(here("specimens", "58-Sceloporus.coords.txt", col_names = FALSE))
+ccgp_seq <- read_table(here("specimens", "58-Sceloporus.coords.txt"), col_names = FALSE)
 names(ccgp_seq) <- c("SampleID", "x", "y")
 
 # Erin's CT specimens
@@ -391,10 +391,21 @@ Main notes:
 - LACM doesn't have a ton of good specimens, but they fill in important gaps
 - We need samples from S. CA and along the coast
 ```{r}
+ca_counties <- counties(state = "CA", cb = TRUE, class = "sf")
 # plot of all samples and color coded by what we need to do for them
 ggplot() + 
   geom_sf(data = california) +
+  geom_sf_text(data = ca_counties, aes(label = NAME), size = 2) +
   geom_point(data = tracker_final, aes(x = x, y = y, col = note)) +
+  theme_void()
+
+# Add county names
+ggplot() + 
+  geom_sf(data = california, fill = "white") +
+  geom_sf(data = ca_counties, fill = "white") +
+  geom_sf_text(data = ca_counties, aes(label = NAME), size = 2) +
+  geom_point(data = tracker_final, aes(x = x, y = y, col = note)) +
+  geom_point(data = filter(tracker_final, is.na(note)), aes(x = x, y = y), cex = 2, col = "gray20") +
   theme_void()
 
 # color coded by priority
