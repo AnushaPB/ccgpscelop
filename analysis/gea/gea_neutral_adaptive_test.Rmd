@@ -7,6 +7,11 @@ library(terra)
 library(here)
 library(ggpubr)
 library(performance)
+library(gstat)
+library(sp)
+library(spatialreg)
+library(spdep)
+library(cowplot)
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 
@@ -56,7 +61,7 @@ ggplot(df) +
   ylab("GEA heterozygosity") 
 dev.off()
 
-coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID)
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transform(3310)
 coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
 
 gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
@@ -137,7 +142,7 @@ dev.off()
 ```
 
 ```{r}
-coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID)
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transform(3310)
 coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
 
 gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
@@ -207,320 +212,90 @@ final_plot
 dev.off()
 ```
 
-
 # Spatial models
-
 ```{r}
-# Spatial model 2
-# Construct IDW matrix
-# Calculate pairwise geographic distances
-coords <- 
-  get_coords(sf = TRUE) %>%
-  left_join(genes, by = c("SampleID" = "IID")) %>%
-  left_join(neutral, by = c("SampleID" = "IID")) %>%
-  drop_na()
+# Run OLS and get residuals
+f <- formula(genes_ho ~ neutral_ho)
+ols_model <- lm(f, data = coords)
+coords$ols_resids <- residuals(ols_model)
 
-# Calculate pairwise geographic distances
-geoMat <- st_distance(coords)
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
 
-# Convert to a numeric matrix while preserving the original matrix structure
-geoMat <- matrix(as.numeric(units::drop_units(geoMat)), nrow = nrow(geoMat), ncol = ncol(geoMat))
-
-# Ensure the matrix is symmetrical
-geoMat[upper.tri(geoMat)] <- geoMat[lower.tri(geoMat)]
-
-# Apply inverse distance weighting
-spdata.IDW <- 1 / geoMat
-diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
-dummy <- rep(1, nrow(coords))
-dframe <- cbind(coords, st_coordinates(coords), dummy) # Add it to the data frame
-
-library(nlme)
-null.model <- lme(fixed = genes_ho ~ neutral_ho, data = dframe, random = ~ 1 | dummy, method = "ML")
-summary(null.model)
-
-# Residuals are spatially autocorrelated
-null_resids <- residuals(null.model)
-null_M <- ape::Moran.I(null_resids, spdata.IDW)
-null_M$observed
-
-exp.sp <- update(null.model, correlation = corExp(1, form = ~ X + Y), method = "ML")
-writeLines("Results for exponential spatial correlation:\n")
-summary(exp.sp)
-
-# False convergence:
-gau.sp <- update(null.model, correlation = corGaus(1, form = ~ X + Y), method = "ML")
-writeLines("\nResults for Gaussian spatial correlation:\n")
-summary(gau.sp)
-
-sph.sp <- update(null.model, correlation = corSpher(1, form = ~ X + Y), method = "ML")
-writeLines("\nResults for spherical spatial correlation:\n")
-summary(sph.sp)
-
-# Get the AIC for all models
-aic <- AIC(null.model, exp.sp, sph.sp)
-best <- rownames(aic)[which.min(aic[, "AIC"])]
-best
-
-# the best model is exp.sp
-best_model <- get(best)
-
-summary(best_model)
-
-# Residuals are still spatially autocorrelated
-resids <- residuals(best_model)
-Msp <- ape::Moran.I(resids, spdata.IDW)
-Msp
-
-# MI is smaller for null model, so sticking to a linear model
-null_M$observed
-Msp$observed
-
-dframe$resids <- resids
-dframe$null_resids <- null_resids
-
-spmod2 <- 
-  ggplot(dframe) + 
-  geom_sf(data = ca) + 
-  labs(fill = "Variogram") +
-  geom_sf(aes(fill = resids), col = "gray20", pch = 21, cex = 2) +
-  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
-  theme_void()
-
-pdf(here(plotpath, "spatial_model.pdf"), width = 12, height = 3)
-spmod2
+pdf(here(plotpath, "ols_variogram.pdf"))
+plot(ols_variogram, ols_vgm[["Exp"]], main = "OLS Residuals Variogram (Exponential)")
+plot(ols_variogram, ols_vgm[["Sph"]], main = "OLS Residuals Variogram (Spherical)")
+plot(ols_variogram, ols_vgm[["Gau"]], main = "OLS Residuals Variogram (Gaussian)")
 dev.off()
 
-# predicted vs observed
-coords$sppredicted <- predict(best_model)
-coords$nullpredicted <- predict(null.model)
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
 
-plt1 <- 
-  ggplot(coords) +
-  geom_point(aes(x = genes_ho, y = nullpredicted, col = "Null"),cex = 2, alpha = 0.5) +
-  geom_point(aes(x = genes_ho, y = sppredicted, col = "Spatial"), cex = 2, alpha = 0.5) +
-  geom_smooth(aes(x = genes_ho, y = sppredicted, col = "Spatial"), method = "lm") +
-  geom_smooth(aes(x = genes_ho, y = nullpredicted, col = "Null"), method = "lm") +
-  geom_abline(lty = "dashed") +
-  labs(fill = "", col = "") +
-  theme_classic() +
-  xlab("Observed") +
-  ylab("Predicted")
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 
-plt2 <-  
-  ggplot(dframe) + 
-  geom_sf(data = ca) + 
-  labs(fill = "Spatial residuals") +
-  geom_sf(aes(fill = resids), col = "gray20", pch = 21, cex = 2) +
-  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
-  theme_void()
-plt3 <-  
-  ggplot(dframe) + 
-  geom_sf(data = ca) + 
-  labs(fill = "Null residuals") +
-  geom_sf(aes(fill = null_resids), col = "gray20", pch = 21, cex = 2) +
-  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
-  theme_void()
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = coords, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids <- residuals(sem_model)
 
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids, listw)$estimate
+moran.test(coords$sem_resids, listw)$estimate
 
-pdf(here(plotpath, "predicted_vs_observed.pdf"), width = 13, height = 4)
-plot_grid(plt1, plt2, plt3, nrow = 1, rel_widths = c(5, 4, 4))
+coords$sem_fitted <- sem_model$fitted
+coords$ols_fitted <- ols_model$fitted
+
+# Plot predicted vs observed
+pdf(here(plotpath, "predicted_vs_observed.pdf"), width = 4, height = 4)
+ggplot(coords, aes(x = ols_fitted, y = genes_ho)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm") +
+  xlab("Predicted Adaptive Heterozygosity") +
+  ylab("Observed Adaptive Heterozygosity") +
+  ggtitle("OLS") +
+  theme_classic()
+ggplot(coords, aes(x = sem_fitted, y = genes_ho)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm") +
+  xlab("Predicted Adaptive Heterozygosity") +
+  ylab("Observed Adaptive Heterozygosity") +
+  ggtitle("SEM") +
+  theme_classic()
 dev.off()
-
-# Model diagnostics
-pdf(here(plotpath, "model_check_resids.pdf"), width = 8, height = 6)
-plot(check_model(best_model, check = c("linearity", "vif", "normality")))
-dev.off()
-```
-
-```{r}
-dframe_sf <- dframe %>% st_as_sf() %>% st_transform(3310)
-listw <- make_listw(dframe_sf)
-
-sem_result <- spatialreg::errorsarlm(genes_ho ~ neutral_ho, data = dframe, listw = listw, na.action = "na.omit", zero.policy = TRUE)
-summary(sem_result)
-
-resids <- residuals(sem_result)
-Msp <- ape::Moran.I(resids, spdata.IDW)
-Msp$observed
-null_M$observed      
-```
-
-```{r}
-mod <- lm(genes_ho ~ neutral_ho, data = dframe)
-dframe$resids <- residuals(mod)
-```
-
-## Residuals
-
-Check spatial autocorrelation in residuals of residual model:
-```{r}
-mod_df <- read.csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
-mod_df <- left_join(dframe, mod_df) %>% drop_na(all_of(mod_vars))
-# Drop the island coordinate:
-coords_drop <- coords %>% filter(SampleID %in% mod_df$SampleID)
-
-# Calculate pairwise geographic distances
-geoMat <- st_distance(st_as_sf(coords_drop))
-# Convert to a numeric matrix while preserving the original matrix structure
-geoMat <- matrix(as.numeric(units::drop_units(geoMat)), nrow = nrow(geoMat), ncol = ncol(geoMat))
-# Ensure the matrix is symmetrical
-geoMat[upper.tri(geoMat)] <- geoMat[lower.tri(geoMat)]
-# Apply inverse distance weighting
-spdata.IDW <- 1 / geoMat
-diag(spdata.IDW) <- 0  # Set diagonal to 0 to avoid division by zero in IDW
-
-f <- paste("resids ~", paste(mod_vars, collapse = " + "))
-null.model <- lme(formula(f), data = mod_df, random = ~ 1 | dummy, method = "ML")
-ape::Moran.I(residuals(null.model), spdata.IDW) # significant, but very weak spatial autocorrelation (M = 0.09), so I think it is safe to use a non-spatial model
 ```
 
 ### All variables
 ```{r}
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
-mod_df_scaled <- mod_df %>% mutate(across(all_of(mod_vars), scale))
+mod_vars <- c("NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))%>% left_join(coords, by = c("SampleID" = "IID"))
+mod_df_scaled <- mod_df %>% mutate(across(all_of(mod_vars), scale)) 
 ```
 ```{r}
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
+f <- paste("sem_resids ~", paste(paste0(mod_vars), collapse = " + "))
 mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df)
 summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # cur_lgm = 7
-
-# Drop cur_lgm because of high VIF
-mod_vars <- c("NDVI", "gHM", "bio1", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # All VIF < 2
-
+AIC(mod) 
+car::vif(mod) 
 # Get RSQ
 summary(mod) # R^2 = 0.53
 
-best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df_scaled"))
-
-pdf(here(plotpath, "sp_resids_all.pdf"), width = 19, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
+pdf(here(plotpath, "sp_resids_all.pdf"), width = 22, height = 7)
+gglm_ls <- map(mod_vars, ~gglm(x = .x, y = "sem_resids", mod_df))
+ggpartial_ls <- map(mod_vars, ~ggpartial(x = .x, y = "sem_resids", f = mod_vars, col = .x, df = mod_df))
 do.call(
   cowplot::plot_grid,
   c(c(gglm_ls, ggpartial_ls), nrow = 2)
 )
 check_model(mod)
 dev.off()
-
-```
-
-### Select variables
-
-```{r}
-mod_vars <- c("csi_past", "cur_lgm", "lgm_lig", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df_scaled)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # csi_past = 5.18, cur_lgm = 7.57
-
-# Drop cur_lgm because of high VIF
-mod_vars <- c("csi_past", "lgm_lig", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df_scaled)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # All VIF < 5
-
-best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df_scaled"))
-pdf(here(plotpath, "sp_resids_temp.pdf"), width = 15, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-check_model(mod)
-dev.off()
-```
-### Temperature variables + Q only
-
-```{r}
-mod_vars <- c("bio1", "csi_past", "cur_lgm", "lgm_lig", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df_scaled)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # csi_past = 5.18, cur_lgm = 7.57
-
-# Drop cur_lgm because of high VIF
-mod_vars <- c("bio1", "csi_past", "lgm_lig", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df_scaled)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # All VIF < 5
-
-best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df_scaled"))
-pdf(here(plotpath, "sp_resids_temp.pdf"), width = 15, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-check_model(mod)
-dev.off()
-```
-
-### Test of PC
-
-```{r}
-pc <- prcomp(st_drop_geometry(mod_df[,c("cur_lgm", "lgm_lig")]), center = TRUE, scale = TRUE)
-mod_df$PC <- pc$x[,1]
-
-mod_vars <- c("NDVI", "gHM", "bio1", "PC", "csi_past", "glacier", "tmean_dif", "Q")
-f <- paste("resids ~", paste(paste0(mod_vars), collapse = " + "))
-mod <- lm(f, data = mod_df, na.action = "na.fail")
-dredge <- MuMIn::dredge(mod)
-best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
-mod <- lm(best_model_f, data = mod_df)
-summary(mod)
-AIC(mod) # 247.1698
-car::vif(mod) # all VIF < 2
-
-best_mod_vars <- setdiff(all.vars(best_model_f), c("resids", "mod_df"))
-
-pdf(here(plotpath, "sp_resids_pc.pdf"), width = 19, height = 6)
-gglm_ls <- map(best_mod_vars, ~gglm(x = .x, y = "resids", mod_df))
-ggpartial_ls <- map(best_mod_vars, ~ggpartial(x = .x, y = "resids", f = best_mod_vars, df = mod_df))
-do.call(
-  cowplot::plot_grid,
-  c(c(gglm_ls, ggpartial_ls), nrow = 2)
-)
-check_model(mod)
-dev.off()
-```
-
-```{r}
 ```
 
 # Future correlations
@@ -532,11 +307,10 @@ csi_future <- mask(csi_future, ca)
 names(csi_future) <- c("SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
 
 df_sf <- 
-  get_coords(sf = TRUE) %>% 
-  right_join(df, by = c("SampleID" = "IID")) %>%
+  coords%>%
   mutate(csi_future = extract(csi_future, .)[,2]) 
 
-pdf(here(plotpath, "future.pdf"), width = 9, height = 4)
+pdf(here(plotpath, "future.pdf"), width = 12, height = 4)
 plt1 <-
   ggplot(df_sf, aes(x = 1 - csi_future, y = neutral_ho)) +
   geom_point() +
@@ -551,7 +325,15 @@ plt2 <-
   theme_classic() +
   labs(x = "Future climate stability", y = "Adaptive heterozygosity") +
   ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$genes_ho))
-plot_grid(plt1, plt2, nrow = 1)
+plt3 <- 
+  ggplot(df_sf, aes(x = 1 - csi_future, y = sem_resids)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Residual adaptive heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$sem_resids))
+
+plot_grid(plt1, plt2, plt3, nrow = 1)
 dev.off()
 
 ```
