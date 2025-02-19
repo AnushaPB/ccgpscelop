@@ -1,0 +1,127 @@
+# Adaptive index
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(algatr)
+library(here)
+library(tidyverse)
+library(RColorBrewer)
+library(sf)
+library(terra)
+library(raster)
+library(vegan)
+library(cowplot)
+
+source(here("analysis", "adaptive", "adaptive_index.R"))
+source(here("general_functions.R"))
+```
+
+## Specify model to examine
+
+```{r}
+gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
+
+if (gea_method == "bio1ndvi") output_path = here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi") # for BIO1 + NDVI
+if (gea_method == "pca") output_path = here("analysis", "adaptive", "outputs", "RDA_PCA") # for rasterPCA env layers
+```
+
+## 1. Get input files
+
+```{r}
+dat_mod <- import_rda(output_path = output_path, suffix = "mod", rds_obj = TRUE)
+dat_mod_pc <- import_rda(output_path = output_path, suffix = "modPCs", rds_obj = TRUE)
+
+# Retrieve coords for samples on which RDA was run
+coords <- read_tsv(here(output_path, "RDA_genes_coords.txt"), col_names = TRUE)
+ca <- get_ca()
+```
+
+## 2. Select env layers
+
+We'll calculate adaptive index using both three env PCs and also just BIO1 + NDVI.
+
+```{r}
+if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSE, model = NULL, years = NULL, RCP = NULL)
+if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = FALSE, model = NULL, years = NULL, RCP = NULL)
+
+# Check that above worked
+names(envlayers$env_pres)
+```
+
+## 2. Calculate adaptive index
+
+We're going to calculate the adaptive index for both RDA runs: one without population structure correction and the other with (using top 3 PCs). We'll calculate the adaptive index using the loadings method.
+
+```{r}
+# Change layer names to keep consisent with rownames in RDA model
+if (names(envlayers$env_pres) != row.names(dat_mod$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+if (names(envlayers$env_pres) != row.names(dat_mod_pc$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+
+# Check that above worked
+names(envlayers$env_pres) == row.names(dat_mod$biplot)
+
+# Adaptive index for RDA models without PC correction
+ai <- adaptive_index(biplot = dat_mod$biplot, K = ncol(dat_mod$biplot), env_pres = envlayers$env_pres, 
+                     coords = coords %>% dplyr::select(x, y), range = NULL, 
+                     method = "loadings")
+
+# Adaptive index for RDA models with PC correction
+ai_pc <- adaptive_index(dat_mod_pc$biplot, K = ncol(dat_mod_pc$biplot), env_pres, 
+                        coords = coords %>% dplyr::select(x, y), range = NULL, 
+                        method = "loadings")
+```
+
+## 3. Export rasters of adaptive index
+
+```{r}
+if (gea_method == "pca") {
+  ai_rs <- c(terra::rast(ai[[1]]), terra::rast(ai[[2]]), terra::rast(ai[[3]]))
+  ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]), terra::rast(ai[[3]]))
+}
+if (gea_method == "bio1ndvi") {
+  ai_rs <- c(terra::rast(ai[[1]]), terra::rast(ai[[2]]))
+  ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]))
+}
+
+writeRaster(ai_rs, here(output_path, "adapind_load.tif"), overwrite = TRUE)
+writeRaster(ai_pc_rs, here(output_path, "adapind_load_PCs.tif"), overwrite = TRUE)
+```
+
+## 4. Build maps of adaptive index
+
+```{r}
+# No PC correction
+p_ai <- plot_adaptive(Proj_data = ai, K = length(ai), bkg = ca, to_mask = FALSE, index_name = "Adaptive index", title = "RDA adaptive index, loadings method")
+
+# With PC correction
+p_ai_pc <- plot_adaptive(Proj_data = ai_pc, K = length(ai_pc), bkg = ca, to_mask = FALSE, title = "RDA adaptive index, loadings method")
+
+ai_plots <- plot_grid(p_ai, p_ai_pc, nrow = 2)
+
+if (gea_method == "pca") pdf(here("analysis", "adaptive", "plots", "gea_genes_pca_ai.pdf"), width = 12, height = 8)
+if (gea_method == "bio1ndvi") pdf(here("analysis", "adaptive", "plots", "gea_genes_bio1ndvi_ai.pdf"), width = 12, height = 8)
+p_ai
+dev.off()
+```
+
+## 5. Build biplots
+
+```{r}
+# # Import vals from GEA analysis
+# rdadapt <- read_csv(TODO)
+# # TODO automatically uses q.values column from rdadapt
+# plt_biplot <- biplot_plot(biplot, loadings = scaled_loadings, 
+#                           pvals = rdadapt, sig = 0.01, biplot_type = "separate")
+# biplots <- plot_grid(plt_biplot$p_rda1, plt_biplot$p_rda2, plt_biplot$p_rda3, nrow = 1)
+
+# pdf(here("analysis", "adaptive", "plots", "gea_genes_biplot.pdf"), width = 12, height = 4)
+# biplots
+# dev.off()
+```

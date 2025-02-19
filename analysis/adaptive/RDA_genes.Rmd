@@ -1,0 +1,62 @@
+# Visualizing RDA results
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(here)
+library(tidyverse)
+# library(tidyterra)
+library(cowplot)
+library(sf)
+library(terra)
+library(raster)
+library(cowplot)
+library(algatr)
+
+source(here("analysis", "adaptive", "adaptive_index.R"))
+```
+
+## 1. Import RDA results
+
+We ran two RDA models; one with population structure correction (pRDA, using 3 PCs) and the other without.
+```{r}
+dat_mod <- import_rda(output_path = here("analysis", "adaptive", "outputs"), suffix = "mod", rds_obj = TRUE)
+dat_mod_pc <- import_rda(output_path = here("analysis", "adaptive", "outputs"), suffix = "modPCs", rds_obj = TRUE)
+
+# Retrieve coords for samples on which RDA was run
+# coords <- read_tsv(here("analysis", "adaptive", "outputs", "RDA_genes_coords.txt"), col_names = TRUE)
+# ca <- get_ca()
+# env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+# names(env_pres) <- paste("env_", names(env_pres), sep = "")
+```
+
+## 2. Detect outliers
+
+```{r}
+rda_z <- rda_getoutliers(mod = dat_mod$mod, naxes = "all", outlier_method = "z", z = 3, plot = FALSE)
+rda_z_pc <- rda_getoutliers(mod = dat_mod_pc$mod, naxes = "all", outlier_method = "z", z = 3, plot = FALSE)
+
+length(Reduce(intersect, list(
+  rda_z$rda_snps,
+  rda_z_pc$rda_snps))) # 235 @ z = 3
+```
+
+## 3. Build biplots and export
+
+```{r}
+# Biplots with overlapping outliers highlighted?
+
+pdf(here("analysis", "adaptive", "plots", "RDA_biplot_z3.pdf"), width = 12, height = 8)
+rda_plot(mod = dat_mod$mod, rda_snps = rda_z$rda_snps, pvalues = NULL, biplot_axes = c(1, 2), manhattan = FALSE, rdaplot = TRUE, binwidth = 20)
+dev.off()
+
+pdf(here("analysis", "adaptive", "plots", "RDA_biplot_PCs_z3.pdf"), width = 12, height = 8)
+rda_plot(mod = dat_mod_pc$mod, rda_snps = rda_z_pc$rda_snps, pvalues = NULL, biplot_axes = c(1, 2), manhattan = FALSE, rdaplot = TRUE, binwidth = 20)
+dev.off()
+```

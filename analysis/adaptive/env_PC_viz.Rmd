@@ -1,0 +1,185 @@
+# Visualizing environmental layers
+
+```{r setup, include=FALSE}
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE)
+
+library(here)
+library(tidyverse)
+library(tidyterra)
+library(cowplot)
+library(sf)
+library(terra)
+library(raster)
+library(cowplot)
+```
+
+## 1. Get present env layers
+
+```{r}
+env_pcs <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+# future_pcs <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2041-2070_", model, "_", ssp, "_V.2.1_pca.tif"))
+# names(future_pcs) <- c("PC1", "PC2", "PC3")
+p_pres <- ggplot() +
+  geom_spatraster(data = env_pcs) +
+  theme_map() +
+  facet_wrap(~lyr) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent") +
+  ggtitle("Present PCs")
+```
+
+## 2. Define function
+
+The following function will pull in future env PCs and build comparison plots depending on the factor you're interested in comparing: a range of years, two different models, or two RCPs.
+
+```{r}
+#' Builds faceted plots by user-defined metric to compare present & future rasterPCA results
+#'
+#' @param model model name (e.g., "gfdl-esm4" or c("gfdl-esm4", "ipsl-cm6a-lr"))
+#' @param ssp ssp value (retrieved earlier using RCP value); MUST MATCH RCP
+#' @param RCP rep conc pathway value; MUST MATCH SSP
+#' @param years range of years to examine (e.g., "2041-2070" or c("2041-2070", "2071-2100"))
+#' @param to_compare what to facet each plot on; options are "years", "RCP", or "model"
+#' 
+plot_future <- function(model, ssp, RCP, years, to_compare = "years") {
+  if (to_compare == "years") {
+    future_pcs1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years[1], "_", model, "_", ssp, "_V.2.1_pca.tif"))
+    future_pcs2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years[2], "_", model, "_", ssp, "_V.2.1_pca.tif"))
+    title1 <- paste0("Future PCs, ", model, " RCP ", RCP, ", ", years[1])
+    title2 <- paste0("Future PCs, ", model, " RCP ", RCP, ", ", years[2])
+  }
+  if (to_compare == "model") {
+    future_pcs1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model[1], "_", ssp, "_V.2.1_pca.tif"))
+    future_pcs2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model[2], "_", ssp, "_V.2.1_pca.tif"))
+    title1 <- paste0("Future PCs, ", model[1], " RCP ", RCP, ", ", years)
+    title2 <- paste0("Future PCs, ", model[2], " RCP ", RCP, ", ", years)
+  }
+  if (to_compare == "RCP") {
+    future_pcs1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[1], "_V.2.1_pca.tif"))
+    future_pcs2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[2], "_V.2.1_pca.tif"))
+    title1 <- paste0("Future PCs, ", model, " RCP ", RCP[1], ", ", years)
+    title2 <- paste0("Future PCs, ", model, " RCP ", RCP[2], ", ", years)
+  }
+  names(future_pcs1) <- c("PC1", "PC2", "PC3")
+  names(future_pcs2) <- c("PC1", "PC2", "PC3")
+
+  return(list("future_pcs1" = future_pcs1, "title1" = title1, "future_pcs2" = future_pcs2, "title2" = title2))
+}
+```
+
+## 3. Build plots and export
+
+Define arguments.
+
+```{r}
+RCP = c(2.6, 8.5) # options are 2.6, 7, or 8.5 from CHELSA V2
+model = "gfdl-esm4" # options are "gfdl-esm4" (highest priority) or "ipsl-cm6a-lr"
+years = "2071-2100" # options are "2041-2070" or "2071-2100"
+ssp <- c("ssp126", "ssp585")
+
+# For single RCPs:
+# if (RCP == 8.5) ssp <- "ssp585"
+# if (RCP == 7) ssp <- "ssp370"
+# if (RCP == 2.6) ssp <- "ssp126"
+```
+
+```{r}
+to_compare = "RCP"
+plot_dat <- plot_future(model = model, RCP = RCP, years = years, to_compare = to_compare)
+
+p_fut_1 <- ggplot() +
+  geom_spatraster(data = plot_dat$future_pcs1) +
+  theme_map() +
+  facet_wrap(~lyr) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent") +
+  ggtitle(paste0(plot_dat$title1))
+
+p_fut_2 <- ggplot() +
+  geom_spatraster(data = plot_dat$future_pcs2) +
+  theme_map() +
+  facet_wrap(~lyr) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent") +
+  ggtitle(paste0(plot_dat$title2))
+
+p_pcs <- plot_grid(p_pres, p_fut_1, p_fut_2, nrow = 3)
+
+# pdf(paste0(here("analysis", "adaptive", "plots"), "/env_PCs_", model, "_RCP", RCP, ".pdf"), width = 12, height = 8)
+pdf(paste0(here("analysis", "adaptive", "plots"), "/env_PCs_", model, "_", to_compare, "comp.pdf"), width = 12, height = 8)
+p_pcs
+dev.off()
+```
+
+## 4. Comparing RCPs for BIO1
+
+```{r}
+all_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+bio1_pres <- terra::subset(all_pres, 1) # "CHELSA_bio1_1981.2010_V.2.1"
+bio1_fut_26 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/GFDL-ESM4/ssp126/bio/CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1.tif"))
+bio1_fut_85 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/GFDL-ESM4/ssp585/bio/CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1.tif"))
+
+resamp_26 <- terra::resample(bio1_fut_26, bio1_pres)
+resamp_85 <- terra::resample(bio1_fut_85, bio1_pres)
+crop_26 <- terra::crop(resamp_26, bio1_pres, mask = TRUE)
+crop_85 <- terra::crop(resamp_85, bio1_pres, mask = TRUE)
+
+change_26 <- resamp_26 - bio1_pres
+change_85 <- resamp_85 - bio1_pres
+
+# Plot results
+p_bio1 <- ggplot() +
+  geom_spatraster(data = bio1_pres) +
+  theme_map() +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", limits = c(minmax(bio1_pres)[1], minmax(crop_85)[2])) +
+  ggtitle("BIO1, present")
+
+p_26 <- ggplot() +
+  geom_spatraster(data = crop_26) +
+  theme_map() +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", limits = c(minmax(bio1_pres)[1], minmax(crop_85)[2])) +
+  ggtitle("BIO1, RCP2.6")
+
+p_85 <- ggplot() +
+  geom_spatraster(data = crop_85) +
+  theme_map() +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", limits = c(minmax(bio1_pres)[1], minmax(crop_85)[2])) +
+  ggtitle("BIO1, RCP8.5")
+
+p_26_change <- ggplot() +
+  geom_spatraster(data = change_26) +
+  theme_map() +
+  # facet_wrap(~lyr) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", limits = c(minmax(change_26)[1], minmax(change_85)[2])) +
+  ggtitle("Change in BIO1 between present and RCP2.6")
+
+p_85_change <- ggplot() +
+  geom_spatraster(data = change_85) +
+  theme_map() +
+  # facet_wrap(~lyr) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", limits = c(minmax(change_26)[1], minmax(change_85)[2])) +
+  ggtitle("Change in BIO1 between present and RCP8.5")
+
+p1 <- plot_grid(p_bio1, p_26, nrow = 1)
+p2 <- plot_grid(p_bio1, p_85, nrow = 1)
+
+# p_bio1change <- plot_grid(p_26_change, p_85_change, nrow = 1)
+# pdf(paste0(here("analysis", "adaptive", "plots"), "/BIO1_change_maps.pdf"), width = 12, height = 8)
+# p_bio1change
+# dev.off()
+
+p_bigchange <- plot_grid(p1, p2, p_26_change, p_85_change, nrow = 2, rel_heights = c(1, 2))
+
+pdf(paste0(here("analysis", "adaptive", "plots"), "/BIO1_big_change_maps.pdf"), width = 12, height = 8)
+p_bigchange
+dev.off()
+
+# Stack with present NDVI layer; resample and crop
+cropped <- terra::crop(terra::rast(bio1_fut), terra::ext(terra::rast(ndvi)))
+resamp <- terra::resample(cropped, terra::rast(ndvi))
+# TODO something weird happening below
+# env_fut <- raster::stack(raster::raster(resamp), ndvi)
+```

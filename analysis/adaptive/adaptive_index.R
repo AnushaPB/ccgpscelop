@@ -1,3 +1,106 @@
+#' Import environmental layers of choice for RDA, adaptive index, or genomic offset calculations
+#'
+#' @param type options are "rasterPCs" or "ind_layers" for BIO1 + NDVI
+#' @param future whether to also import future env layers (defaults to FALSE)
+#' @param model if `future = TRUE`, model name (e.g., "ipsl-cm6a-lr")
+#' @param years if `future = TRUE`, years for future projections (e.g., "2041-2070")
+#' @param RCP if `future = TRUE`, RCP to import (e.g., 8.5)
+#'
+#' @return
+#' @export
+import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, years = NULL, RCP = NULL) {
+  if (type == "rasterPCs") {
+    env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+    names(env_pres) <- paste("env_", names(env_pres), sep = "")
+  }
+  if (type == "ind_layers") {
+    all_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+    bio1 <- raster::subset(all_pres, "CHELSA_bio1_1981.2010_V.2.1")
+    ndvi <- raster::raster(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
+    # Stack layers together and rename
+    resamp <- terra::resample(terra::rast(ndvi), terra::rast(bio1))
+    env_pres <- raster::stack(bio1, raster::raster(resamp))
+    names(env_pres) <- c("BIO1", "NDVI")
+  }
+
+  if (future) {
+    if (RCP == 8.5) ssp <- "ssp585"
+    if (RCP == 7) ssp <- "ssp370"
+    if (RCP == 2.6) ssp <- "ssp126"
+    if (model == "gfdl-esm4") cap_model <- "GFDL-ESM4"
+    if (model == "ipsl-cm6a-lr") cap_model <- "IPSL-CM6A-LR"
+
+    if (type == "rasterPCs") {
+      env_fut <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp, "_V.2.1_pca.tif"))
+    }
+    if (type == "ind_layers") {
+      bio1_fut <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp, "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp, "_V.2.1.tif"))
+      # Stack with present NDVI layer; resample and crop
+      cropped <- terra::crop(terra::rast(bio1_fut), terra::ext(terra::rast(ndvi)))
+      resamp <- terra::resample(cropped, terra::rast(ndvi))
+      # TODO something weird happening below
+      env_fut <- raster::stack(raster::raster(resamp), ndvi)
+    }
+    names(env_fut) <- names(env_pres)
+  }
+  if (!future) env_fut <- NULL
+
+  return(list(env_pres = env_pres, env_fut = env_fut))
+}
+
+#' Export raw values from RDA model result
+#'
+#' @param mod RDA model object
+#' @param output_path path to all RDA output files
+#' @param suffix file suffix
+#'
+#' @return
+#' @export
+export_rda_files <- function(mod, output_path, suffix) {
+  data.frame(mod$colsum) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_colsum_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$Ybar) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_ybar_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$v) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_v_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$u) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_u_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$wa) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_wa_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$QR$qr) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_qr_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$eig) %>% rownames_to_column(var = "RDA") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_eig_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$biplot) %>% rownames_to_column(var = "var") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_biplot_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$QR$qraux) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_qraux_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$envcentre) %>% tibble::rownames_to_column(var = "axis") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_envcentre_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod_chi = mod$tot.chi,
+            mod_chi_cca = mod$CCA$tot.chi) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_chi_", suffix, ".csv"), col_names = TRUE)
+  # Export scores (scaled and unscaled); labeled "species" corresponds to v, "sites" corresponds to wa, and "constraints" corresponds to u
+  scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
+  unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
+}
+
+#' Import RDA files relevant for adaptive index
+#'
+#' @param output_path path to all RDA output files
+#' @param suffix file suffix
+#' @param rds_obj if TRUE, will import only RDS file; defaults to FALSE
+#'
+#' @return
+#' @export
+import_rda <- function(output_path, suffix, rds_obj = FALSE) {
+  if (!rds_obj) {
+    mod <- NULL
+    biplot <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_biplot_", suffix, ".csv"), col_names = TRUE) %>% tibble::column_to_rownames(var = "var")
+    scaled_loadings <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
+    unscaled_loadings <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
+    eig <- read_tsv(paste0(output_path, "/58-Sceloporus_RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
+  }
+  if (rds_obj) {
+    mod <- readRDS(paste0(output_path, "/RDA_geagenes_", suffix, ".RDS"))
+    biplot <- data.frame(mod$CCA$biplot)
+    eig <- data.frame(mod$CCA$eig)
+    # loadings <- as.data.frame(vegan::scores(mod, choices = 1:ncol(mod$CCA$v), display = "species")) %>% rownames_to_column(var = "locus")
+    scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE)
+    unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0)
+  }
+  return(list(mod = mod, biplot = biplot, eig = eig, scaledload = scaled_loadings, unscaledload = unscaled_loadings))
+}
+
 #' Project adaptive component turnover across the landscape
 #' Code adapted from Capblancq & Forester (2021) https://doi.org/10.1111/2041-210X.13722
 #' GitHub repo available here: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/src/adaptive_index.R
@@ -5,15 +108,16 @@
 #' TODO deal with CRS - currently it's in lat/long
 #'
 #' @param biplot rownames must match naming of env layers
-#' @param K number of PCs to retain if `method = "loadings"`
+#' @param K number of PCs to retain if `method = "loadings"` (defaults to 3)
 #' @param env_pres environmental layer(s) on which to project
 #' @param coords sampling coords (only x and y)
 #' @param range whether to mask to species range (defaults to NULL)
 #' @param method how to predict values; options are "loadings" (use RDA results; default) or "predict" (use RDA predict)
+#' @param mod if `method = "predict"` selected, RDA model
 #'
 #' @return
 #' @export
-adaptive_index <- function(biplot, K, env_pres, coords, range = NULL, method = "loadings"){
+adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method = "loadings", mod = NULL) {
   # Extract values from our environmental rasters
   env <- raster::extract(env_pres, coords)
   # Standardize environmental variables and make into dataframe
@@ -22,19 +126,21 @@ adaptive_index <- function(biplot, K, env_pres, coords, range = NULL, method = "
   scale_env <- attr(env, 'scaled:scale')
   center_env <- attr(env, 'scaled:center')
 
+  # TODO if names don't match between biplot and env layers
+
   # Formatting environmental rasters for projection
   var_env_proj_pres <- as.data.frame(raster::rasterToPoints(env_pres[[row.names(biplot)]]))
 
-  # Standardization of the environmental variables
+  # Standardization of the environmental variables based on scaling coefficients
   var_env_proj_RDA <- as.data.frame(scale(var_env_proj_pres[,-c(1,2)],
                                           center_env[row.names(biplot)],
                                           scale_env[row.names(biplot)]))
 
-  # Predicting pixels genetic component based on RDA axes
+  # Predicting pixels' genetic component based on RDA axes
   Proj_pres <- list()
   if (method == "loadings") {
     for (i in 1:K) {
-      ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[i])))), crs = crs(env_pres))
+      ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[i])))), crs = raster::crs(env_pres))
       names(ras_pres) <- paste0("RDA_pres_", as.character(i))
       Proj_pres[[i]] <- ras_pres
       names(Proj_pres)[i] <- paste0("RDA", as.character(i))
@@ -43,7 +149,7 @@ adaptive_index <- function(biplot, K, env_pres, coords, range = NULL, method = "
 
   # Prediction with RDA model and linear combinations
   if (method == "predict") {
-    pred <- predict(RDA, var_env_proj_RDA[,rownames(biplot[i])], type = "lc")
+    pred <- predict(mod, var_env_proj_RDA[,rownames(biplot[i])], type = "lc")
     for (i in 1:K) {
       ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(pred[,i])), crs = crs(env_pres))
       names(ras_pres) <- paste0("RDA_pres_", as.character(i))
@@ -53,7 +159,7 @@ adaptive_index <- function(biplot, K, env_pres, coords, range = NULL, method = "
   }
 
   # Mask with the range if supplied
-  if(!is.null(range)){
+  if (!is.null(range)) {
     Proj_pres <- lapply(Proj_pres, function(x) terra::mask(x, range))
   }
 
@@ -63,56 +169,94 @@ adaptive_index <- function(biplot, K, env_pres, coords, range = NULL, method = "
 
 #' Build projected map of RDA results (e.g., RDA adaptive index)
 #'
-#' @param Proj_data data to plot
-#' @param title scaffold name, for labeling plot
+#' @param Proj_data data to plot; either list of rasters, RasterStack, or SpatRaster
 #' @param bkg shapefile for plotting (e.g., California state)
-#' @param to_mask whether projection needs to be cropped and masked to bkg (defaults to FALSE)
+#' @param to_mask whether projection needs to be cropped and masked to bkg (defaults to FALSE); only works if Proj_data is raster
+#' @param index_name name of index that's being plotted (defaults to "Adaptive index")
+#' @param title title for plot
 #'
 #' @return ggplot2 plot object
 #' @export
-plot_adaptiveindex <- function(Proj_data, scaf_name, bkg, to_mask = FALSE) {
-  if (to_mask) {
-    Proj_data$RDA1 <- crop(terra::rast(Proj_data$RDA1), bkg, mask = TRUE)
-    Proj_data$RDA2 <- crop(terra::rast(Proj_data$RDA2), bkg, mask = TRUE)
-    Proj_data$RDA3 <- crop(terra::rast(Proj_data$RDA3), bkg, mask = TRUE)
-    # Convert back to raster objects
-    Proj_data$RDA1 <- raster::raster(Proj_data$RDA1)
-    Proj_data$RDA2 <- raster::raster(Proj_data$RDA2)
-    Proj_data$RDA3 <- raster::raster(Proj_data$RDA3)
-  }
+plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index", title) {
+  # if (inherits(Proj_data, "SpatRaster") | inherits(Proj_data, "Raster")) {
+  #   if (to_mask) {
+  #     for (i in 1:n_layers) {
+  #       Proj_data[[i]] <- crop(terra::rast(Proj_data[[i]]), bkg, mask = TRUE)
+  #       Proj_data[[i]] <- raster::raster(Proj_data[[i]])
+  #     }
+  #   }
+  # }
+
+  if (inherits(Proj_data, "SpatRaster")) Proj_data <- raster::stack(Proj_data)
+  n_layer = raster::nlayers(ai_rs)
+
   # Vectorization of the climatic rasters for ggplot
-  RDA_proj <- list(Proj_data$RDA1, Proj_data$RDA2, Proj_data$RDA3)
+  RDA_proj <- list()
+  for (i in 1:n_layers) {
+    RDA_proj[[i]] <- Proj_data[[i]]
+  }
+
   # Turn rasters into points for ggplot
   RDA_proj <- lapply(RDA_proj, function(x) raster::rasterToPoints(x))
   for (i in 1:length(RDA_proj)) {
     RDA_proj[[i]][,3] <- (RDA_proj[[i]][,3] - min(RDA_proj[[i]][,3]))/(max(RDA_proj[[i]][,3]) - min(RDA_proj[[i]][,3]))
   }
 
-  # Adaptive genetic turnover projected for RDA1 and RDA2 indexes
+  # Adaptive genetic turnover projected for RDA indexes
   # Bind together points from both RDA axes
-  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:3]))
+  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layers]))
   colnames(TAB_RDA)[3] <- "value"
-  # Add another column to df that specifies whether values are coming from RDA axes 1 or 2
-  TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))),
-                             levels = c("RDA1", "RDA2", "RDA3"))
+  # TODO iteratively do below eventually
+  # Add another column to df that specifies which RDA axis values are coming from
+  if (n_layers == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
+  if (n_layers == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
+  if (n_layers == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
+  
+  write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
 
   # Make plot
-  ggplot(data = TAB_RDA) +
-    # geom_sf(data = admin, fill=gray(.9), size = 0) +
-    geom_sf(data = bkg, fill = "lightgrey") +
-    geom_raster(aes(x = x, y = y, fill = cut(value, breaks = seq(0, 1, length.out = 10), include.lowest = T))) +
+  ggplot2::ggplot(data = TAB_RDA) +
+    ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
+    ggplot2::geom_raster(aes(x = x, y = y, fill = cut(value, breaks = seq(0, 1, length.out = 10), include.lowest = T))) +
     # scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
-    scale_fill_viridis_d(alpha = 0.8, direction = -1, labels = c("Negative","","","","Intermediate","","","","Positive")) +
-    # scale_fill_viridis_d(alpha = 0.8, direction = -1) +
-    geom_sf(data = bkg, fill = NA, size = 0.1) +
-    xlab("Longitude") +
-    ylab("Latitude") +
-    guides(fill = guide_legend(title = "Adaptive index")) +
-    facet_grid(~variable) +
-    # theme_bw(base_size = 11) +
-    theme_map() +
-    theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11)) +
-    ggtitle(paste0(scaf_name))
+    ggplot2::scale_fill_viridis_d(alpha = 0.8, direction = -1, labels = c("Negative","","","","Intermediate","","","","Positive")) +
+    ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
+    ggplot2::xlab("Longitude") +
+    ggplot2::ylab("Latitude") +
+    ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+    ggplot2::facet_grid(~variable) +
+    cowplot::theme_map() +
+    ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11)) +
+    ggplot2::ggtitle(paste0(title))
+}
+
+#' Scale a raster stack from 0 to 255
+#'
+#' @param s RasterStack
+#'
+#' @noRd
+#' @export
+stack_to_rgb <- function(s) {
+  stack_list <- as.list(s)
+  new_stack <- terra::rast(purrr::map(stack_list, raster_to_rgb))
+  return(new_stack)
+}
+
+#' Scale raster from 0 to 255
+#'
+#' @param r SpatRast
+#'
+#' @noRd
+#' @export
+raster_to_rgb <- function(r) {
+  rmax <- terra::minmax(r)["max", ]
+  rmin <- terra::minmax(r)["min", ]
+  if ((rmax - rmin) == 0) {
+    r[] <- 255
+  } else {
+    r <- (r - rmin) / (rmax - rmin) * 255
+  }
+  return(r)
 }
 
 #' Make a biplot of RDA results
