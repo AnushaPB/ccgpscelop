@@ -24,25 +24,30 @@ import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, y
   }
 
   if (future) {
-    if (RCP == 8.5) ssp <- "ssp585"
-    if (RCP == 7) ssp <- "ssp370"
-    if (RCP == 2.6) ssp <- "ssp126"
-    if (model == "gfdl-esm4") cap_model <- "GFDL-ESM4"
-    if (model == "ipsl-cm6a-lr") cap_model <- "IPSL-CM6A-LR"
+    cap_model <- "GFDL-ESM4"
+    # if (model == "ipsl-cm6a-lr") cap_model <- "IPSL-CM6A-LR"
+    RCP = c(2.6, 8.5)
+    ssp = c("ssp126", "ssp585")
 
     if (type == "rasterPCs") {
-      env_fut <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp, "_V.2.1_pca.tif"))
+      env_fut_1 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[1], "_V.2.1_pca.tif"))
+      env_fut_2 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[2], "_V.2.1_pca.tif"))
+      env_fut <- raster::stack(env_fut_1, env_fut_2)
     }
+
     if (type == "ind_layers") {
-      bio1_fut <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp, "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp, "_V.2.1.tif"))
-      # Stack with present NDVI layer; resample and crop
-      cropped <- terra::crop(terra::rast(bio1_fut), terra::ext(terra::rast(ndvi)))
-      resamp <- terra::resample(cropped, terra::rast(ndvi))
-      # TODO something weird happening below
-      env_fut <- raster::stack(raster::raster(resamp), ndvi)
+      bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp[1], "_V.2.1.tif"))
+      cropped_1 <- terra::crop(terra::rast(bio1_fut_1), terra::ext(terra::rast(ndvi)))
+      resamp_1 <- terra::resample(cropped_1, terra::rast(ndvi))
+      bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp[2], "_V.2.1.tif"))
+      cropped_2 <- terra::crop(terra::rast(bio1_fut_2), terra::ext(terra::rast(ndvi)))
+      resamp_2 <- terra::resample(cropped_2, terra::rast(ndvi))
+
+      # Stack with present NDVI layer
+      env_fut <- raster::stack(raster::raster(resamp_1), raster::raster(resamp_2), ndvi)
     }
-    names(env_fut) <- names(env_pres)
   }
+  
   if (!future) env_fut <- NULL
 
   return(list(env_pres = env_pres, env_fut = env_fut))
@@ -188,11 +193,11 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
   # }
 
   if (inherits(Proj_data, "SpatRaster")) Proj_data <- raster::stack(Proj_data)
-  n_layer = raster::nlayers(ai_rs)
+  n_layer = raster::nlayers(Proj_data)
 
   # Vectorization of the climatic rasters for ggplot
   RDA_proj <- list()
-  for (i in 1:n_layers) {
+  for (i in 1:n_layer) {
     RDA_proj[[i]] <- Proj_data[[i]]
   }
 
@@ -204,13 +209,13 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
 
   # Adaptive genetic turnover projected for RDA indexes
   # Bind together points from both RDA axes
-  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layers]))
+  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layer]))
   colnames(TAB_RDA)[3] <- "value"
   # TODO iteratively do below eventually
   # Add another column to df that specifies which RDA axis values are coming from
-  if (n_layers == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
-  if (n_layers == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
-  if (n_layers == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
+  if (n_layer == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
+  if (n_layer == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
+  if (n_layer == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
   
   write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
 
@@ -223,7 +228,7 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
     ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
     ggplot2::xlab("Longitude") +
     ggplot2::ylab("Latitude") +
-    ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+    # ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
     ggplot2::facet_grid(~variable) +
     cowplot::theme_map() +
     ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11)) +

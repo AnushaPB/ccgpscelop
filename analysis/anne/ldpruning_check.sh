@@ -1,32 +1,3 @@
-### Checking sig SNPs
-
-outpath <- here("analysis", "gea", "outputs")rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) cortest <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_cortest_full.csv"))
-rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
-rdasig01 <- rdasig %>% filter(q.values < 0.01)
-cortest_p <- cortest %>% filter(outlier_method == "p")
-all(rdasig01$locus %in% cortest_p$snp) # TRUE
-nrow(rdasig01)# [1] 1328466
-nrow(cortest_p)# [1] 2656932
-
-### Checking LD pruning
-
-r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
-r %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
-rdasig %>% filter(locus == "chr1_3757363_G_A" | locus == "chr1_3757379_T_C")
-
-prunein <- read_table(here("data", "ccgp_data", "58-Sceloporus_0.6.prune.in"), col_names = "snp")
-nrow(prunein)
-# [1] 49306298
-pruneout <- read_table(here("data", "ccgp_data", "58-Sceloporus_0.6.prune.out"), col_names = "snp")
-nrow(pruneout)
-# [1] 19670579
-all(prunein$snp %in% pruneout$snp)
-# [1] FALSE
-prunein %>% filter(snp == "chr1_3757363_G_A" | snp == "chr1_3757379_T_C") # both are there
-pruneout %>% filter(snp == "chr1_3757363_G_A" | snp == "chr1_3757379_T_C") # neither is there
-
-### ===========
-
 # GETTING CHECKSUMS ERROR MESSAGES FOR BOTH THE FOLLOWING:
 bcftools query -f '%POS\n' 58-Sceloporus_complete_coords_annotated.vcf.gz | wc -l # 7201145
 bcftools query -f '%POS\n' 58-Sceloporus_complete_coords_pruned_0.6.vcf.gz | wc -l # 40705025
@@ -58,3 +29,20 @@ nrow(r_new)
 # [1] 7748715
 
 r_new %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
+
+### =========== TRY PLINK2 AGAIN
+
+# New LD pruning line run by Erik:
+plink2 --vcf {input.vcf} --make-bed --indep-pairwise 50kb 1 0.6 --out {params.prefix2} --allow-extra-chr --autosome-num 95 --const-fid --bad-freqs
+
+# Make plink2's bfiles
+plink2 --vcf 58-Sceloporus_complete_coords_annotated.vcf.gz --make-bed --allow-extra-chr --autosome-num 95 --const-fid --bad-freqs --out 58-Sceloporus_complete_coords_annotated
+
+PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
+plink2 --bfile $PLINK --r2-unphased inter-chr --ld-window-kb 50 --ld-window-r2 0.6 --allow-extra-chr --autosome-num 95 --const-fid --bad-freqs --out plink2_r2
+
+PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
+# When a limited window report is requested, every pair of variants with at least (10-1) variants between them, or more than 1000 kilobases apart, is ignored. You can change the first threshold with --ld-window, and the second threshold with --ld-window-kb.
+plink --bfile $PLINK --r2 --ld-window 2 --ld-window-kb 50 --ld-window-r2 0.6 --allow-extra-chr --autosome-num 95 --const-fid --out plink_r2
+
+### Because we can't calculate backwards correlations with plink2, let's generate an LD-pruning report using plink1.9 and see how that compares

@@ -29,23 +29,39 @@ source(here("analysis", "adaptive", "genomic_offset.R"))
 source(here("general_functions.R"))
 ```
 
+## Specify model to examine
+
+```{r}
+gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
+
+if (gea_method == "bio1ndvi") output_path = here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi") # for BIO1 + NDVI
+if (gea_method == "pca") output_path = here("analysis", "adaptive", "outputs", "RDA_PCA") # for rasterPCA env layers
+```
+
 ## 1. Get input files
 
 ```{r}
-dat_mod <- import_rda(output_path = here("analysis", "adaptive", "outputs"), suffix = "mod", rds_obj = TRUE)
-dat_mod_pc <- import_rda(output_path = here("analysis", "adaptive", "outputs"), suffix = "modPCs", rds_obj = TRUE)
+dat_mod <- import_rda(output_path = output_path, suffix = "mod", rds_obj = TRUE)
+dat_mod_pc <- import_rda(output_path = output_path, suffix = "modPCs", rds_obj = TRUE)
 
 # Retrieve coords for samples on which RDA was run
-coords <- read_tsv(here("analysis", "adaptive", "outputs", "RDA_genes_coords.txt"), col_names = TRUE)
-
-# Get env data
+coords <- read_tsv(here(output_path, "RDA_genes_coords.txt"), col_names = TRUE)
 ca <- get_ca()
-env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
-names(env_pres) <- paste("env_", names(env_pres), sep = "")
-env_fut <- raster::stack(here("data", "env", "future", "CHELSA_2041-2070_ipsl-cm6a-lr_ssp585_V.2.1_pca.tif"))
-names(env_fut) <- names(env_pres)
+```
 
-# Standardize environmental variables and make into dataframe
+## 2. Select env layers
+
+```{r}
+if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = TRUE)
+if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = TRUE)
+
+# Check that above worked
+names(envlayers$env_pres)
+names(envlayers$env_fut)
+```
+
+```{r}
+# Get scaled and centered info
 env <- terra::extract(env_pres, coords %>% dplyr::select(x, y))
 env <- scale(env, center = TRUE, scale = TRUE)
 # Recover scaling coefficients
@@ -55,14 +71,21 @@ center_env <- attr(env, 'scaled:center')
 
 ## 2. Genomic offset
 
-Two methods used to calculate offset are provided; the first, "loadings", uses TODO and the second, "predict", uses TODO. The function outputs a list of five 
+The `genomic_offset()` function outputs a list of five 
 objects: (1) Proj_pres, which is the present projection (equivalent to the adaptive index); (2) Proj_fut, which projects the adaptive index values on to future
 environmental layers, (3) Proj_offset, which is the genonic offset (i.e., difference between Proj_pres and Proj_fut), (4) Proj_offset_global, which is the global
 offset if multiple future environmental time points were provided, and (5) weights, which are the eigenvalues from the RDA model and are how the RDA axes values 
 were weighted.
 
 ```{r}
-offset <- genomic_offset(loadings = dat_mod$scaledload, biplot = dat_mod$biplot, eig = dat_mod$eig, K = ncol(dat_mod$biplot), env_pres, env_fut, range = NULL, 
+# Change layer names to keep consisent with rownames in RDA model
+if (names(envlayers$env_pres) != row.names(dat_mod$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+# if (names(envlayers$env_pres) != row.names(dat_mod_pc$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+
+# Check that above worked
+all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
+
+offset <- genomic_offset(loadings = dat_mod$scaledload, biplot = dat_mod$biplot, eig = dat_mod$eig, K = ncol(dat_mod$biplot), env_pres = envlayers$env_pres, env_fut = envlayers$env_fut, range = NULL, 
                          method = "loadings", scale_env, center_env, mod = NULL)
 
 offset_pc <- genomic_offset(loadings = dat_mod_pc$scaledload, biplot = dat_mod_pc$biplot, eig = dat_mod_pc$eig, K = ncol(dat_mod_pc$biplot), env_pres, env_fut, range = NULL, 

@@ -15,23 +15,36 @@ sig = args[5]             # if `snp_set = "rdadapt"`, alpha threshold to detect 
 outpath = args[6]         # path to output file dir
 output_format = args[7]		# whether to output separate bed files for pruned out SNPs vs outlier ones; options are "separate" or "together"
 
-### TROUBLESHOOTING - FROM APB
+### TROUBLESHOOTING ----------------------------------------------------------------------------------------
 
-r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
-r %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
-rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
-rdasig01 %>% filter(locus == "chr1_3757363_G_A" | locus == "chr1_3757379_T_C")
+# rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
+# rdasig01 %>% filter(locus == "chr1_3757363_G_A" | locus == "chr1_3757379_T_C")
 
 prunein <- read_table(here("data", "ccgp_data", "58-Sceloporus_0.6.prune.in"), col_names = "snp")
 nrow(prunein)
-# [1] 49306298
+# [1] 49306298 / now it's 33,109,285
 pruneout <- read_table(here("data", "ccgp_data", "58-Sceloporus_0.6.prune.out"), col_names = "snp")
 nrow(pruneout)
-# [1] 19670579
+# [1] 19670579 / now it's 38,045,539
+# Check for any overlap between pruned files (shouldn't be any)
 all(prunein$snp %in% pruneout$snp)
 # [1] FALSE
 prunein %>% filter(snp == "chr1_3757363_G_A" | snp == "chr1_3757379_T_C") # both are there
 pruneout %>% filter(snp == "chr1_3757363_G_A" | snp == "chr1_3757379_T_C") # neither is there
+
+# Check pruned files against the RDA output (which should have all SNPs present in the annotated/complete coords 0.6 vcf)
+rdasig <- read_csv(here("analysis", "anne", "outputs", "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
+nrow(rdasig) # 33,015,136
+rdasig01
+
+head(rdasig)
+
+### Different r pruning options
+rOG <- data.table::fread(here("analysis", "gea", "outputs", "snp_r2.ld"))
+rOG %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
+
+rf <- data.table::fread(here("analysis", "anne", "outputs", "plink_r2.ld"))
+rf %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
 
 ### 
 
