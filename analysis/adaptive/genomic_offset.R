@@ -24,9 +24,9 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
   }
 
   # Deal with future layer naming
-  env_fut_1 <- raster::subset(env_fut, c(1,3))
+  env_fut_1 <- raster::subset(env_fut, c(1,3)) # BIO1 ssp125 & NDVI
   names(env_fut_1) <- names(env_pres)
-  env_fut_2 <- raster::subset(env_fut, 2:3)
+  env_fut_2 <- raster::subset(env_fut, 2:3) # BIO ssp585 & NDVI
   names(env_fut_2) <- names(env_pres)
 
   # Formatting and scaling environmental rasters for projection
@@ -92,7 +92,7 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
   Proj_offset_fut_2 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_2[[x]])[,-c(1,2)]))
   Proj_offset_fut_2 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_2[,x] * weights[x])))
 
-  # Predict a global genetic offset, incorporating the K first axes weighted by their eigenvalues
+  # Predict a global genetic offset, incorporating the first K axes weighted by their eigenvalues
   ras_1 <- Proj_offset_1[[1]]
   ras_1[!is.na(ras_1)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_1[x,]), method = "euclidean")))
   names(ras_1) <- "Global_offset_1"

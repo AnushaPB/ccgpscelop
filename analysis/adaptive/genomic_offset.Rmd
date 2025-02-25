@@ -79,8 +79,8 @@ offset if multiple future environmental time points were provided, and (5) weigh
 were weighted.
 
 ```{r}
-# Change layer names to keep consisent with rownames in RDA model
-if (names(envlayers$env_pres) != row.names(dat_mod$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+# Change layer names to keep consistent with rownames in RDA model
+if (all(names(envlayers$env_pres) != row.names(dat_mod$biplot))) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
 # if (names(envlayers$env_pres) != row.names(dat_mod_pc$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
 
 # Check that above worked

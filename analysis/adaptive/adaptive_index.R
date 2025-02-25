@@ -25,21 +25,22 @@ import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, y
 
   if (future) {
     cap_model <- "GFDL-ESM4"
+    lowerc_model <- "gfdl-esm4"
     # if (model == "ipsl-cm6a-lr") cap_model <- "IPSL-CM6A-LR"
     RCP = c(2.6, 8.5)
     ssp = c("ssp126", "ssp585")
 
     if (type == "rasterPCs") {
-      env_fut_1 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[1], "_V.2.1_pca.tif"))
-      env_fut_2 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp[2], "_V.2.1_pca.tif"))
+      env_fut_1 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
+      env_fut_2 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
       env_fut <- raster::stack(env_fut_1, env_fut_2)
     }
 
     if (type == "ind_layers") {
-      bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp[1], "_V.2.1.tif"))
+      bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
       cropped_1 <- terra::crop(terra::rast(bio1_fut_1), terra::ext(terra::rast(ndvi)))
       resamp_1 <- terra::resample(cropped_1, terra::rast(ndvi))
-      bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/", years, "/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_", years, "_", model, "_", ssp[2], "_V.2.1.tif"))
+      bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
       cropped_2 <- terra::crop(terra::rast(bio1_fut_2), terra::ext(terra::rast(ndvi)))
       resamp_2 <- terra::resample(cropped_2, terra::rast(ndvi))
 
@@ -212,7 +213,6 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
   # Bind together points from both RDA axes
   TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layer]))
   colnames(TAB_RDA)[3] <- "value"
-  # TODO iteratively do below eventually
   # Add another column to df that specifies which RDA axis values are coming from
   if (n_layer == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
   if (n_layer == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
