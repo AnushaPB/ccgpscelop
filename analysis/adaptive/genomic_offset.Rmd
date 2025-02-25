@@ -17,6 +17,7 @@ knitr::opts_chunk$set(
 library(algatr)
 library(here)
 library(tidyverse)
+library(tidyterra)
 library(RColorBrewer)
 library(sf)
 library(terra)
@@ -32,7 +33,7 @@ source(here("general_functions.R"))
 ## Specify model to examine
 
 ```{r}
-gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
+gea_method = "pca" # "pca" or "bio1ndvi"
 
 if (gea_method == "bio1ndvi") output_path = here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi") # for BIO1 + NDVI
 if (gea_method == "pca") output_path = here("analysis", "adaptive", "outputs", "RDA_PCA") # for rasterPCA env layers
@@ -149,4 +150,79 @@ Plotting offset over multiple time periods:
 #   theme_bw(base_size = 11, base_family = "Times") +
 #   theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11)) +
 #   ggtitle(paste0(species, " genomic offset"))
+```
+
+```{r}
+offset <- terra::rast(here(output_path, "offset_load.tif"))
+# Count number of layers
+n_layers <- terra::nlyr(offset)
+# Max number of layers to plot is 3, so adjust n_layers accordingly
+if (n_layers > 3) {
+  n_layers <- 3
+}
+# Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
+offsetRGB <- stack_to_rgb(offset)
+
+# If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
+  # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
+  if (n_layers < 3) {
+    warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
+    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
+    white_raster <- offsetRGB[[1]] * 0 + 255
+  }
+
+  # If n_layers = 2, you end up making a bivariate map
+  if (n_layers == 2) {
+    offsetRGB <- c(offsetRGB, white_raster)
+  }
+
+  # If n_layers = 1, you end up making a univariate map
+  if (n_layers == 1) {
+    offsetRGB <- c(offsetRGB, white_raster, white_raster)
+  }
+
+# terra::plotRGB(offsetRGB, r = 1, g = 2, b = 3)
+ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster_rgb(data = offsetRGB, r = 1, g = 2, b = 3) +
+  theme_map()
+
+# gdm_plot_vars(pcaSamp, pcaRast, pcaRastRGB, coords, x = "PC1", y = "PC2", scl = scl, display_axes = display_axes)
+
+# Plot points only, colorized based on RGB offset value
+pts <- terra::extract(offsetRGB, coords %>% dplyr::select(x, y))
+
+pts <- bind_cols(pts, coords)
+
+ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_point(data = pts %>% pivot_longer(cols = offset_load_1:offset_load_3, names_to = "axis", values_to = "offset_value"), aes(x = x, y = y, color = offset_value), size = 2) +
+  scale_color_viridis_c(option = "D") +
+  theme_map() +
+  facet_grid(~axis)
+
+env_pcs <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+fut_pcs_26 <- terra::rast(here("data", "env", "future", "CHELSA_2071-2100_gfdl-esm4_ssp126_V.2.1_pca.tif"))
+fut_pcs_85 <- terra::rast(here("data", "env", "future", "CHELSA_2071-2100_gfdl-esm4_ssp585_V.2.1_pca.tif"))
+
+ggplot() +
+  geom_spatraster(data = env_pcs) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  facet_wrap(~lyr) +
+  theme_map() +
+  ggtitle("Present env PCs")
+
+ggplot() +
+  geom_spatraster(data = fut_pcs_26) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  facet_wrap(~lyr) +
+  theme_map() +
+  ggtitle("Future env PCs (RCP 2.6)")
+
+ggplot() +
+  geom_spatraster(data = fut_pcs_85) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  facet_wrap(~lyr) +
+  theme_map() +
+  ggtitle("Future env PCs (RCP 8.5)")
 ```

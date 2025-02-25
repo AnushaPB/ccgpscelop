@@ -97,6 +97,11 @@ writeRaster(ai_pc_rs, here(output_path, "adapind_load_PCs.tif"), overwrite = TRU
 ## 4. Build maps of adaptive index
 
 ```{r}
+# ai_rs <- raster::stack(here(output_path, "adapind_load.tif"))
+# ai_pc_rs <- raster::stack(here(output_path, "adapind_load_PCs.tif"))
+
+# ai <- list(ai_rs[[1]], air)
+
 # No PC correction
 p_ai <- plot_adaptive(Proj_data = ai, K = length(ai), bkg = ca, to_mask = FALSE, index_name = "Adaptive index", title = "RDA adaptive index, loadings method")
 

@@ -47,7 +47,7 @@ import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, y
       env_fut <- raster::stack(raster::raster(resamp_1), raster::raster(resamp_2), ndvi)
     }
   }
-  
+
   if (!future) env_fut <- NULL
 
   return(list(env_pres = env_pres, env_fut = env_fut))
@@ -179,10 +179,11 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method
 #' @param to_mask whether projection needs to be cropped and masked to bkg (defaults to FALSE); only works if Proj_data is raster
 #' @param index_name name of index that's being plotted (defaults to "Adaptive index")
 #' @param title title for plot
+#' @param style style for plotting; options are "original" from Capblancq paper, "basic" (default), or "rainbow" for rainbow plots with biplot legend
 #'
 #' @return ggplot2 plot object
 #' @export
-plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index", title) {
+plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index", title, style = "basic") {
   # if (inherits(Proj_data, "SpatRaster") | inherits(Proj_data, "Raster")) {
   #   if (to_mask) {
   #     for (i in 1:n_layers) {
@@ -216,23 +217,55 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
   if (n_layer == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
   if (n_layer == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
   if (n_layer == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
-  
+
   write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
 
-  # Make plot
-  ggplot2::ggplot(data = TAB_RDA) +
-    ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
-    ggplot2::geom_raster(aes(x = x, y = y, fill = cut(value, breaks = seq(0, 1, length.out = 10), include.lowest = T))) +
-    # scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
-    ggplot2::scale_fill_viridis_d(alpha = 0.8, direction = -1, labels = c("Negative","","","","Intermediate","","","","Positive")) +
-    ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
-    ggplot2::xlab("Longitude") +
-    ggplot2::ylab("Latitude") +
-    # ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
-    ggplot2::facet_grid(~variable) +
-    cowplot::theme_map() +
-    ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11)) +
-    ggplot2::ggtitle(paste0(title))
+  # Make plot, style is from original Capblancq paper
+  if (style == "original") {
+    ggplot2::ggplot(data = TAB_RDA) +
+      ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
+      ggplot2::geom_raster(aes(x = x, y = y, fill = cut(value, breaks = seq(0, 1, length.out = 10), include.lowest = T))) +
+      scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
+      ggplot2::scale_fill_viridis_d(alpha = 0.8, direction = -1, labels = c("Negative","","","","Intermediate","","","","Positive")) +
+      ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
+      ggplot2::xlab("Longitude") +
+      ggplot2::ylab("Latitude") +
+      ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+      ggplot2::facet_grid(~variable) +
+      cowplot::theme_map() +
+      ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+  }
+
+  if (style == "basic") {
+    # Make plot, custom style
+    ggplot2::ggplot(data = TAB_RDA) +
+      ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
+      ggplot2::geom_raster(aes(x = x, y = y, fill = value)) +
+      ggplot2::scale_fill_viridis_c(alpha = 0.8, direction = -1) +
+      ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
+      ggplot2::xlab("Longitude") +
+      ggplot2::ylab("Latitude") +
+      ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+      ggplot2::facet_grid(~variable) +
+      cowplot::theme_map() +
+      ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+  }
+
+  # if (style == "rainbow") {
+  #   # Make plot, custom style
+  #   ggplot2::ggplot(data = TAB_RDA) +
+  #     ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
+  #     ggplot2::geom_raster(aes(x = x, y = y, fill = value)) +
+  #     ggplot2::scale_fill_viridis_c(alpha = 0.8, direction = -1) +
+  #     ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
+  #     ggplot2::xlab("Longitude") +
+  #     ggplot2::ylab("Latitude") +
+  #     ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+  #     ggplot2::facet_grid(~variable) +
+  #     cowplot::theme_map() +
+  #     ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+  # }
+
 }
 
 #' Scale a raster stack from 0 to 255
