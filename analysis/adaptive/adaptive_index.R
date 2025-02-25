@@ -2,13 +2,10 @@
 #'
 #' @param type options are "rasterPCs" or "ind_layers" for BIO1 + NDVI
 #' @param future whether to also import future env layers (defaults to FALSE)
-#' @param model if `future = TRUE`, model name (e.g., "ipsl-cm6a-lr")
-#' @param years if `future = TRUE`, years for future projections (e.g., "2041-2070")
-#' @param RCP if `future = TRUE`, RCP to import (e.g., 8.5)
 #'
 #' @return
 #' @export
-import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, years = NULL, RCP = NULL) {
+import_env_files <- function(type = "rasterPCs", future = FALSE) {
   if (type == "rasterPCs") {
     env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
     names(env_pres) <- paste("env_", names(env_pres), sep = "")
@@ -36,20 +33,15 @@ import_env_files <- function(type = "rasterPCs", future = FALSE, model = NULL, y
     }
 
     if (type == "ind_layers") {
-      # bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
-      # cropped_1 <- terra::crop(terra::rast(bio1_fut_1), terra::ext(terra::rast(ndvi)))
-      # resamp_1 <- terra::resample(cropped_1, terra::rast(ndvi))
-      # bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
-      # cropped_2 <- terra::crop(terra::rast(bio1_fut_2), terra::ext(terra::rast(ndvi)))
-      # resamp_2 <- terra::resample(cropped_2, terra::rast(ndvi))
-      # Stack with present NDVI layer
-      # env_fut <- raster::stack(raster::raster(resamp_1), raster::raster(resamp_2), ndvi)
+      bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
+      cropped_1 <- terra::crop(terra::rast(bio1_fut_1), terra::ext(resamp_ndvi)) # is this necessary?
+      resamp_1 <- terra::resample(cropped_1, resamp_ndvi)
 
-      # Just do one ssp
-      bio1_fut <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp, "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp, "_V.2.1.tif"))
-      cropped <- terra::crop(terra::rast(bio1_fut), terra::ext(resamp_ndvi)) # is this necessary?
-      resamp <- terra::resample(cropped, resamp_ndvi)
-      env_fut <- raster::stack(raster::raster(resamp), raster::raster(resamp_ndvi))
+      bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
+      cropped_2 <- terra::crop(terra::rast(bio1_fut_2), terra::ext(resamp_ndvi)) # is this necessary?
+      resamp_2 <- terra::resample(cropped_2, resamp_ndvi)
+
+      env_fut <- raster::stack(raster::raster(resamp_1), raster::raster(resamp_2), raster::raster(resamp_ndvi))
     }
   }
 
