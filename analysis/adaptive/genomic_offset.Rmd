@@ -33,7 +33,7 @@ source(here("general_functions.R"))
 ## Specify model to examine
 
 ```{r}
-gea_method = "pca" # "pca" or "bio1ndvi"
+gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
 
 if (gea_method == "bio1ndvi") output_path = here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi") # for BIO1 + NDVI
 if (gea_method == "pca") output_path = here("analysis", "adaptive", "outputs", "RDA_PCA") # for rasterPCA env layers
@@ -153,7 +153,11 @@ Plotting offset over multiple time periods:
 ```
 
 ```{r}
-offset <- terra::rast(here(output_path, "offset_load.tif"))
+offset_26 <- terra::rast(here(output_path, "offset_load_RCP26.tif"))
+# offset_26_g <- terra::rast(here(output_path, "offset_load_global_RCP26.tif"))
+
+offset = offset_26
+
 # Count number of layers
 n_layers <- terra::nlyr(offset)
 # Max number of layers to plot is 3, so adjust n_layers accordingly
@@ -184,45 +188,57 @@ offsetRGB <- stack_to_rgb(offset)
 # terra::plotRGB(offsetRGB, r = 1, g = 2, b = 3)
 ggplot() +
   geom_sf(data = ca, fill = "lightgrey") +
-  geom_spatraster_rgb(data = offsetRGB, r = 1, g = 2, b = 3) +
+  geom_spatraster_rgb(data = offsetRGB, r = 3, g = 2, b = 1) +
   theme_map()
+
+ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = offset_26) +
+  theme_map() +
+  facet_wrap(~lyr) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(440, 770))
+
+ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = offset_26[[2]]) +
+  theme_map() +
+  # facet_wrap(~lyr) +
+  scale_fill_viridis_c(na.value = "transparent")
 
 # gdm_plot_vars(pcaSamp, pcaRast, pcaRastRGB, coords, x = "PC1", y = "PC2", scl = scl, display_axes = display_axes)
 
 # Plot points only, colorized based on RGB offset value
 pts <- terra::extract(offsetRGB, coords %>% dplyr::select(x, y))
-
 pts <- bind_cols(pts, coords)
 
 ggplot() +
   geom_sf(data = ca, fill = "lightgrey") +
-  geom_point(data = pts %>% pivot_longer(cols = offset_load_1:offset_load_3, names_to = "axis", values_to = "offset_value"), aes(x = x, y = y, color = offset_value), size = 2) +
+  geom_point(data = pts %>% pivot_longer(cols = 2:4, names_to = "axis", values_to = "offset_value"), aes(x = x, y = y, color = offset_value), size = 2) +
   scale_color_viridis_c(option = "D") +
   theme_map() +
   facet_grid(~axis)
+
+# Plot points only, colorized by RDA1 value
+fut_bio1_26 <- terra::rast(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies", "/2071-2100/GFDL-ESM4/ssp126/bio/", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1.tif"))
+fut_bio1_85 <- terra::rast(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies", "/2071-2100/GFDL-ESM4/ssp585/bio/", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1.tif"))
+
+# resamp <- terra::resample(fut_bio1_26, offset_26)
+crop <- terra::crop(fut_bio1_26, ca, mask = TRUE)
+pts <- terra::extract(offset_26[[1]], coords %>% dplyr::select(x, y))
+pts <- bind_cols(pts, coords)
+
+ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = crop) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  geom_point(data = pts, aes(x = x, y = y, color = offset_load_RCP26_1), size = 2) +
+  scale_color_viridis_c(option = "A") +
+  theme_map()
 
 env_pcs <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
 fut_pcs_26 <- terra::rast(here("data", "env", "future", "CHELSA_2071-2100_gfdl-esm4_ssp126_V.2.1_pca.tif"))
 fut_pcs_85 <- terra::rast(here("data", "env", "future", "CHELSA_2071-2100_gfdl-esm4_ssp585_V.2.1_pca.tif"))
 
-ggplot() +
-  geom_spatraster(data = env_pcs) +
-  scale_fill_viridis_c(na.value = "transparent") +
-  facet_wrap(~lyr) +
-  theme_map() +
-  ggtitle("Present env PCs")
+# Plot points against future BIO1 for RCP2.6 "Annual mean temperature"
 
-ggplot() +
-  geom_spatraster(data = fut_pcs_26) +
-  scale_fill_viridis_c(na.value = "transparent") +
-  facet_wrap(~lyr) +
-  theme_map() +
-  ggtitle("Future env PCs (RCP 2.6)")
-
-ggplot() +
-  geom_spatraster(data = fut_pcs_85) +
-  scale_fill_viridis_c(na.value = "transparent") +
-  facet_wrap(~lyr) +
-  theme_map() +
-  ggtitle("Future env PCs (RCP 8.5)")
 ```

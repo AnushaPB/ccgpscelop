@@ -17,7 +17,99 @@ library(sf)
 library(terra)
 library(raster)
 library(cowplot)
+
+source(here("analysis", "adaptive", "adaptive_index.R"))
+source(here("general_functions.R"))
 ```
+
+## 1. Get data files
+
+```{r}
+# Retrieve coords for samples on which RDA was run
+coords <- get_coords()
+ca <- get_ca()
+```
+
+## 2. Get present and future env layers for rasterPCA and BIO1+NDVI
+
+```{r}
+pca_envlayers <- import_env_files(type = "rasterPCs", future = TRUE)
+bio1ndvi_envlayers <- import_env_files(type = "ind_layers", future = TRUE)
+```
+
+## 3. Compare BIO1 layers
+
+```{r}
+# Mask future to present
+mask_26 <- terra::mask(terra::rast(bio1ndvi_envlayers$env_fut$CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1),
+            terra::rast(bio1ndvi_envlayers$env_pres$BIO1))
+mask_85 <- terra::mask(terra::rast(bio1ndvi_envlayers$env_fut$CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1),
+            terra::rast(bio1ndvi_envlayers$env_pres$BIO1))
+
+# minbio1 = minValue(bio1ndvi_envlayers$env_pres$BIO1)
+# maxbio1 = maxValue(raster::stack(mask_85))
+
+p_bio1_pres <- ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = terra::rast(bio1ndvi_envlayers$env_pres$BIO1)) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(-9, 31)) +
+  theme_map() +
+  ggtitle("BIO1, present")
+
+p_bio1_fut26 <- ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = mask_26) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(-9, 31)) +
+  theme_map() +
+  ggtitle("BIO1, 2071-2100 (RCP2.6)")
+
+p_bio1_fut85 <- ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = mask_85) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(-9, 31)) +
+  theme_map() +
+  ggtitle("BIO1, 2071-2100 (RCP8.5)")
+
+plot_grid(p_bio1_pres, p_bio1_fut26, p_bio1_fut85, nrow = 1)
+```
+
+## 3. Compare rasterPCs
+
+```{r}
+names(pca_envlayers$env_fut) <- c("env_PC1_RCP2.6", "env_PC2_RCP2.6", "env_PC3_RCP2.6",
+                                  "env_PC1_RCP8.5", "env_PC2_RCP8.5", "env_PC3_RCP8.5")
+
+p_pcs_pres <-
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = terra::rast(pca_envlayers$env_pres)) +
+  scale_fill_viridis_c(na.value = "transparent") +
+  theme_map() +
+  ggtitle("rasterPCs, present") +
+  facet_wrap(~lyr)
+
+p_pcs_fut26 <-
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = terra::rast(pca_envlayers$env_fut[[1:3]])) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(-12450, 32000)) +
+  theme_map() +
+  ggtitle("rasterPCs, 2071-2100 (RCP2.6)") +
+  facet_wrap(~lyr)
+
+p_pcs_fut85 <- 
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = terra::rast(pca_envlayers$env_fut[[4:6]])) +
+  scale_fill_viridis_c(na.value = "transparent", limits = c(-14750, 36000)) +
+  theme_map() +
+  ggtitle("rasterPCs, 2071-2100 (RCP8.5)") +
+  facet_wrap(~lyr)
+
+plot_grid(p_pcs_pres, p_pcs_fut26, p_pcs_fut85, nrow = 3)
+```
+
+## Compare RCPs and models
 
 ## 1. Get present env layers
 
