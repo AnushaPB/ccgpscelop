@@ -1,3 +1,5 @@
+# Import/export functions -------------------------------------------------
+
 #' Import environmental layers of choice for RDA, adaptive index, or genomic offset calculations
 #'
 #' @param type options are "rasterPCs" or "ind_layers" for BIO1 + NDVI
@@ -103,6 +105,9 @@ import_rda <- function(output_path, suffix, rds_obj = FALSE) {
   return(list(mod = mod, biplot = biplot, eig = eig, scaledload = scaled_loadings, unscaledload = unscaled_loadings))
 }
 
+
+# Adaptive index ----------------------------------------------------------
+
 #' Project adaptive component turnover across the landscape
 #' Code adapted from Capblancq & Forester (2021) https://doi.org/10.1111/2041-210X.13722
 #' GitHub repo available here: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/src/adaptive_index.R
@@ -168,6 +173,9 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method
   # Returning projections for current climates for each RDA axis
   return(Proj_pres = Proj_pres)
 }
+
+
+# Plotting AI/offset ------------------------------------------------------
 
 #' Build projected map of RDA results (e.g., RDA adaptive index)
 #'
@@ -378,6 +386,9 @@ raster_to_rgb <- function(r) {
   }
   return(r)
 }
+
+
+# RDA biplot --------------------------------------------------------------
 
 #' Make a biplot of RDA results
 #'

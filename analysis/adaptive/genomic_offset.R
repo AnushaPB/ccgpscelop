@@ -145,10 +145,45 @@ offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
 #'
 #' @returns
 #' @export
-plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
+plot_offset <- function(env, bkg, plot_type = "rainbow", scales = "free", coords) {
+  # Count number of layers
+  n_layers <- terra::nlyr(env)
+
+  if (plot_type == "normal") {
+    if (scales == "standardized") {
+      ggplot() +
+        geom_sf(data = bkg, fill = "lightgrey") +
+        geom_spatraster(data = env) +
+        scale_fill_viridis_c(na.value = "transparent") +
+        facet_grid(~lyr) +
+        theme_map()
+    }
+    if (scales == "free") {
+      p1 <- ggplot() +
+        geom_sf(data = bkg, fill = "lightgrey") +
+        geom_spatraster(data = env[[1]]) +
+        scale_fill_viridis_c(option = "B", na.value = "transparent") +
+        theme_map()
+      p2 <- ggplot() +
+        geom_sf(data = bkg, fill = "lightgrey") +
+        geom_spatraster(data = env[[2]]) +
+        scale_fill_viridis_c(option = "B", na.value = "transparent") +
+        theme_map()
+      if (n_layers == 2) {
+        plot_grid(p1, p2, nrow = 1)
+      }
+      if (n_layers == 3) {
+        p3 <- ggplot() +
+          geom_sf(data = bkg, fill = "lightgrey") +
+          geom_spatraster(data = env[[3]]) +
+          scale_fill_viridis_c(option = "B", na.value = "transparent") +
+          theme_map()
+        plot_grid(p1, p2, p3, nrow = 1)
+      }
+    }
+  }
+
   if (plot_type == "rainbow") {
-    # Count number of layers
-    n_layers <- terra::nlyr(env)
     # Max number of layers to plot is 3, so adjust n_layers accordingly
     if (n_layers > 3) {
       n_layers <- 3
@@ -173,28 +208,36 @@ plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
     if (n_layers == 1) {
       offsetRGB <- c(offsetRGB, white_raster, white_raster)
     }
-    # terra::plotRGB(offsetRGB, r = 1, g = 2, b = 3)
     ggplot() +
       geom_sf(data = bkg, fill = "lightgrey") +
-      geom_spatraster_rgb(data = offsetRGB, r = 1, g = 2, b = 3) +
+      geom_spatraster_rgb(data = offsetRGB, r = 3, g = 2, b = 1) +
       theme_map()
   }
 
-  # gdm_plot_vars(pcaSamp, pcaRast, pcaRastRGB, coords, x = "PC1", y = "PC2", scl = scl, display_axes = display_axes)
-
   if (plot_type == "extracted") {
     # Plot points only, colorized based on RGB offset value
-    pts <- terra::extract(offsetRGB, coords)
-    pts <- bind_cols(pts, coords)
-
-    ggplot() +
-      geom_sf(data = bkg, fill = "lightgrey") +
-      # TODO deal with col naming later
-      geom_point(data = pts %>% pivot_longer(cols = offset_load_1:offset_load_3, names_to = "axis", values_to = "offset_value"),
-                 aes(x = x, y = y, color = offset_value), size = 2) +
-      scale_color_viridis_c(option = "D") +
-      theme_map() +
-      facet_grid(~axis)
+    if (n_layers == 2) {
+      pts <- terra::extract(offsetRGB[[1:2]], coords)
+      pts <- bind_cols(pts, coords)
+      ggplot() +
+        geom_sf(data = bkg, fill = "lightgrey") +
+        geom_point(data = pts %>% pivot_longer(cols = 2:3, names_to = "axis", values_to = "offset_value"),
+                   aes(x = x, y = y, color = offset_value), size = 3) +
+        scale_color_viridis_c(option = "A") +
+        theme_map() +
+        facet_grid(~axis)
+    }
+    if (n_layers == 3) {
+      pts <- terra::extract(offsetRGB, coords)
+      pts <- bind_cols(pts, coords)
+      ggplot() +
+        geom_sf(data = bkg, fill = "lightgrey") +
+        geom_point(data = pts %>% pivot_longer(cols = 2:4, names_to = "axis", values_to = "offset_value"),
+                   aes(x = x, y = y, color = offset_value), size = 3) +
+        scale_color_viridis_c(option = "A") +
+        theme_map() +
+        facet_grid(~axis)
+    }
   }
 
   if (plot_type == "original") {
@@ -213,4 +256,21 @@ plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
       theme_bw() +
       theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
   }
+}
+
+#' Plot vector loadings of env variables for offset maps
+#'
+#' @param env
+#'
+#' @returns
+#' @export
+#'
+#' @examples
+plot_offset_vars <- function(env) {
+  dat <- terra::as.data.frame(env, xy = TRUE, na.rm = TRUE)
+  pts <- terra::extract(env, coords)
+  ggplot() +
+    geom_point(data = dat, aes(x = offset_load_RCP85_1, y = offset_load_RCP85_2), alpha = 0.5) +
+    geom_point(data = pts, aes(x = offset_load_RCP85_1, y = offset_load_RCP85_2))
+
 }

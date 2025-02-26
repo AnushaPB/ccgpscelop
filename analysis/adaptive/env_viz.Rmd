@@ -275,3 +275,59 @@ resamp <- terra::resample(cropped, terra::rast(ndvi))
 # TODO something weird happening below
 # env_fut <- raster::stack(raster::raster(resamp), ndvi)
 ```
+
+## Compare BIO1 over time
+
+```{r}
+bio1ndvi_envlayers <- import_env_files(type = "ind_layers", future = TRUE)
+
+env_pres <- terra::rast(bio1ndvi_envlayers$env_pres)
+env_fut <- terra::rast(bio1ndvi_envlayers$env_fut)
+
+bio1_pres <- terra::subset(env_pres, "BIO1")
+bio1_fut_26 <- terra::subset(env_fut, "CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1")
+bio1_fut_85 <- terra::subset(env_fut, "CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1")
+
+
+diff_26pres = bio1_fut_26-bio1_pres
+diff_85pres = bio1_fut_85-bio1_pres
+diff_2685 = bio1_fut_85-bio1_fut_26
+diff_2685 <- terra::crop(diff_2685, bio1_pres, mask = TRUE)
+
+p1 <- ggplot() +
+  geom_spatraster(data = diff_26pres) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)") +
+  theme_map() +
+  ggtitle("BIO1 (RCP2.6) - BIO1 (present)")
+p2 <- ggplot() +
+  geom_spatraster(data = diff_2685) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)") +
+  theme_map() +
+  ggtitle("BIO1 (RCP8.5) - BIO1 (RCP2.6)")
+p3 <- ggplot() +
+  geom_spatraster(data = diff_85pres) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)") +
+  theme_map() +
+  ggtitle("BIO1 (RCP8.5) - BIO1 (present)")
+plot_grid(p1, p2, p3, nrow = 1)
+ggsave(here("analysis", "adaptive", "plots", "BIO1_diffs_free.pdf"), width = 12, height = 8)
+
+# Standardize scale limits
+p1 <- ggplot() +
+  geom_spatraster(data = diff_26pres) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)", limits = c(1.25, 4.3)) +
+  theme_map() +
+  ggtitle("BIO1 (RCP2.6) - BIO1 (present)")
+p2 <- ggplot() +
+  geom_spatraster(data = diff_2685) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)", limits = c(1.25, 4.3)) +
+  theme_map() +
+  ggtitle("BIO1 (RCP8.5) - BIO1 (RCP2.6)")
+p3 <- ggplot() +
+  geom_spatraster(data = diff_85pres) +
+  scale_fill_viridis_c(na.value = "transparent", name = "Temp change (°C)", limits = c(1.25, 4.3)) +
+  theme_map() +
+  ggtitle("BIO1 (RCP8.5) - BIO1 (present)")
+plot_grid(p1, p2, p3, nrow = 1)
+ggsave(here("analysis", "adaptive", "plots", "BIO1_diffs_stand.pdf"), width = 12, height = 8)
+```

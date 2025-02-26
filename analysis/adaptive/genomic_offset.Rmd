@@ -125,6 +125,7 @@ The `mask` argument is whether or not to crop (and resample) values based on the
 
 ```{r}
 offset_26 <- terra::rast(here(output_path, "offset_load_RCP26.tif"))
+offset_85 <- terra::rast(here(output_path, "offset_load_RCP85.tif"))
 
 # No pop structure correction
 p_pres <- plot_adaptive(offset$Proj_pres, K = length(offset$Proj_pres), bkg = ca, index_name = "Adaptive index", title = "Present values (loadings method)", to_mask = TRUE)
@@ -145,6 +146,20 @@ offset_plots_pc <- plot_grid(p_pres_pc, p_fut_pc, p_offset_pc, nrow = 3)
 pdf(here("analysis", "adaptive", "plots", "offset_plots_PCs.pdf"), width = 12, height = 8)
 offset_plots_pc
 dev.off()
+
+colors <- c(colorRampPalette(brewer.pal(11, "Spectral")[6:5])(2), colorRampPalette(brewer.pal(11, "Spectral")[4:3])(2), colorRampPalette(brewer.pal(11, "Spectral")[2:1])(3))
+ggplot() + 
+  geom_sf(data = bkg, fill = "lightgrey") +
+  geom_spatraster(data = offset_26) + 
+  scale_fill_viridis_c(option = "B", na.value = "transparent") +
+  geom_sf(data = bkg, fill = NA, size = 0.1) +
+  xlab("Longitude") + 
+  ylab("Latitude") +
+  facet_grid(~lyr) +
+  theme_map() +
+  # theme_bw() +
+  theme(panel.grid = element_blank(), plot.background = element_blank(), 
+        panel.background = element_blank(), strip.text = element_text(size = 11))
 ```
 
 Plotting offset over multiple time periods:
