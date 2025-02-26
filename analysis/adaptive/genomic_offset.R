@@ -86,7 +86,7 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
   # Weighing the current and future adaptive indices based on the eigenvalues of the associated axes
   Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
   Proj_offset_pres <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_pres[,x] * weights[x])))
-  
+
   Proj_offset_fut_1 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_1[[x]])[,-c(1,2)]))
   Proj_offset_fut_1 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_1[,x] * weights[x])))
 
@@ -135,142 +135,246 @@ offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
   return(Proj_list)
 }
 
-#' Plot genomic offset
-#' TODO deal with multiple time points
+#' Plot genomic offset maps
 #'
-#' @param env offset raster
-#' @param bkg background shape for plotting
-#' @param plot_type type of plot; options are "normal", "rainbow" for GDM-style plot, "extracted" if you want offset values extract for coords
-#' @param coords if `plot_type = "extracted"`, sampling coordinates to extract offset values from
+#' @param env offset rasters
+#' @param plot_type options are "basic", "rainbow", "extracted_vals", or "extracted_rainbow"
+#' @param bkg shape file for background plotting
+#' @param free_scales whether to have separate scales or not for RDA axes
+#' @param index_name name for legend
+#' @param viridis_option option for viridis coloring (defaults to "B")
 #'
 #' @returns
 #' @export
-plot_offset <- function(env, bkg, plot_type = "rainbow", scales = "free", coords) {
-  # Count number of layers
-  n_layers <- terra::nlyr(env)
+plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
+                        index_name = "Genomic offset", viridis_option = "B") {
+  if (inherits(env, "RasterStack")) env <- terra::rast(env)
+  n_layers = nlyr(env)
 
-  if (plot_type == "normal") {
-    if (scales == "standardized") {
-      ggplot() +
+  if (plot_type == "basic") {
+    if (!free_scales) {
+      p <- ggplot() +
         geom_sf(data = bkg, fill = "lightgrey") +
         geom_spatraster(data = env) +
-        scale_fill_viridis_c(na.value = "transparent") +
+        scale_fill_viridis_c(option = viridis_option, na.value = "transparent") +
+        geom_sf(data = bkg, fill = NA, size = 0.1) +
+        xlab("Longitude") +
+        ylab("Latitude") +
+        ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
         facet_grid(~lyr) +
-        theme_map()
+        theme_map() +
+        theme(panel.grid = element_blank(), plot.background = element_blank(),
+              panel.background = element_blank(), strip.text = element_text(size = 11))
     }
-    if (scales == "free") {
+    if (free_scales) {
       p1 <- ggplot() +
         geom_sf(data = bkg, fill = "lightgrey") +
         geom_spatraster(data = env[[1]]) +
-        scale_fill_viridis_c(option = "B", na.value = "transparent") +
-        theme_map()
+        scale_fill_viridis_c(option = viridis_option, na.value = "transparent") +
+        geom_sf(data = bkg, fill = NA, size = 0.1) +
+        xlab("Longitude") +
+        ylab("Latitude") +
+        ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+        theme_map() +
+        theme(panel.grid = element_blank(), plot.background = element_blank(),
+              panel.background = element_blank(), strip.text = element_text(size = 11))
       p2 <- ggplot() +
         geom_sf(data = bkg, fill = "lightgrey") +
         geom_spatraster(data = env[[2]]) +
-        scale_fill_viridis_c(option = "B", na.value = "transparent") +
-        theme_map()
-      if (n_layers == 2) {
-        plot_grid(p1, p2, nrow = 1)
-      }
+        scale_fill_viridis_c(option = viridis_option, na.value = "transparent") +
+        geom_sf(data = bkg, fill = NA, size = 0.1) +
+        xlab("Longitude") +
+        ylab("Latitude") +
+        ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+        theme_map() +
+        theme(panel.grid = element_blank(), plot.background = element_blank(),
+              panel.background = element_blank(), strip.text = element_text(size = 11))
+      if (n_layers == 2) p <- plot_grid(p1, p2, nrow = 1)
       if (n_layers == 3) {
         p3 <- ggplot() +
           geom_sf(data = bkg, fill = "lightgrey") +
           geom_spatraster(data = env[[3]]) +
-          scale_fill_viridis_c(option = "B", na.value = "transparent") +
-          theme_map()
-        plot_grid(p1, p2, p3, nrow = 1)
+          scale_fill_viridis_c(option = viridis_option, na.value = "transparent") +
+          geom_sf(data = bkg, fill = NA, size = 0.1) +
+          xlab("Longitude") +
+          ylab("Latitude") +
+          ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+          theme_map() +
+          theme(panel.grid = element_blank(), plot.background = element_blank(),
+                panel.background = element_blank(), strip.text = element_text(size = 11))
+        p <- plot_grid(p1, p2, p3, nrow = 1)
       }
     }
   }
 
-  if (plot_type == "rainbow") {
-    # Max number of layers to plot is 3, so adjust n_layers accordingly
-    if (n_layers > 3) {
-      n_layers <- 3
-    }
-    # Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
-    offsetRGB <- stack_to_rgb(env)
-
-    # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
-    # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
-    if (n_layers < 3) {
-      warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
-      # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
-      white_raster <- offsetRGB[[1]] * 0 + 255
-    }
-
-    # If n_layers = 2, you end up making a bivariate map
-    if (n_layers == 2) {
-      offsetRGB <- c(offsetRGB, white_raster)
-    }
-
-    # If n_layers = 1, you end up making a univariate map
-    if (n_layers == 1) {
-      offsetRGB <- c(offsetRGB, white_raster, white_raster)
-    }
-    ggplot() +
-      geom_sf(data = bkg, fill = "lightgrey") +
-      geom_spatraster_rgb(data = offsetRGB, r = 3, g = 2, b = 1) +
+  if (plot_type == "extracted_vals") {
+    ext <- terra::extract(env, coords, ID = FALSE, xy = TRUE)
+    tidy_ext <- ext %>% pivot_longer(cols = 1:n_layers, names_to = "axis", values_to = "value")
+    axis_names <- unique(tidy_ext$axis)
+    p1 <- ggplot() +
+      geom_sf(data = bkg, color = "lightgrey") +
+      geom_point(data = tidy_ext %>% filter(axis == axis_names[[1]]),
+                 aes(x = x, y = y, color = value), size = 3) +
+      scale_color_viridis_c(option = viridis_option, name = index_name) +
       theme_map()
-  }
+    p2 <- ggplot() +
+      geom_sf(data = bkg, color = "lightgrey") +
+      geom_point(data = tidy_ext %>% filter(axis == axis_names[[2]]),
+                 aes(x = x, y = y, color = value), size = 3) +
+      scale_color_viridis_c(option = viridis_option, name = index_name) +
+      theme_map()
 
-  if (plot_type == "extracted") {
-    # Plot points only, colorized based on RGB offset value
-    if (n_layers == 2) {
-      pts <- terra::extract(offsetRGB[[1:2]], coords)
-      pts <- bind_cols(pts, coords)
-      ggplot() +
-        geom_sf(data = bkg, fill = "lightgrey") +
-        geom_point(data = pts %>% pivot_longer(cols = 2:3, names_to = "axis", values_to = "offset_value"),
-                   aes(x = x, y = y, color = offset_value), size = 3) +
-        scale_color_viridis_c(option = "A") +
-        theme_map() +
-        facet_grid(~axis)
-    }
+    if (n_layers == 2) p <- plot_grid(p1, p2, nrow = 1)
     if (n_layers == 3) {
-      pts <- terra::extract(offsetRGB, coords)
-      pts <- bind_cols(pts, coords)
-      ggplot() +
-        geom_sf(data = bkg, fill = "lightgrey") +
-        geom_point(data = pts %>% pivot_longer(cols = 2:4, names_to = "axis", values_to = "offset_value"),
-                   aes(x = x, y = y, color = offset_value), size = 3) +
-        scale_color_viridis_c(option = "A") +
-        theme_map() +
-        facet_grid(~axis)
+      p3 <- ggplot() +
+        geom_sf(data = bkg, color = "lightgrey") +
+        geom_point(data = tidy_ext %>% filter(axis == axis_names[[3]]),
+                   aes(x = x, y = y, color = value), size = 3) +
+        scale_color_viridis_c(option = viridis_option, name = index_name) +
+        theme_map()
+      p <- plot_grid(p1, p2, p3, nrow = 1)
     }
   }
 
-  if (plot_type == "original") {
-    colors <- c(colorRampPalette(brewer.pal(11, "Spectral")[6:5])(2), colorRampPalette(brewer.pal(11, "Spectral")[4:3])(2), colorRampPalette(brewer.pal(11, "Spectral")[2:1])(3))
-    p <- ggplot() + 
-      geom_sf(data = bkg, fill = "lightgrey") +
-      geom_spatraster(data = env) + 
-      # scale_fill_viridis_c(option = "B") +
-      scale_fill_continuous(values = colors) +
-      # geom_raster(data = env, aes(x = x, y = y, fill = cut(Global_offset, breaks = seq(1, 8, by = 1), include.lowest = T)), alpha = 1) + 
-      # scale_fill_manual(values = colors, labels = c("1-2","2-3","3-4","4-5","5-6","6-7","7-8"), guide = guide_legend(title="Genomic offset", title.position = "top", title.hjust = 0.5, ncol = 1, label.position="right"), na.translate = F) +
-      geom_sf(data = bkg, fill = NA, size = 0.1) +
-      # coord_sf(xlim = c(-148, -98), ylim = c(35, 64), expand = FALSE) +
-      xlab("Longitude") + ylab("Latitude") +
-      facet_grid(~lyr) +
-      theme_bw() +
-      theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+  if (plot_type == "rainbow" | plot_type == "extracted_rainbow") {
+    rainbow <- rainbow_map_offset(Proj_data = Proj_data, bkg = bkg, n_layers = n_layers,
+                                  loadings = loadings, biplot_axes = biplot_axes, coords = coords)
+    if (plot_type == "rainbow") p <- plot_grid(rainbow$map, rainbow$vector_load, rel_widths = c(2, 1))
+    if (plot_type == "extracted_rainbow") {
+      p1 <- ggplot() +
+        geom_sf(data = bkg, color = "lightgrey") +
+        geom_point(data = coords, aes(x = x, y = y), fill = rainbow$pcacols, color = "black", pch = 21, size = 3) +
+        theme_map()
+      p <- plot_grid(p1, rainbow$vector_load, nrow = 1, rel_widths = c(2, 1))
+    }
   }
+  return(p)
 }
 
-#' Plot vector loadings of env variables for offset maps
+#' Build rainbow map with vector loadings for genomic offset
 #'
-#' @param env
+#' @param Proj_data
+#' @param bkg
+#' @param n_layers
+#' @param loadings
+#' @param biplot_axes
+#' @param coords
 #'
 #' @returns
 #' @export
-#'
-#' @examples
-plot_offset_vars <- function(env) {
-  dat <- terra::as.data.frame(env, xy = TRUE, na.rm = TRUE)
-  pts <- terra::extract(env, coords)
-  ggplot() +
-    geom_point(data = dat, aes(x = offset_load_RCP85_1, y = offset_load_RCP85_2), alpha = 0.5) +
-    geom_point(data = pts, aes(x = offset_load_RCP85_1, y = offset_load_RCP85_2))
+rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords) {
+  if (inherits(Proj_data, "RasterStack")) Proj_data <- terra::rast(Proj_data)
+  # Max number of layers to plot is 3, so adjust n_layers accordingly
+  if (n_layers > 3) {
+    n_layers <- 3
+  }
+  # Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
+  aiRGB <- stack_to_rgb(Proj_data)
 
+  # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
+  # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
+  if (n_layers < 3) {
+    warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
+    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
+    white_raster <- aiRGB[[1]] * 0 + 255
+  }
+
+  # If n_layers = 2, you end up making a bivariate map
+  if (n_layers == 2) {
+    aiRGB <- c(aiRGB, white_raster)
+  }
+
+  # If n_layers = 1, you end up making a univariate map
+  if (n_layers == 1) {
+    aiRGB <- c(aiRGB, white_raster, white_raster)
+  }
+  p_rainbow <- ggplot() +
+    geom_sf(data = bkg, fill = "lightgrey") +
+    geom_spatraster_rgb(data = aiRGB, r = 1, g = 2, b = 3) +
+    theme_map()
+  p_var <- plot_var_loadings_offset(Proj_data = Proj_data, loadings = loadings,
+                             biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
+  return(list(map = p_rainbow, vector_load = p_var$var_load_plot, pcacols = p_var$pcacols, rastRGB = aiRGB))
+}
+
+#' Plot variable vector loadings as legend for genomic offset rainbow map
+#'
+#' @param Proj_data
+#' @param loadings
+#' @param biplot_axes
+#' @param aiRGB
+#' @param coords
+#'
+#' @returns
+#' @export
+plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, coords) {
+  # TAB_inds <- data.frame(names = rownames(loadings %>% filter(score == "sites")), loadings %>% filter(score == "sites"))
+  TAB_var <- data.frame(names = rownames(loadings %>% filter(score == "biplot")), loadings %>% filter(score == "biplot"))
+
+  # Select axes for plotting
+  xax <- paste0("RDA", biplot_axes[1], "_offset")
+  yax <- paste0("RDA", biplot_axes[2], "_offset")
+  # Extract offset values for points
+  ext <- terra::extract(Proj_data, coords, ID = FALSE, xy = TRUE)
+  if (n_layers == 2) ext <- ext %>% rename("RDA1_offset" = 1, "RDA2_offset" = 2)
+  if (n_layers == 3) ext <- ext %>% rename("RDA1_offset" = 1, "RDA2_offset" = 2, "RDA3_offset" = 3)
+  ext_sub <- ext %>% dplyr::select(any_of(c(xax, yax)))
+  colnames(ext_sub) <- c("x", "y")
+  TAB_var_sub <- TAB_var %>% column_to_rownames(var = "label") %>% dplyr::select(c(xax, yax))
+  colnames(TAB_var_sub) <- c("x", "y")
+
+  # Scale the variable loadings for the arrows
+  # TODO can't do below with the offset values
+  TAB_var_sub$x <- TAB_var_sub$x * max(ext_sub$x) / stats::quantile(TAB_var_sub$x)[4]
+  TAB_var_sub$y <- TAB_var_sub$y * max(ext_sub$y) / stats::quantile(TAB_var_sub$y)[4]
+
+  # GET RGB VALS FOR SAMPLES-------------------------------------------------------------------------------------
+
+  # Get the colors from the rainbow plot for each ind
+  pts <- data.frame(terra::extract(aiRGB, coords, ID = FALSE))
+  # colnames(pts) <- colnames(xpc)
+  # Create vector of RGB colors for plotting
+  pcacols <- apply(pts, 1, create_rgb_vec)
+
+  # GET RGB VALS FOR ENTIRE RASTER-------------------------------------------------------------------------------------
+
+  # Get sample
+  s <- sample(1:terra::ncell(Proj_data), 10000)
+
+  # Get all PC values from raster and remove NAs
+  rastvals <- data.frame(terra::values(Proj_data))[s, ]
+  colnames(rastvals) <- c("x", "y")
+  rastvals <- rastvals[stats::complete.cases(rastvals), ]
+
+  # Get all RGB values from raster and remove NAs
+  rastvalsRGB <- data.frame(terra::values(aiRGB))[s, ]
+  colnames(rastvalsRGB) <- colnames(rastvals)
+  rastvalsRGB <- rastvalsRGB[stats::complete.cases(rastvalsRGB), ]
+
+  # Create vector of RGB colors for plotting
+  rastpcacols <- apply(rastvalsRGB, 1, create_rgb_vec)
+
+  # FINAL PLOT ----------------------------------------
+  # Plot points colored by RGB with variable vectors
+  # plot <-
+    ggplot() +
+    # geom_hline(yintercept = 0, linewidth = 0.5, col = "gray") +
+    # geom_vline(xintercept = 0, linewidth = 0.5, col = "gray") +
+    geom_point(data = rastvals, aes(x = x, y = y), col = rastpcacols, size = 4, alpha = 0.02) +
+    geom_point(data = ext_sub, aes(x = x, y = y), fill = pcacols, col = "black", pch = 21, size = 3) +
+    # geom_segment(data = TAB_var_sub, aes(xend = x, yend = y, x = 0, y = 0), color = "black", linewidth = 0.15, linetype = 1, arrow = ggplot2::arrow(length = ggplot2::unit(0.02, "npc"))) +
+    # ggrepel::geom_text_repel(data = TAB_var_sub, aes(x = x, y = y, label = rownames(TAB_var_sub)), size = 4) +
+    xlab(xax) +
+    ylab(yax) +
+    # Plot formatting
+    ggplot2::coord_equal() +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      panel.border = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_blank(),
+      panel.grid.minor = ggplot2::element_blank(),
+      axis.line = ggplot2::element_blank(),
+      aspect.ratio = 1
+    )
+  return(list(var_load_plot = plot, pcacols = pcacols))
 }

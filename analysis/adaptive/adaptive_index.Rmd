@@ -48,25 +48,22 @@ ca <- get_ca()
 We'll calculate adaptive index using both three env PCs and also just BIO1 + NDVI.
 
 ```{r}
-if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSE, model = NULL, years = NULL, RCP = NULL)
-if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = FALSE, model = NULL, years = NULL, RCP = NULL)
+if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSEL)
+if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = FALSE)
+# Rename env names to keep consistent with RDA results
+names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
 
 # Check that above worked
-names(envlayers$env_pres)
+all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
+# Check resolution
+all(res(envlayers$env_pres) == res(envlayers$env_fut))
 ```
 
-## 2. Calculate adaptive index
+## 3. Calculate adaptive index
 
 We're going to calculate the adaptive index for both RDA runs: one without population structure correction and the other with (using top 3 PCs). We'll calculate the adaptive index using the loadings method.
 
 ```{r}
-# Change layer names to keep consisent with rownames in RDA model
-if (names(envlayers$env_pres) != row.names(dat_mod$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
-if (names(envlayers$env_pres) != row.names(dat_mod_pc$biplot)) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
-
-# Check that above worked
-names(envlayers$env_pres) == row.names(dat_mod$biplot)
-
 # Adaptive index for RDA models without PC correction
 ai <- adaptive_index(biplot = dat_mod$biplot, K = ncol(dat_mod$biplot), env_pres = envlayers$env_pres, 
                      coords = coords %>% dplyr::select(x, y), range = NULL, 
@@ -96,34 +93,63 @@ writeRaster(ai_pc_rs, here(output_path, "adapind_load_PCs.tif"), overwrite = TRU
 
 ## 4. Build maps of adaptive index
 
+There are a number of options within the `plot_adaptive()` function, specified using the `plot_type` argument. The first is "basic" which shows the adaptive index (always scaled 0-1) for each RDA axis.
+
 ```{r}
-# ai_rs <- raster::stack(here(output_path, "adapind_load.tif"))
-# ai_pc_rs <- raster::stack(here(output_path, "adapind_load_PCs.tif"))
+ai_rs <- terra::rast(here(output_path, "adapind_load.tif"))
+# ai_pc_rs <- terra::rast(here(output_path, "adapind_load_PCs.tif"))
 
-# ai <- list(ai_rs[[1]], air)
+p_ai <- plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
+                      index_name = "Adaptive index", plot_type = "basic")
 
-# No PC correction
-p_ai <- plot_adaptive(Proj_data = ai, K = length(ai), bkg = ca, to_mask = FALSE, index_name = "Adaptive index", title = "RDA adaptive index, loadings method")
-
-# With PC correction
-p_ai_pc <- plot_adaptive(Proj_data = ai_pc, K = length(ai_pc), bkg = ca, to_mask = FALSE, title = "RDA adaptive index, loadings method")
-
-ai_plots <- plot_grid(p_ai, p_ai_pc, nrow = 2)
-
-if (gea_method == "pca") pdf(here("analysis", "adaptive", "plots", "gea_genes_pca_ai.pdf"), width = 12, height = 8)
-if (gea_method == "bio1ndvi") pdf(here("analysis", "adaptive", "plots", "gea_genes_bio1ndvi_ai.pdf"), width = 12, height = 8)
+# Export plot
+if (gea_method == "pca") pdf(here("analysis", "adaptive", "plots", "pca_ai.pdf"), width = 12, height = 8)
+if (gea_method == "bio1ndvi") pdf(here("analysis", "adaptive", "plots", "bio1ndvi_ai.pdf"), width = 12, height = 8)
 p_ai
 dev.off()
 ```
 
-## 5. Build adaptive index rainbow plots
+You can also have the function extract adaptive index values for your sampling coordinates by setting `plot_type = "extracted_vals"`.
 
 ```{r}
-ai_rs <- terra::rast(here(output_path, "adapind_load.tif"))
-p_rain <- rainbow_map(ai_rs, bkg = ca, loadings = dat_mod$scaledload, biplot_axes = c(1, 2), coords = coords %>% dplyr::select(x, y))
-p_rainbow <- plot_grid(p_rain$p_rainbow, p_rain$p_var, nrow = 1)
+plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
+              index_name = "Adaptive index", plot_type = "extracted_vals",
+              coords = coords %>% dplyr::select(x, y))
+```
+
+If you want the plotting done the way Capblancq & Forester did, you can do `plot_type = "capblancq"`.
+
+```{r}
+plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
+              index_name = "Adaptive index", plot_type = "capblancq",
+              coords = coords %>% dplyr::select(x, y))
+```
+
+## 5. Build rainbow adaptive index maps
+
+To combine across RDA axes, we can build 'rainbow' maps which assign each axis to a given R, G, or B value. This requires sampling coordinates and scaled loadings from the RDA model.
+
+```{r}
+# Import loadings in either of the following ways:
+# loadings = dat_mod$scaledload
+loadings = read_csv(here(output_path, "58-Sceloporus_RDA_scaledloadings_mod.csv"))
+
+p_rainbow <- plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
+                           index_name = "Adaptive index", plot_type = "rainbow",
+                           coords = coords %>% dplyr::select(x, y),
+                           loadings = loadings)
 
 if (gea_method == "bio1ndvi") pdf(here("analysis", "adaptive", "plots", "bio1ndvi_ai_rainbowmap.pdf"), width = 12, height = 8)
+if (gea_method == "pca") pdf(here("analysis", "adaptive", "plots", "pca_ai_rainbowmap.pdf"), width = 12, height = 8)
 p_rainbow
 dev.off()
+```
+
+Finally, you can extract values from your rainbow map for your sampling coordinates by setting `plot_type = "extracted_rainbow"`.
+
+```{r}
+plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE,
+              index_name = "Adaptive index", plot_type = "extracted_rainbow",
+              coords = coords %>% dplyr::select(x, y),
+              loadings = loadings)
 ```

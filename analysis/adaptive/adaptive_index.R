@@ -183,12 +183,17 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method
 #' @param bkg shapefile for plotting (e.g., California state)
 #' @param to_mask whether projection needs to be cropped and masked to bkg (defaults to FALSE); only works if Proj_data is raster
 #' @param index_name name of index that's being plotted (defaults to "Adaptive index")
-#' @param title title for plot
-#' @param style style for plotting; options are "original" from Capblancq paper, "basic" (default), or "rainbow" for rainbow plots with biplot legend
+#' @param plot_type style for plotting; options are "capblancq" from Capblancq paper, "basic" (default), "rainbow" for rainbow plots with biplot legend, "extracted_vals" for extracted values, or "extracted_rainbow" for extracted values from rainbow map for sampling coordinates
+#' @param loadings if `plot_type = "rainbow"` or `plot_type = "extracted_rainbow"`, scaled loadings from RDA model
+#' @param coords if `plot_type = "rainbow"` or `plot_type = "extracted_vals"` or `plot_type = "extracted_rainbow"`, sampling coordinates
+#' @param biplot_axes if `plot_type = "rainbow"`, which RDA axes to include (defaults to 1 and 2)
+#' @param viridis_option option for viridis coloring
 #'
 #' @return ggplot2 plot object
 #' @export
-plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index", title, style = "basic") {
+plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index",
+                          plot_type = "basic", loadings, coords, biplot_axes = c(1, 2),
+                          viridis_option = "D") {
   # if (inherits(Proj_data, "SpatRaster") | inherits(Proj_data, "Raster")) {
   #   if (to_mask) {
   #     for (i in 1:n_layers) {
@@ -209,6 +214,7 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
 
   # Turn rasters into points for ggplot
   RDA_proj <- lapply(RDA_proj, function(x) raster::rasterToPoints(x))
+  # For each RDA axis, grab value and scale to min and max for that axis
   for (i in 1:length(RDA_proj)) {
     RDA_proj[[i]][,3] <- (RDA_proj[[i]][,3] - min(RDA_proj[[i]][,3]))/(max(RDA_proj[[i]][,3]) - min(RDA_proj[[i]][,3]))
   }
@@ -222,11 +228,11 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
   if (n_layers == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
   if (n_layers == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
 
-  write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
+  # write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
 
   # Make plot, style is from original Capblancq paper
-  if (style == "original") {
-    ggplot2::ggplot(data = TAB_RDA) +
+  if (plot_type == "capblancq") {
+    p <- ggplot2::ggplot(data = TAB_RDA) +
       ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
       ggplot2::geom_raster(aes(x = x, y = y, fill = cut(value, breaks = seq(0, 1, length.out = 10), include.lowest = T))) +
       scale_fill_viridis_d(alpha = 0.8, direction = -1, option = "A", labels = c("Negative scores","","","","Intermediate scores","","","","Positive scores")) +
@@ -240,33 +246,83 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
       ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
   }
 
-  if (style == "basic") {
-    # Make plot, custom style
-    ggplot2::ggplot(data = TAB_RDA) +
-      ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
-      ggplot2::geom_raster(aes(x = x, y = y, fill = value)) +
-      ggplot2::scale_fill_viridis_c(alpha = 0.8, direction = -1) +
-      ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
-      ggplot2::xlab("Longitude") +
-      ggplot2::ylab("Latitude") +
-      ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
-      ggplot2::facet_grid(~variable) +
-      cowplot::theme_map() +
-      ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+  if (plot_type == "basic") {
+      p <- ggplot2::ggplot(data = TAB_RDA) +
+        ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
+        ggplot2::geom_raster(aes(x = x, y = y, fill = value)) +
+        ggplot2::scale_fill_viridis_c(option = viridis_option, alpha = 0.8, direction = -1) +
+        ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
+        ggplot2::xlab("Longitude") +
+        ggplot2::ylab("Latitude") +
+        ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
+        ggplot2::facet_grid(~variable) +
+        cowplot::theme_map() +
+        ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
+    }
+
+  if (plot_type == "extracted_vals") {
+    rmin <- list()
+    rmax <- list()
+    rscale <- list()
+    rmin[[1]] = minValue(Proj_data[[1]])
+    rmax[[1]] = maxValue(Proj_data[[1]])
+    rmin[[2]] = minValue(Proj_data[[2]])
+    rmax[[2]] = maxValue(Proj_data[[2]])
+    rscale[[1]] <- ((Proj_data[[1]] - rmin[[1]]) / (rmax[[1]] - rmin[[1]]))
+    rscale[[2]] <- ((Proj_data[[2]] - rmin[[2]]) / (rmax[[2]] - rmin[[2]]))
+
+    if (n_layers == 2) rast <- c(terra::rast(rscale[[1]]), terra::rast(rscale[[2]]))
+    if (n_layers == 3) {
+      rmin[[3]] = minValue(Proj_data[[3]])
+      rmax[[3]] = maxValue(Proj_data[[3]])
+      rast <- c(terra::rast(rscale[[1]]), terra::rast(rscale[[2]]), terra::rast(rscale[[3]]))
+    }
+
+    ext <- terra::extract(rast, coords, ID = FALSE, xy = TRUE)
+
+    p <- ggplot() +
+      geom_sf(data = bkg, color = "lightgrey") +
+      geom_point(data = ext %>% pivot_longer(cols = 1:n_layers, names_to = "axis", values_to = "value"),
+                 aes(x = x, y = y, color = value), size = 3) +
+      scale_color_viridis_c(option = viridis_option, na.value = "transparent", direction = -1, limits = c(0, 1)) +
+      facet_grid(~axis) +
+      theme_map()
   }
+
+  if (plot_type == "rainbow" | plot_type == "extracted_rainbow") {
+    rainbow <- rainbow_map(Proj_data = Proj_data, bkg = bkg, n_layers = n_layers,
+                           loadings = loadings, biplot_axes = biplot_axes, coords = coords)
+    if (plot_type == "rainbow") p <- plot_grid(rainbow$map, rainbow$vector_load, rel_widths = c(2, 1))
+    if (plot_type == "extracted_rainbow") {
+      p1 <- ggplot() +
+        geom_sf(data = bkg, color = "lightgrey") +
+        geom_point(data = coords, aes(x = x, y = y), fill = rainbow$pcacols, color = "black", pch = 21, size = 3) +
+        theme_map()
+      p <- plot_grid(p1, rainbow$vector_load, nrow = 1, rel_widths = c(2, 1))
+    }
+  }
+  return(p)
 }
 
-rainbow_map <- function(ai_rs, bkg, loadings, biplot_axes = c(1, 2), coords) {
-  if (inherits(ai_rs, "RasterStack")) ai_rs <- terra::rast(ai_rs)
-  # Count number of layers
-  n_layers <- terra::nlyr(ai_rs)
-
+#' Build rainbow map with vector loadings
+#'
+#' @param Proj_data
+#' @param bkg
+#' @param n_layers
+#' @param loadings
+#' @param biplot_axes
+#' @param coords
+#'
+#' @returns
+#' @export
+rainbow_map <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords) {
+  if (inherits(Proj_data, "RasterStack")) Proj_data <- terra::rast(Proj_data)
   # Max number of layers to plot is 3, so adjust n_layers accordingly
   if (n_layers > 3) {
     n_layers <- 3
   }
   # Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
-  aiRGB <- stack_to_rgb(ai_rs)
+  aiRGB <- stack_to_rgb(Proj_data)
 
   # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
   # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
@@ -289,22 +345,33 @@ rainbow_map <- function(ai_rs, bkg, loadings, biplot_axes = c(1, 2), coords) {
     geom_sf(data = bkg, fill = "lightgrey") +
     geom_spatraster_rgb(data = aiRGB, r = 1, g = 2, b = 3) +
     theme_map()
-  p_var <- plot_var_loadings(loadings = loadings, biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
-  return(list(p_rainbow = p_rainbow, p_var = p_var))
+  p_var <- plot_var_loadings(Proj_data = Proj_data, loadings = loadings,
+                             biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
+  return(list(map = p_rainbow, vector_load = p_var$var_load_plot, pcacols = p_var$pcacols, rastRGB = aiRGB))
 }
 
-plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
+#' Plot variable vector loadings as legend for rainbow map
+#'
+#' @param Proj_data
+#' @param loadings
+#' @param biplot_axes
+#' @param aiRGB
+#' @param coords
+#'
+#' @returns
+#' @export
+plot_var_loadings <- function(Proj_data, loadings, biplot_axes, aiRGB, coords) {
   TAB_inds <- data.frame(names = rownames(loadings %>% filter(score == "sites")), loadings %>% filter(score == "sites"))
   TAB_var <- data.frame(names = rownames(loadings %>% filter(score == "biplot")), loadings %>% filter(score == "biplot"))
 
   # Select axes for plotting
   xax <- paste0("RDA", biplot_axes[1])
   yax <- paste0("RDA", biplot_axes[2])
-  TAB_inds_sub <- TAB_inds %>% dplyr::select(c(xax, yax))
+  TAB_inds_sub <- TAB_inds %>% dplyr::select(any_of(c(xax, yax)))
   colnames(TAB_inds_sub) <- c("x", "y")
-  TAB_var_sub <- TAB_var %>% dplyr::select(c(xax, yax))
+  TAB_var_sub <- TAB_var %>% column_to_rownames(var = "label") %>% dplyr::select(c(xax, yax))
   colnames(TAB_var_sub) <- c("x", "y")
-  
+
   # Scale the variable loadings for the arrows
   TAB_var_sub$x <- TAB_var_sub$x * max(TAB_inds_sub$x) / stats::quantile(TAB_var_sub$x)[4]
   TAB_var_sub$y <- TAB_var_sub$y * max(TAB_inds_sub$y) / stats::quantile(TAB_var_sub$y)[4]
@@ -312,7 +379,7 @@ plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
   # GET RGB VALS FOR SAMPLES-------------------------------------------------------------------------------------
 
   # Get the colors from the rainbow plot for each ind
-  pts <- data.frame(terra::extract(aiRGB, coords %>% dplyr::select(x, y), ID = FALSE))
+  pts <- data.frame(terra::extract(aiRGB, coords, ID = FALSE))
   # colnames(pts) <- colnames(xpc)
   # Create vector of RGB colors for plotting
   pcacols <- apply(pts, 1, create_rgb_vec)
@@ -320,10 +387,10 @@ plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
   # GET RGB VALS FOR ENTIRE RASTER-------------------------------------------------------------------------------------
 
   # Get sample
-  s <- sample(1:terra::ncell(ai_rs), 10000)
+  s <- sample(1:terra::ncell(Proj_data), 10000)
 
   # Get all PC values from raster and remove NAs
-  rastvals <- data.frame(terra::values(ai_rs))[s, ]
+  rastvals <- data.frame(terra::values(Proj_data))[s, ]
   colnames(rastvals) <- c("x", "y")
   rastvals <- rastvals[stats::complete.cases(rastvals), ]
 
@@ -337,13 +404,13 @@ plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
 
   # FINAL PLOT ----------------------------------------
   # Plot points colored by RGB with variable vectors
-  ggplot() +
-    geom_hline(yintercept = 0, linewidth = 0.2, col = "gray") +
-    geom_vline(xintercept = 0, linewidth = 0.2, col = "gray") +
+  plot <- ggplot() +
+    geom_hline(yintercept = 0, linewidth = 0.5, col = "gray") +
+    geom_vline(xintercept = 0, linewidth = 0.5, col = "gray") +
     geom_point(data = rastvals, aes(x = x, y = y), col = rastpcacols, size = 4, alpha = 0.02) +
     geom_point(data = TAB_inds_sub, aes(x = x, y = y), fill = pcacols, col = "black", pch = 21, size = 3) +
     geom_segment(data = TAB_var_sub, aes(xend = x, yend = y, x = 0, y = 0), color = "black", linewidth = 0.15, linetype = 1, arrow = ggplot2::arrow(length = ggplot2::unit(0.02, "npc"))) +
-    ggrepel::geom_text_repel(data = TAB_var_sub, aes(x = x, y = y, label = row.names(TAB_var_sub)), size = 4) +
+    ggrepel::geom_text_repel(data = TAB_var_sub, aes(x = x, y = y, label = rownames(TAB_var_sub)), size = 4) +
     xlab(xax) +
     ylab(yax) +
     # Plot formatting
@@ -356,6 +423,7 @@ plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
       axis.line = ggplot2::element_blank(),
       aspect.ratio = 1
     )
+  return(list(var_load_plot = plot, pcacols = pcacols))
 }
 
 #' Scale a raster stack from 0 to 255
