@@ -191,11 +191,11 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
   # }
 
   if (inherits(Proj_data, "SpatRaster")) Proj_data <- raster::stack(Proj_data)
-  n_layer = raster::nlayers(Proj_data)
+  n_layers = raster::nlayers(Proj_data)
 
   # Vectorization of the climatic rasters for ggplot
   RDA_proj <- list()
-  for (i in 1:n_layer) {
+  for (i in 1:n_layers) {
     RDA_proj[[i]] <- Proj_data[[i]]
   }
 
@@ -207,12 +207,12 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
 
   # Adaptive genetic turnover projected for RDA indexes
   # Bind together points from both RDA axes
-  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layer]))
+  TAB_RDA <- as.data.frame(do.call(rbind, RDA_proj[1:n_layers]))
   colnames(TAB_RDA)[3] <- "value"
   # Add another column to df that specifies which RDA axis values are coming from
-  if (n_layer == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
-  if (n_layer == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
-  if (n_layer == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
+  if (n_layers == 1) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]]))), levels = c("RDA1"))
+  if (n_layers == 2) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]]))), levels = c("RDA1", "RDA2"))
+  if (n_layers == 3) TAB_RDA$variable <- factor(c(rep("RDA1", nrow(RDA_proj[[1]])), rep("RDA2", nrow(RDA_proj[[2]])), rep("RDA3", nrow(RDA_proj[[3]]))), levels = c("RDA1", "RDA2", "RDA3"))
 
   write_tsv(TAB_RDA, here(output_path, "AI_dat.txt"), col_names = TRUE)
 
@@ -246,22 +246,108 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
       cowplot::theme_map() +
       ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
   }
+}
 
-  # if (style == "rainbow") {
-  #   # Make plot, custom style
-  #   ggplot2::ggplot(data = TAB_RDA) +
-  #     ggplot2::geom_sf(data = bkg, fill = "lightgrey") +
-  #     ggplot2::geom_raster(aes(x = x, y = y, fill = value)) +
-  #     ggplot2::scale_fill_viridis_c(alpha = 0.8, direction = -1) +
-  #     ggplot2::geom_sf(data = bkg, fill = NA, size = 0.1) +
-  #     ggplot2::xlab("Longitude") +
-  #     ggplot2::ylab("Latitude") +
-  #     ggplot2::guides(fill = guide_legend(title = paste0(index_name))) +
-  #     ggplot2::facet_grid(~variable) +
-  #     cowplot::theme_map() +
-  #     ggplot2::theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
-  # }
+rainbow_map <- function(ai_rs, bkg, loadings, biplot_axes = c(1, 2), coords) {
+  if (inherits(ai_rs, "RasterStack")) ai_rs <- terra::rast(ai_rs)
+  # Count number of layers
+  n_layers <- terra::nlyr(ai_rs)
 
+  # Max number of layers to plot is 3, so adjust n_layers accordingly
+  if (n_layers > 3) {
+    n_layers <- 3
+  }
+  # Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
+  aiRGB <- stack_to_rgb(ai_rs)
+
+  # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
+  # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
+  if (n_layers < 3) {
+    warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
+    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
+    white_raster <- aiRGB[[1]] * 0 + 255
+  }
+
+  # If n_layers = 2, you end up making a bivariate map
+  if (n_layers == 2) {
+    aiRGB <- c(aiRGB, white_raster)
+  }
+
+  # If n_layers = 1, you end up making a univariate map
+  if (n_layers == 1) {
+    aiRGB <- c(aiRGB, white_raster, white_raster)
+  }
+  p_rainbow <- ggplot() +
+    geom_sf(data = bkg, fill = "lightgrey") +
+    geom_spatraster_rgb(data = aiRGB, r = 1, g = 2, b = 3) +
+    theme_map()
+  p_var <- plot_var_loadings(loadings = loadings, biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
+  return(list(p_rainbow = p_rainbow, p_var = p_var))
+}
+
+plot_var_loadings <- function(loadings, biplot_axes = c(1, 2), aiRGB, coords) {
+  TAB_inds <- data.frame(names = rownames(loadings %>% filter(score == "sites")), loadings %>% filter(score == "sites"))
+  TAB_var <- data.frame(names = rownames(loadings %>% filter(score == "biplot")), loadings %>% filter(score == "biplot"))
+
+  # Select axes for plotting
+  xax <- paste0("RDA", biplot_axes[1])
+  yax <- paste0("RDA", biplot_axes[2])
+  TAB_inds_sub <- TAB_inds %>% dplyr::select(c(xax, yax))
+  colnames(TAB_inds_sub) <- c("x", "y")
+  TAB_var_sub <- TAB_var %>% dplyr::select(c(xax, yax))
+  colnames(TAB_var_sub) <- c("x", "y")
+  
+  # Scale the variable loadings for the arrows
+  TAB_var_sub$x <- TAB_var_sub$x * max(TAB_inds_sub$x) / stats::quantile(TAB_var_sub$x)[4]
+  TAB_var_sub$y <- TAB_var_sub$y * max(TAB_inds_sub$y) / stats::quantile(TAB_var_sub$y)[4]
+
+  # GET RGB VALS FOR SAMPLES-------------------------------------------------------------------------------------
+
+  # Get the colors from the rainbow plot for each ind
+  pts <- data.frame(terra::extract(aiRGB, coords %>% dplyr::select(x, y), ID = FALSE))
+  # colnames(pts) <- colnames(xpc)
+  # Create vector of RGB colors for plotting
+  pcacols <- apply(pts, 1, create_rgb_vec)
+
+  # GET RGB VALS FOR ENTIRE RASTER-------------------------------------------------------------------------------------
+
+  # Get sample
+  s <- sample(1:terra::ncell(ai_rs), 10000)
+
+  # Get all PC values from raster and remove NAs
+  rastvals <- data.frame(terra::values(ai_rs))[s, ]
+  colnames(rastvals) <- c("x", "y")
+  rastvals <- rastvals[stats::complete.cases(rastvals), ]
+
+  # Get all RGB values from raster and remove NAs
+  rastvalsRGB <- data.frame(terra::values(aiRGB))[s, ]
+  colnames(rastvalsRGB) <- colnames(rastvals)
+  rastvalsRGB <- rastvalsRGB[stats::complete.cases(rastvalsRGB), ]
+
+  # Create vector of RGB colors for plotting
+  rastpcacols <- apply(rastvalsRGB, 1, create_rgb_vec)
+
+  # FINAL PLOT ----------------------------------------
+  # Plot points colored by RGB with variable vectors
+  ggplot() +
+    geom_hline(yintercept = 0, linewidth = 0.2, col = "gray") +
+    geom_vline(xintercept = 0, linewidth = 0.2, col = "gray") +
+    geom_point(data = rastvals, aes(x = x, y = y), col = rastpcacols, size = 4, alpha = 0.02) +
+    geom_point(data = TAB_inds_sub, aes(x = x, y = y), fill = pcacols, col = "black", pch = 21, size = 3) +
+    geom_segment(data = TAB_var_sub, aes(xend = x, yend = y, x = 0, y = 0), color = "black", linewidth = 0.15, linetype = 1, arrow = ggplot2::arrow(length = ggplot2::unit(0.02, "npc"))) +
+    ggrepel::geom_text_repel(data = TAB_var_sub, aes(x = x, y = y, label = row.names(TAB_var_sub)), size = 4) +
+    xlab(xax) +
+    ylab(yax) +
+    # Plot formatting
+    ggplot2::coord_equal() +
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      panel.border = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_blank(),
+      panel.grid.minor = ggplot2::element_blank(),
+      axis.line = ggplot2::element_blank(),
+      aspect.ratio = 1
+    )
 }
 
 #' Scale a raster stack from 0 to 255

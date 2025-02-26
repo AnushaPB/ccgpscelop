@@ -23,7 +23,7 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
     env_fut <- raster::mask(env_fut, range)
   }
 
-  # Deal with future layer naming
+  # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
   env_fut_1 <- raster::subset(env_fut, c(1,3)) # BIO1 ssp125 & NDVI
   names(env_fut_1) <- names(env_pres)
   env_fut_2 <- raster::subset(env_fut, 2:3) # BIO ssp585 & NDVI
@@ -36,18 +36,19 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
 
   # Predicting pixels genetic component based on the loadings of the variables
   if(method == "loadings"){
-    # Projection for each RDA axis
+    # Projection for each RDA axis; TODO warnings generated?
     Proj_pres <- offset_proj_helper(env = env_pres, biplot = biplot, var_env_proj = var_env_proj_pres, K = K, type = "present")
     Proj_fut_1 <- offset_proj_helper(env = env_fut_1, biplot = biplot, var_env_proj = var_env_proj_fut_1, K = K, type = "future")
     Proj_fut_2 <- offset_proj_helper(env = env_fut_2, biplot = biplot, var_env_proj = var_env_proj_fut_2, K = K, type = "future")
 
-    Proj_offset_1 <- list()
-    Proj_offset_2 <- list()
-
     # Single axis genetic offset
+    Proj_offset_1 <- list()
     for(i in 1:K) {
       Proj_offset_1[[i]] <- abs(Proj_pres[[i]] - Proj_fut_1[[i]])
       names(Proj_offset_1)[i] <- paste0("RDA", as.character(i))
+    }
+    Proj_offset_2 <- list()
+    for(i in 1:K) {
       Proj_offset_2[[i]] <- abs(Proj_pres[[i]] - Proj_fut_2[[i]])
       names(Proj_offset_2)[i] <- paste0("RDA", as.character(i))
     }
@@ -85,7 +86,7 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
   # Weighing the current and future adaptive indices based on the eigenvalues of the associated axes
   Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
   Proj_offset_pres <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_pres[,x] * weights[x])))
-
+  
   Proj_offset_fut_1 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_1[[x]])[,-c(1,2)]))
   Proj_offset_fut_1 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_1[,x] * weights[x])))
 
@@ -145,7 +146,7 @@ offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
 #' @returns
 #' @export
 plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
-  if (plot_type = "rainbow") {
+  if (plot_type == "rainbow") {
     # Count number of layers
     n_layers <- terra::nlyr(env)
     # Max number of layers to plot is 3, so adjust n_layers accordingly
@@ -181,7 +182,7 @@ plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
 
   # gdm_plot_vars(pcaSamp, pcaRast, pcaRastRGB, coords, x = "PC1", y = "PC2", scl = scl, display_axes = display_axes)
 
-  if (plot_type = "extracted") {
+  if (plot_type == "extracted") {
     # Plot points only, colorized based on RGB offset value
     pts <- terra::extract(offsetRGB, coords)
     pts <- bind_cols(pts, coords)
@@ -194,5 +195,22 @@ plot_offset <- function(env, bkg, plot_type = "rainbow", coords) {
       scale_color_viridis_c(option = "D") +
       theme_map() +
       facet_grid(~axis)
+  }
+
+  if (plot_type == "original") {
+    colors <- c(colorRampPalette(brewer.pal(11, "Spectral")[6:5])(2), colorRampPalette(brewer.pal(11, "Spectral")[4:3])(2), colorRampPalette(brewer.pal(11, "Spectral")[2:1])(3))
+    p <- ggplot() + 
+      geom_sf(data = bkg, fill = "lightgrey") +
+      geom_spatraster(data = env) + 
+      # scale_fill_viridis_c(option = "B") +
+      scale_fill_continuous(values = colors) +
+      # geom_raster(data = env, aes(x = x, y = y, fill = cut(Global_offset, breaks = seq(1, 8, by = 1), include.lowest = T)), alpha = 1) + 
+      # scale_fill_manual(values = colors, labels = c("1-2","2-3","3-4","4-5","5-6","6-7","7-8"), guide = guide_legend(title="Genomic offset", title.position = "top", title.hjust = 0.5, ncol = 1, label.position="right"), na.translate = F) +
+      geom_sf(data = bkg, fill = NA, size = 0.1) +
+      # coord_sf(xlim = c(-148, -98), ylim = c(35, 64), expand = FALSE) +
+      xlab("Longitude") + ylab("Latitude") +
+      facet_grid(~lyr) +
+      theme_bw() +
+      theme(panel.grid = element_blank(), plot.background = element_blank(), panel.background = element_blank(), strip.text = element_text(size = 11))
   }
 }

@@ -60,9 +60,10 @@ if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers",
 names(envlayers$env_pres)
 names(envlayers$env_fut)
 
+all(res(envlayers$env_pres) == res(envlayers$env_fut))
+
 # Rename to keep consistent with RDA results
 names(envlayers$env_pres) <- c("env_BIO1", "env_NDVI")
-names(envlayers$env_fut) <- c("env_BIO1", "env_NDVI")
 
 # Change layer names to keep consistent with rownames in RDA model
 # if (all(names(envlayers$env_pres) != row.names(dat_mod$biplot))) names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
@@ -89,7 +90,6 @@ were weighted.
 ```{r}
 # Check that names are consistent
 all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
-all(names(envlayers$env_fut) == row.names(dat_mod$biplot))
 
 offset <- genomic_offset(loadings = dat_mod$scaledload, biplot = dat_mod$biplot, eig = dat_mod$eig, K = ncol(dat_mod$biplot), env_pres = envlayers$env_pres, env_fut = envlayers$env_fut, range = NULL, 
                          method = "loadings", scale_env, center_env, mod = NULL)
@@ -103,20 +103,20 @@ offset_pc <- genomic_offset(loadings = dat_mod_pc$scaledload, biplot = dat_mod_p
 ```{r}
 if (gea_method == "bio1ndvi") {
   offset_26 <- raster::stack(offset$Proj_offset_RCP26$RDA1, offset$Proj_offset_RCP26$RDA2)
-  # offset_85 <- raster::stack(offset$Proj_offset_RCP85$RDA1, offset$Proj_offset_RCP85$RDA2)
+  offset_85 <- raster::stack(offset$Proj_offset_RCP85$RDA1, offset$Proj_offset_RCP85$RDA2)
 }
 if (gea_method == "pca") {
   offset_26 <- raster::stack(offset$Proj_offset_RCP26$RDA1, offset$Proj_offset_RCP26$RDA2, offset$Proj_offset_RCP26$RDA3)
-  # offset_85 <- raster::stack(offset$Proj_offset_RCP85$RDA1, offset$Proj_offset_RCP85$RDA2, offset$Proj_offset_RCP85$RDA3)
+  offset_85 <- raster::stack(offset$Proj_offset_RCP85$RDA1, offset$Proj_offset_RCP85$RDA2, offset$Proj_offset_RCP85$RDA3)
 }
 
 offset_26_g <- raster::stack(offset$Proj_offset_global_RCP26)
-# offset_85_g <- raster::stack(offset$Proj_offset_global_RCP85)
+offset_85_g <- raster::stack(offset$Proj_offset_global_RCP85)
 
 writeRaster(offset_26, here(output_path, "offset_load_RCP26.tif"), overwrite = TRUE)
 writeRaster(offset_26_g, here(output_path, "offset_load_global_RCP26.tif"), overwrite = TRUE)
-# writeRaster(offset_85, here(output_path, "offset_load_RCP85.tif"), overwrite = TRUE)
-# writeRaster(offset_85_g, here(output_path, "offset_load_global_RCP85.tif"), overwrite = TRUE)
+writeRaster(offset_85, here(output_path, "offset_load_RCP85.tif"), overwrite = TRUE)
+writeRaster(offset_85_g, here(output_path, "offset_load_global_RCP85.tif"), overwrite = TRUE)
 ```
 
 ## 4. Plot genomic offset
@@ -124,6 +124,8 @@ writeRaster(offset_26_g, here(output_path, "offset_load_global_RCP26.tif"), over
 The `mask` argument is whether or not to crop (and resample) values based on the background sf provided in `bkg`.
 
 ```{r}
+offset_26 <- terra::rast(here(output_path, "offset_load_RCP26.tif"))
+
 # No pop structure correction
 p_pres <- plot_adaptive(offset$Proj_pres, K = length(offset$Proj_pres), bkg = ca, index_name = "Adaptive index", title = "Present values (loadings method)", to_mask = TRUE)
 p_fut <- plot_adaptive(offset$Proj_fut, K = length(offset$Proj_fut), bkg = ca, index_name = "Adaptive index", title = "Future values", to_mask = TRUE)
@@ -131,7 +133,7 @@ p_offset <- plot_adaptive(offset$Proj_offset, K = length(offset$Proj_offset), bk
 offset_plots <- plot_grid(p_pres, p_fut, p_offset, nrow = 3)
 
 pdf(here("analysis", "adaptive", "plots", "offset_plots.pdf"), width = 12, height = 8)
-offset_plots
+p
 dev.off()
 
 # With pop structure correction

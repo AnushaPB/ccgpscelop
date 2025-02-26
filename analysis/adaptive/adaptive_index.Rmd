@@ -116,17 +116,14 @@ p_ai
 dev.off()
 ```
 
-## 5. Build biplots
+## 5. Build adaptive index rainbow plots
 
 ```{r}
-# # Import vals from GEA analysis
-# rdadapt <- read_csv(TODO)
-# # TODO automatically uses q.values column from rdadapt
-# plt_biplot <- biplot_plot(biplot, loadings = scaled_loadings, 
-#                           pvals = rdadapt, sig = 0.01, biplot_type = "separate")
-# biplots <- plot_grid(plt_biplot$p_rda1, plt_biplot$p_rda2, plt_biplot$p_rda3, nrow = 1)
+ai_rs <- terra::rast(here(output_path, "adapind_load.tif"))
+p_rain <- rainbow_map(ai_rs, bkg = ca, loadings = dat_mod$scaledload, biplot_axes = c(1, 2), coords = coords %>% dplyr::select(x, y))
+p_rainbow <- plot_grid(p_rain$p_rainbow, p_rain$p_var, nrow = 1)
 
-# pdf(here("analysis", "adaptive", "plots", "gea_genes_biplot.pdf"), width = 12, height = 4)
-# biplots
-# dev.off()
+if (gea_method == "bio1ndvi") pdf(here("analysis", "adaptive", "plots", "bio1ndvi_ai_rainbowmap.pdf"), width = 12, height = 8)
+p_rainbow
+dev.off()
 ```

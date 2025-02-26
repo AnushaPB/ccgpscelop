@@ -15,8 +15,8 @@ bash p1_process_snps.sh
 # Args are `gea_method` and `nPC`
 Rscript p2_rda_geagenes.R "bio1ndvi"
 
-# Render the R Markdown document to visualize environmental PCs
-Rscript -e "rmarkdown::render('env_PC_viz.Rmd')"
+# Render the R Markdown document to visualize present and future environmental layers
+Rscript -e "rmarkdown::render('env_viz.Rmd')"
 
 # Render the R Markdown document for RDA results
 Rscript -e "rmarkdown::render('RDA_genes.Rmd')"
