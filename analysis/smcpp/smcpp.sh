@@ -52,7 +52,7 @@ process_population() {
     local pop=$1  
 
     # inds: Sample identifiers for the population
-    local inds=$2     
+    local inds=$2    
 
     # Output directory path for storing the results of the population processing
     local output_dir="${BASE_PATH}/analysis/smcpp/${pop}"  
@@ -142,16 +142,18 @@ mkdir -p outputs
 # Get top 10 longest scaffolds
 python get_top_scaffolds.py
 CONTIG_FILE="outputs/top_10_scaffolds.txt"
-mapfile -t CONTIGS < "${CONTIG_FILE}"
+#mapfile -t CONTIGS < "${CONTIG_FILE}"
+mapfile -t CONTIGS < <(grep -v 'chr6' "${CONTIG_FILE}")
 # Print the contigs
 echo ${CONTIGS[@]}
 
 # Process each population
 mkdir -p outputs
-for j in {6..10}
+for j in {3..10}
 do
   # Create the outputs directories
   mkdir -p outputs/outputs$j
+  echo ${CONTIGS[@]}
 
   for i in {1..9}
   do
@@ -173,13 +175,12 @@ mv *bed* outputs
 
 # Check the status of the background jobs
 jobs
-
-[1] 4090447
-[2] 4090448
-[3] 4090449
-[4] 4090450
-[5] 4090453
-[6] 4090455
-[7] 4090457
-[8] 4090463
-[9] 4090469
+[1] 2012606
+[2] 2012607
+[3] 2012608
+[4] 2012610
+[5] 2012612
+[6] 2012615
+[7] 2012620
+[8] 2012624
+[9] 2012630

@@ -11,6 +11,7 @@ library(tidyverse)
 library(scales)
 library(sf)
 library(terra)
+library(ggpubr)
 source(here("analysis", "smcpp", "smcpp.R"))
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "paleovars.R"))
@@ -76,7 +77,10 @@ smcpp <-
 ```{r}
 ca <- get_ca()
 coords <- get_coords(sf = TRUE)
-paleovars <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))
+paleovars <- get_paleovars()
+paleobio1 <- map(paleovars, ~.x[[1]]) %>% rast()
+# Convert to C
+paleobio1 <- paleobio1/10
 paleokey <- get_paleokey()
 
 # Divergence 
@@ -98,7 +102,7 @@ pop_df <-
 
 paleokey_split <- 
   get_paleokey() %>%
-  filter(id != "mis19") %>%
+  #filter(id != "mis19") %>%
   mutate(time = 
     case_when(
       period == "Current" ~ "1.979-2.013 ka", 
@@ -114,19 +118,21 @@ paleokey_split <-
   )))
 
 # get values
-clim_df <- extract(paleovars, coords, ID = FALSE) 
+clim_df <- extract(paleobio1, coords, ID = FALSE) 
 clim_df$SampleID <- coords$SampleID
 change_df <- 
   clim_df %>%
   pivot_longer(all_of(names(paleovars))) %>%
-  # split based on underscore using tidyvrse
-  separate(name, into = c("name", "var", "varn"), sep = "_") %>%
-  mutate(var = paste(var, varn, sep = "_")) %>%
-  filter(var == "bio_1") %>%
   left_join(paleokey_split, by = c("name" = "id")) %>%
   pivot_longer(c(start_time, end_time), names_to = "start_end", values_to = "time") %>%
   drop_na(time) %>%
-  left_join(pop_df)
+  left_join(pop_df) %>%
+  drop_na(pop)
+
+pop_mean_change <-
+  change_df %>%
+  group_by(pop, time) %>%
+  summarize(value = mean(value, na.rm = TRUE), .groups = "drop") 
 
 all_mean_change <- 
   change_df %>%
@@ -134,7 +140,6 @@ all_mean_change <-
   summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
   # Scale value between high and low of pop size
   mutate(value = scales::rescale(value, to = range(filter(smcpp, T == 2, !is.na(pop), years != 0)$y))) 
-
 
 # plot of population assignments
 plt2 <- 
@@ -218,21 +223,21 @@ plt1 <-
   annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
   annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
   annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
-  annotate("text", x = 17e3, y = 1e7, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
-  annotate("text", x = 100e3, y = 1e7, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
-  annotate("text", x = 9e2, y = 1e7, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 17e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = max(gg_df_mean$y_mean) * 1.1, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
   geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
   #geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
   #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
   #geom_ribbon(data = gg_df_mean, aes(x = years, ymin =  y_mean - y_sd, ymax = y_mean + y_sd, fill = factor(pop)), alpha = 0.2) +
-  geom_line(lwd = 0.1, aes(x = years, y = y, col = factor(pop), group = index), alpha = 0.2) +
+  #geom_line(lwd = 0.1, aes(x = years, y = y, col = factor(pop), group = index), alpha = 0.2) +
   geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
-  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_x_continuous(trans = "log10", limits = c(200, 1e+06), expand = c(0,0)) +
   scale_y_continuous(trans = "log10") +
   theme_classic() +
   scale_color_manual(values = c(cs1, cs2)) +
-  ylab("Ne") +
-  xlab("Years") +
+  ylab("Effective population size (Ne)") +
+  xlab("") +
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) 
 
 pop_gg_df <-
@@ -252,9 +257,26 @@ plt2 <-
     legend.position = "none"
   )
 
-pdf(here(plotpath, "smcpp_k9.pdf"), width = 13, height = 5)
-cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.35, 0.65))
-dev.off()
+# Plot temperature change
+plt3 <-
+  ggplot(pop_mean_change, aes(x = time, y = value, col = factor(pop))) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = -1, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = -1, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = -1, ymax = Inf, fill = "slategray1") +
+  #annotate("text", x = 17e3, y = max(pop_mean_change$value) + 0.4, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  #annotate("text", x = 100e3, y =  max(pop_mean_change$value) + 0.4, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  #annotate("text", x = 9e2, y = max(pop_mean_change$value)+ 0.4, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
+  geom_line(lwd = 1.1) +
+  geom_point(cex = 1.1) +
+  scale_x_continuous(trans = "log10", limits = c(200, 1e+06), expand = c(0,0)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(-1, 17)) +
+  scale_color_manual(values = c(cs1, cs2)) +
+  theme_classic() +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) +
+  labs(x = "Years", y = "Temperature (C)")
+
+
 
 pop_label <- 
   st_drop_geometry(pop_gg_df) %>% 
@@ -265,7 +287,11 @@ pop_label <-
 
 gg_df2 <- gg_df %>% mutate(pop = factor(pop, levels = 1:9))
 
-plt3 <-
+pop_mean_change <-
+  pop_mean_change %>%
+  mutate(scaled_value = scales::rescale(value, to = range(filter(smcpp, T == 2, !is.na(pop), years != 0)$y)))
+
+plt4 <-
   ggplot(data = gg_df2) +
   annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
   annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
@@ -274,8 +300,8 @@ plt3 <-
   annotate("text", x = 100e3, y = 5e6, label = "LIG", hjust = 0, col = "#5180b2", cex = 4) +
   annotate("text", x = 9e2, y = 5e6, label = "Holocene", hjust = 0, col = "#5180b2", cex = 4) +
   geom_vline(data = div_df, aes(xintercept = year), col = "slategray4", lty = "dashed", lwd = 0.5) +
-  #geom_line(data = all_mean_change, aes(x = time, y = value, group = var), col = "#5180b2", lwd = 2) +
-  #geom_point(data = all_mean_change, aes(x = time, y = value), col = "#5180b2", cex = 4) +
+  #geom_line(data = pop_mean_change, aes(x = time, y = scaled_value, col = factor(pop)), lwd = 2) +
+  #geom_point(data = pop_mean_change, aes(x = time, y = scaled_value, col = factor(pop)), cex = 4) +
   #geom_ribbon(data = gg_df_mean, aes(x = years, ymin =  ymin, ymax = ymax, fill = factor(pop)), alpha = 0.2) +
   geom_line(lwd = 0.1, aes(x = years, y = y, col = factor(pop), group = index), alpha = 0.6) +
   geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
@@ -290,7 +316,7 @@ plt3 <-
   theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) +
   facet_wrap(~pop) 
 
-plt4 <- 
+plt5 <- 
   ggplot() +
   geom_sf(data = ca) +
   geom_sf(data = pop_gg_df, aes(col = pop)) +
@@ -304,9 +330,13 @@ plt4 <-
   )
 
 pdf(here(plotpath, "smcpp_k9_bypop.pdf"), width = 15, height = 6)
-cowplot::plot_grid(plt4, plt3, ncol = 2, rel_widths = c(0.3, 0.7))
+cowplot::plot_grid(plt5, plt4, ncol = 2, rel_widths = c(0.3, 0.7))
 dev.off()
 
+combo <- cowplot::plot_grid(plt1, plt3, ncol = 1, rel_heights = c(0.6, 0.4), align = "hv")
+pdf(here(plotpath, "smcpp_k9.pdf"), width = 13, height = 7)
+cowplot::plot_grid(plt5, combo, nrow = 1, rel_widths = c(0.35, 0.65))
+dev.off()
 ```
 
 # Colored by paleoclimate change
@@ -380,6 +410,127 @@ plt4 <-
 pdf(here(plotpath, "paleochange.pdf"), width = 13, height = 5)
 cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.35, 0.65))
 cowplot::plot_grid(plt4, plt3, ncol = 2, rel_widths = c(0.35, 0.65))
+dev.off()
+```
+
+# Paloclimate change test
+```{r}
+paleoclim <- rast(here("data", "env", "paleoclim", "paleoclim.tif"))[[c("lgm_bio_1", "lig_bio_1")]]
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- 
+  pop_gg_df %>% 
+  left_join(mod_df) %>%
+  st_as_sf() 
+mod_df$lgm <- extract(paleoclim, mod_df, ID = FALSE)[,"lgm_bio_1"]
+mod_df$lig <- extract(paleoclim, mod_df, ID = FALSE)[,"lig_bio_1"]
+mod_df$cur <- extract(paleobio1, mod_df, ID = FALSE)[,"cur"]
+mod_df$eh <- extract(paleobio1, mod_df, ID = FALSE)[,"eh"]
+mod_df$eh_lgm <- mod_df$eh - mod_df$lgm
+
+pop_mod_df <- 
+  mod_df %>% 
+  group_by(pop) %>% 
+  summarize(across(c(lgm_lig, cur_lgm, eh_lgm, lgm, lig, Q), ~ mean(.x, na.rm = TRUE)))
+
+smcpp_df <-
+  filter(smcpp, T == 2, !is.na(pop), years != 0) %>%
+  mutate(index = paste0(i, pop)) %>%
+  group_by(pop, years) %>%
+  summarise(y_sd = sd(y, na.rm = TRUE), y_mean = mean(y, na.rm = TRUE))
+
+smcpp_paleo_group <- 
+  smcpp_df %>%
+  mutate(period  = case_when(
+    years > 5e3 & years < 1e4 ~ "EH",
+    years > 25e3 & years < 45e3 ~ "LGM",
+    years > 115e3 & years < 130e3 ~ "LIG",
+    years < 500 ~ "cur"
+  )) %>%
+  group_by(pop, period) 
+  
+smcpp_paleo <-
+  smcpp_paleo_group %>%
+  summarise(y_mean = mean(y_mean, na.rm = TRUE)) %>%
+  drop_na(period) %>%
+  pivot_wider(names_from = period, values_from = y_mean) %>%
+  mutate(lgm_lig = LGM - LIG, cur_lgm = cur - LGM, cur_lgm = cur - LGM, eh_lgm = EH - LGM) %>%
+  pivot_longer(-pop) %>%
+  left_join(st_drop_geometry(pop_mod_df))
+
+pdf(here(plotpath, "paleochange_test.pdf"))
+ggplot(smcpp_paleo, aes(x = lgm_lig, y = value)) + 
+geom_point() + 
+facet_wrap(~name, scales = "free") + 
+stat_cor() + 
+stat_smooth(method = "lm")
+ggplot(smcpp_paleo, aes(x = cur_lgm, y = value)) + 
+geom_point() + 
+facet_wrap(~name, scales = "free") + 
+stat_cor()+ 
+stat_smooth(method = "lm")
+
+ggplot(smcpp_paleo, aes(x = lgm, y = value)) + 
+geom_point() + 
+acet_wrap(~name, scales = "free") + 
+stat_cor()+ stat_smooth(method = "lm")
+dev.off()
+
+
+make_pretty2 <- function(x){
+  if (x == "eh_lgm") return("Holocene Start Ne - LGM Ne")
+  if (x == "Hend_lgm") return("Holocene End Ne - LGM Ne")
+  if (x == "lgm_lig") return("LGM Ne - LIG Ne")
+  if (x == "cur_lgm") return("Current Ne - LGM Ne")
+  if (x == "cur") return("Current Ne")
+  if (x == "cur_lig") return("Current Ne - LIG Ne")
+  return(paste(x, "Ne"))
+}
+
+plot_ne <- function(x_var, y_var = c("LGM", "LIG", "cur_lgm", "lgm_lig", "eh_lgm")) {
+  map(y_var, ~{
+    sub <- filter(smcpp_paleo, name == .x)
+    ylab <- make_pretty2(.x)
+    ggplot(sub, aes(x = .data[[x_var]], y = value)) + 
+      geom_point(aes(label = pop, col = factor(pop)), cex = 5, alpha = 0.7) + 
+      geom_text(aes(label = pop), col = "black") + 
+      stat_cor(label.y = min(sub[["value"]], na.rm = TRUE)) + 
+      stat_smooth(method = "lm", se = FALSE) +
+      labs(x = make_pretty_names(x_var), y = ylab) +
+      scale_color_manual(values = c(cs1, cs2)) +
+      theme_classic() +
+      theme(legend.position = "none")
+  })
+}
+
+plts <- map(c("cur_lgm", "lgm_lig", "lgm", "eh_lgm"), plot_ne)
+
+pdf(here(plotpath, "paleochange_test.pdf"), width = 14, height = 3)
+pltref <- 
+  ggplot(smcpp_paleo_group, aes(x = years, y = y_mean, group = pop)) + 
+  geom_line(aes(col = factor(pop))) +
+  geom_point(data = drop_na(smcpp_paleo_group, period), aes(pch = period)) + 
+  theme_classic() +
+  scale_x_continuous(trans = "log10", limits = c(200, NA), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  scale_color_manual(values = c(cs1, cs2)) 
+
+pltref
+
+map(plts, ~do.call(cowplot::plot_grid, c(.x, nrow = 1)))
+dev.off()
+
+cor.test(mod_df$Ho, mod_df$lgm_lig)
+cor.test(mod_df$Ho, mod_df$cur_lgm)
+cor.test(mod_df$Ho, mod_df$eh_lgm)
+
+pdf(here(plotpath, "paleochange_test2.pdf"), width = 4, height = 4)
+gglm("lgm_lig", "Ho", mod_df)
+gglm("eh_lgm", "Ho", mod_df)
+gglm("cur_lgm", "Ho", mod_df)
+ggpartial("lgm_lig", "Ho", c("lgm_lig", "Q"), drop_na(mod_df, lgm_lig, Q, Ho))
+ggpartial("eh_lgm", "Ho", c("eh_lgm", "Q"),drop_na(mod_df, lgm_lig, Q, Ho))
+ggpartial("cur_lgm", "Ho", c("cur_lgm", "Q"),drop_na(mod_df, lgm_lig, Q, Ho))
 dev.off()
 ```
 
