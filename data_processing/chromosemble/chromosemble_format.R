@@ -78,7 +78,8 @@ df.formatted <-
     TRUE ~ "chrunknown"
   ))
 
-df.formatted%>% filter(SCAFF == "Scaffold_13__1_contigs__length_49873245") %>% pull(refName)
+
+df.formatted %>% filter(SCAFF == "Scaffold_13__1_contigs__length_49873245") %>% pull(refName)
 
 # Get chromosomes
 chromosomes <- 
@@ -87,6 +88,19 @@ chromosomes <-
   # Transform "chromosome_X" to "chrX" and remove everything after the number
   mutate(refName = sub(".*chromosome_(\\d+).*", "chr\\1", refName)) %>%
   select(SCAFF, refName, MaxMatch)
+
+# Make key for chromosomes (for reference to S. undulatus)
+chromosomes_key <- 
+  df.formatted %>% 
+  filter(refName != "chrunknown") %>%
+  # Transform "chromosome_X" to "chrX" and remove everything after the number
+  mutate(chr = sub(".*chromosome_(\\d+).*", "chr\\1", refName)) %>%
+  mutate(nc = sub(".*(NC_\\d+\\.\\d+).*", "\\1", refName)) %>%
+  ungroup() %>%
+  select(nc, chr, refName) %>%
+  distinct()
+write_csv(chromosomes_key, here("data_processing", "chromosemble", "outputs", "chromosome_key.csv"))
+filter(chromosomes_key, chr == "chr6")
 
 # Get rows where chrosome is duplicated (i.e., multiple scaffolds map to the same chromosome)
 # MAKE SURE TO CHECK THESE FOR MULTIPLE LARGE SCAFFOLDS ALIGNING TO THE SAME CHROSOME
