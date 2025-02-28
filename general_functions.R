@@ -80,9 +80,10 @@ get_range <- function(){
     st_transform(3310)
 }
 
-gglm <- function(x, y, df, col = TRUE){
+gglm <- function(x, y, df, col = NULL){
+  if (is.null(col)) col <- x
   ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
-    geom_point(aes(col = .data[[x]])) +
+    geom_point(aes(col = .data[[col]])) +
     geom_smooth(method = "lm", col = "black") +
     labs(x = make_pretty_names(x), y = make_pretty_names(y)) +
     ggpubr::stat_cor(method = "pearson", label.y = min(df[[y]], na.rm = TRUE), label.x = min(df[[x]], na.rm = TRUE)) +
@@ -91,7 +92,7 @@ gglm <- function(x, y, df, col = TRUE){
     theme(legend.position = "none") 
 }
 
-ggpartial <- function(x, y, f, df, col = TRUE){
+ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
   diff <- setdiff(f, x)
   response_f <- paste0(y, " ~ ", paste(diff, collapse = " + "))
   predictor_f <- paste0(x, " ~ ", paste(diff, collapse = " + "))
@@ -102,8 +103,46 @@ ggpartial <- function(x, y, f, df, col = TRUE){
   df$response_resid <- response_resid
   df$predictor_resid <- predictor_resid
 
+  if (!is.null(col)) {
+    df$color <- df[[col]]
+  } else {
+    df$color <- 0
+  }
+
+  pretty_name <- make_pretty_names(y)
+  pretty_name_lower <- paste0(tolower(substr(pretty_name, 1, 1)), substr(pretty_name, 2, nchar(pretty_name)))
+  if (pretty_name == "NDVI") pretty_name_lower <- "NDVI"
+
+  plt <- 
+    ggplot(df, aes(x = predictor_resid, y = response_resid)) +
+    #geom_point(aes(fill = color), pch = 21, alpha = alpha, cex = cex, col = NA) +
+    geom_point(aes(col = color), alpha = alpha, cex = cex) +
+    geom_smooth(method = "lm", col = "black") +
+    labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", make_pretty_names(y))) +
+    ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
+    theme_classic() +
+    theme(legend.position = "none")
+  
+  if (!is.null(col)) {
+    plt <- plt + scale_color_viridis_c(option = "mako")
+  } else {
+    plt <- plt + scale_color_gradient(low = "darkgray", high = "darkgray")
+  }
+
+  return(plt)
+}
+
+
+ggpartialsem <- function(x, y, f, df, listw, col = TRUE, alpha = 1, cex = 1){
+  diff <- setdiff(f, x)
+  response_f <- paste0(y, " ~ ", paste(diff, collapse = " + "))
+  predictor_f <- paste0(x, " ~ ", paste(diff, collapse = " + "))
+
+  df$response_resid <- residuals(errorsarlm(response_f, listw = listw, data = df, zero.policy = TRUE))
+  df$predictor_resid <- residuals(errorsarlm(predictor_f, listw = listw, data = df, zero.policy = TRUE))
+
   ggplot(df, aes(x = predictor_resid, y = response_resid)) +
-    geom_point(aes(col = .data[[x]])) +
+    geom_point(aes(col = .data[[x]]), alpha = alpha, cex = cex) +
     geom_smooth(method = "lm", col = "black") +
     labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", make_pretty_names(y))) +
     ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
@@ -112,11 +151,26 @@ ggpartial <- function(x, y, f, df, col = TRUE){
     theme(legend.position = "none")
 }
 
+ggmap <- function(x){
+  x_df <- as.data.frame(x, xy = TRUE)
+  ca <- get_ca()
+  ggplot(x_df) +
+    geom_sf(data = ca, fill = "white", color = "black") +
+    geom_raster(aes(x = x, y = y, fill = .data[[names(x)]])) +
+    labs(fill = make_pretty_names(names(x))) +
+    theme_void() +
+    scale_fill_viridis_c(option = "mako")
+}
+
 make_pretty_names <- function(vars){
   map_chr(vars, \(x){
-    if (x == "cur_lig") return("Paleoclimate change (CUR - LIG)")
-    if (x == "cur_lgm") return("Paleoclimate change (CUR - LGM)")
-    if (x == "lgm_lig") return("Paleoclimate change (LGM - LIG)")
+    if (x == "lgm") return("LGM")
+    if (x == "lig") return("LIG")
+    if (x == "cur_lig") return("Paleoclimate change\n(CUR - LIG)")
+    if (x == "cur_lgm") return("Paleoclimate change\n(CUR - LGM)")
+    if (x == "lgm_lig") return("Paleoclimate change\n(LGM - LIG)")
+    if (x == "eh_lgm") return("Paleoclimate change\n(EH - LGM)")
+    if (x == "csi_custom") return("Temperature stability\n(MH to CUR)")
     if (grepl("bio1", x)) return("Contemporary temperature")
     if (grepl("csi_past", x)) return("Past climate stability")
     if (grepl("csi_future", x)) return("Future climate stability")
@@ -125,7 +179,7 @@ make_pretty_names <- function(vars){
     if (grepl("Q", x)) return("Admixture")
     if (grepl("tmean_dif", x)) return("Contemporary temperature change")
     if (grepl("resid", x)) return("Residuals")
-    if (grepl("genes_ho", x)) return("Adaptive heterozygosity")
+    if (grepl("genes_ho", x) | grepl("Ho_gea", x)| grepl("gea_Ho", x)) return("Adaptive heterozygosity")
     if (grepl("Ho", x)) return("Genome-wide heterozygosity")
     return(x)
   })
