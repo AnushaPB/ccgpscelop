@@ -4,7 +4,7 @@ source activate ccgpscelop
 # Get plink 
 PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
 RDASNPS=outputs/bio1ndvi_rda_ids.txt
-GENESNPS=outputs/bio1ndvi_gene_ids.txt
+GENESNPS=outputs/bio1ndvi_gea_gene_ids.txt
 
 # Subset plink file with RDA snps (created using p1_process_rda.R)
 plink --bfile $PLINK \
@@ -12,7 +12,7 @@ plink --bfile $PLINK \
       --make-bed \
       --out outputs/gea --allow-extra-chr
 
-# Subset plink file with RDA genes (created using p3_intersect_genes.R)
+# Subset plink file with RDA genes (created using p5_intersect_genes.R)
 plink --bfile outputs/gea \
       --extract $GENESNPS \
       --make-bed \
@@ -48,6 +48,12 @@ plink --bfile outputs/nogea_thinned --het --out outputs/nogea_thinned --allow-ex
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 vcftools --gzvcf $VCF --window-pi 10000 --out outputs/58-Sceloporus_10kb_windowpi
 vcftools --gzvcf $VCF --window-pi 100000 --out outputs/58-Sceloporus_100kb_windowpi
+
+# FST AND TAJIMA D FOR S. CA (POP 9) --------------------------------------------------
+# TEMP: Running on t 35,36,39
+vcftools --gzvcf $VCF --keep ../admixture/outputs/k9_pop9.txt --TajimaD 10000 --out outputs/58-Sceloporus_10kb_tajimad_pop9
+vcftools --gzvcf $VCF --keep ../admixture/outputs/k9_pop9.txt --TajimaD 50000 --out outputs/58-Sceloporus_50kb_tajimad_pop9
+vcftools --gzvcf $VCF --weir-fst-pop ../admixture/outputs/k9_pop9.txt --weir-fst-pop ../admixture/outputs/k9_pop6.txt --fst-window-size 50000 --out outputs/58-Sceloporus_50kb_fst_pop9pop6
 
 # WINGEN FILES -------------------------------------------------------------------------
 # Create dosage files

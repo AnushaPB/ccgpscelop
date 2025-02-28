@@ -335,7 +335,6 @@ lm_variance_partition <- function(predictor_sets, response, scale_vars = TRUE) {
   print(summary_stats %>% 
         mutate(across(everything(), ~scales::percent(.x, accuracy = 1))))
   
-  
   # Create results list
   results <- list(
     summary_table = summary_table,

@@ -91,13 +91,19 @@ intersect_genes <- function(prefix){
 
 
 # Get positions for GEA genes
-intersect_genes("pca")
+#intersect_genes("pca")
 intersect_genes("bio1ndvi")
+# Summary Statistics:                                                           
+#  -------------------
+#  Number of RDA + Linked SNPs: 958850
+#  Number of SNPs in genes: 396217
+#  Number of unique genes: 28302
+#  Number of unique genes with UniProtID (GO genes): 12203
 
 # Get positions for all genes
 all_genes <- read.table(here("analysis", "gea", "outputs", "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
 all_gene_pos <- 
-  genes %>% 
+  all_genes %>% 
   dplyr::select(V1, V4, V5, V9) %>% 
   dplyr::rename(scaffold = V1, start = V4, end = V5, full_name = V9) %>%
   # Remove duplicates (if you don't you will get an error later with the joins)
@@ -105,8 +111,8 @@ all_gene_pos <-
   
 # Clean gene names
 all_gene_info <- unique(all_gene_pos$full_name)
-length(all_gene_info)
-all_genes_clean <- clean_gene_annotations(gene_info)
+length(all_gene_info) # 74,808
+all_genes_clean <- clean_gene_annotations(all_gene_info)
 
 all_genes_org <- 
   all_genes_clean %>% 

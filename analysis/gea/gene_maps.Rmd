@@ -1,0 +1,178 @@
+```{r}
+library(tidyverse)
+library(here)
+library(sf)
+library(vcfR)
+
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
+df <- read_csv(here(outpath, "bio1ndvi_gea_gene_snp.csv"))
+
+# Load dosage data
+dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+# Load coords and model dataframe
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+# Subset to only samples in coords
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == coords$SampleID))
+
+# CORRECT DOS NAMES
+colnames(dos) <- gsub("_[A-Z]$", "", colnames(dos))
+```
+
+```{r}
+plot_genes <- function(gene){
+  gene_loci <- df %>% filter(grepl(gene, full_name)) %>% pull(locus)
+  gene_dos <- dos[, gene_loci]
+  gene_dos$SampleID <- dos$IID
+
+  nona_dos <- 
+    gene_dos %>%
+    mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+  gene_df <- 
+    coords %>% 
+    left_join(gene_dos, by = "SampleID")  %>%
+    pivot_longer(-c(SampleID, geometry), names_to = "locus", values_to = "dos")
+
+  plt1 <- 
+    ggplot(gene_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = dos)) +
+    scale_color_viridis_c() +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene) +
+    facet_wrap(~locus)
+
+  if (ncol(dos) < 2) {
+    return(list(dos = plt1, pca = NULL))
+  }
+  
+  gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+  gene_df <- 
+    coords %>% 
+    left_join(gene_dos, by = "SampleID") %>%
+    mutate(PC1 = gene_pca$x[, 1]) %>%
+    pivot_longer(-c(SampleID, geometry, PC1), names_to = "locus", values_to = "dos")
+
+  plt2 <-
+    ggplot(gene_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(fill = PC1), pch = 21, cex = 2, col = rgb(0,0,0,0)) +
+    scale_fill_viridis_c(option = "turbo") +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene) 
+  
+  return(list(dos = plt1, pca = plt2))
+}
+
+genes <- c(
+  "Heat shock 70",
+  "Endothelial PAS domain-containing protein 1",
+  "Inositol 1,4,5-trisphosphate receptor type 1",
+  "Inositol 1,4,5-trisphosphate receptor type 2",
+  "Glutamate receptor ionotropic",
+  "Neuropeptide FF receptor 1",
+  "Calcitonin receptor"#,
+  #"Growth hormone receptor" #Not found in new list
+)
+
+plt_list <- map(genes, plot_genes)
+
+plt_dos <- map(plt_list, pluck, "dos")
+plt_pca <- map(plt_list, pluck, "pca") %>% compact()
+
+pdf(here(plotpath, "maps_of_gea_genes.pdf"), width = 8, height = 8)
+plt_dos
+dev.off()
+
+pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 15, height = 10)
+cowplot::plot_grid(plotlist = plt_pca, nrow = 2)
+dev.off()
+
+```
+
+# Compare EPAS1 and elevation - not significant
+```{r}
+dem <- get_dem()
+coords_dem <- left_join(coords, dem)
+
+gene_loci <- 
+  df %>% filter(grepl("Endothelial PAS domain-containing protein 1", full_name)) %>% pull(locus)
+gene_dos <- dos[, gene_loci]
+gene_dos$SampleID <- dos$IID
+
+nona_dos <- 
+  gene_dos %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+gene_df <- 
+  coords_dem %>% 
+  left_join(gene_dos, by = "SampleID") %>%
+  mutate(PC1 = gene_pca$x[, 1])   
+
+pdf(here(plotpath, "gene_map.pdf"), width = 8, height = 8)
+ggplot(gene_df, aes(y = PC1, x = elev)) +
+  geom_smooth() +
+  geom_point()
+dev.off()
+
+summary(lm(PC1 ~ elev, data = gene_df))
+```
+
+# Compare HSP70 and temperature
+
+```{r}
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+coords_df <- left_join(coords, mod_df)
+
+gene_loci <- 
+  df %>% filter(grepl("Heat shock 70", full_name)) %>% pull(locus)
+gene_dos <- dos[, gene_loci]
+gene_dos$SampleID <- dos$IID
+
+nona_dos <- 
+  gene_dos %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+gene_df <- 
+  coords_df %>% 
+  left_join(gene_dos, by = "SampleID") %>%
+  mutate(PC1 = gene_pca$x[, 1])   
+
+pdf(here(plotpath, "gene_map.pdf"), width = 8, height = 8)
+ggplot(gene_df, aes(y = PC1, x = bio1)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+dev.off()
+
+summary(lm(PC1 ~ bio1, data = gene_df))
+
+cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
+  cor_result <- cor.test(.x, gene_df$bio1)
+  tibble(r = cor_result$estimate, p = cor_result$p.value)
+})
+cor_results$locus <- colnames(select(nona_dos, -SampleID))
+# 2  0.340   0.0000108 chr5_107580515_G_A
+# 3 -0.257   0.00103   chr5_107584770_T_G
+# 4  0.183   0.0206    chr5_107588806_G_C
+```

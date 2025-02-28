@@ -401,7 +401,7 @@ high_corr_pairs
 # cur_lgm, csi_past, and lgm_lig are all correlated
 
 # Uncorrelated set of model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "glacier", "tmean_dif", "Q")
 ```
 
 # Run Ho models
@@ -428,7 +428,7 @@ dev.off()
 
 # Based on visual inspection, the exponential model seems to fit best
 # Get the range of the variogram 
-vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range) * 3
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
 print(vgm_range)
 
 # Create a spatial weights matrix using the range from the variogram
@@ -442,48 +442,57 @@ dev.off()
 sem_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
 summary(sem_model)
 mod_sf$sem_resids <- residuals(sem_model)
+mod_sf$sem_fit <- fitted(sem_model)
 
 # Fit an SLM model
 slm_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
 summary(slm_model)
 mod_sf$slm_resids <- residuals(slm_model)
-
-# Fit an MEM model
-library(adespatial)
-mems <- scores.listw(listw, MEM.autocor = "positive")  # Extract spatial eigenvectors
-mod_sf$MEM1 <- mems[,1]  # First eigenvector (captures broad-scale spatial patterns)
-f_mem <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + "), "+ MEM1"))
-mem_model <- errorsarlm(f_mem, data = mod_sf, listw = listw, zero.policy = TRUE)
-# Note: we use an errorsarlm model instead of an OLS model to account for any residual spatial dependence
-mod_sf$mem_resids <- residuals(mem_model)
-summary(mem_model)
-# MEM Info: https://cran.r-project.org/web/packages/adespatial/vignettes/tutorial.html?utm_source=chatgpt.com
+mod_sf$slm_fit <- fitted(slm_model)
+# https://crd230.github.io/lab8.html
 
 # Calculate Moran's I before and after accounting for spatial autocorrelation
 moran.test(mod_sf$ols_resids, listw)$estimate
 moran.test(mod_sf$sem_resids, listw)$estimate
 moran.test(mod_sf$slm_resids, listw)$estimate
-moran.test(mod_sf$mem_resids, listw)$estimate
 
 # Compare AIC
-AIC(ols_model, sem_model, slm_model, mem_model)
+AIC(ols_model, sem_model, slm_model)
 ```
 
 ```{r}
-library(adespatial)
+gg_df <- mod_sf
+pdf(here(plotpath, "paleoclim_residuals.pdf"), width = 5, height = 4.5)
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = sem_resids, geometry = geometry)) +
+  scale_color_viridis_c(option = "turbo") +
+  theme_void()
 
-f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
-f <- as.formula("Ho ~ NDVI + gHM + bio1 + csi_past + glacier + tmean_dif + Q + MEM1 + MEM2")
-mems <- scores.listw(listw, MEM.autocor = "positive")  # Extract spatial eigenvectors
-mod_mem <- mod_sf 
-mod_mem$MEM1 <- mems[,1]  # First eigenvector (captures broad-scale spatial patterns)
-mod_mem$MEM2 <- mems[,2]
-# Include MEMs in your SEM to prevent climate effects from being absorbed
-mem_model <- errorsarlm(f, data = mod_mem, listw = listw, zero.policy = TRUE)
-summary(mem_model)
 
-mod_sf$mem_resids <- residuals(mem_model)
-moran.test(mod_sf$mem_resids, listw)$estimate
+ggplot(gg_df, aes(x = sem_fit, y = Ho)) +
+  geom_point(aes(col = sem_resids)) +
+  geom_smooth(method = "lm") +
+  scale_color_viridis_c(option = "turbo") +
+  theme_classic() +
+  theme(legend.position = "none")+
+  stat_cor(label.y = min(gg_df[["Ho"]], na.rm = TRUE))
+
+ggplot(gg_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = sem_resids, geometry = geometry)) +
+  scale_color_viridis_c(option = "turbo") +
+  theme_void()
+
+
+ggplot(gg_df, aes(x = slm_fit, y = Ho)) +
+  geom_point(aes(col = slm_resids)) +
+  geom_smooth(method = "lm") +
+  scale_color_viridis_c(option = "turbo") +
+  theme_classic() +
+  theme(legend.position = "none")+
+  stat_cor(label.y = min(gg_df[["Ho"]], na.rm = TRUE))
+dev.off()
 ```
 
 ```{r}
@@ -497,8 +506,10 @@ f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
 # Compare full model and best model
 full_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-AIC(full_model)
 #best_model <- errorsarlm(f_best, data = mod_sf, listw = listw, zero.policy = TRUE)
+
+full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+impacts_model <- impacts(full_model, listw = listw, tr = TRUE) 
 
 # Significant variables are the same between the full model and the best model
 broom::tidy(full_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
@@ -1039,4 +1050,37 @@ names(mod_vars) <- mod_vars
 map(mod_vars, ~moran.test(pull(mod_sf, .x), listw)$estimate) %>% 
   bind_rows(.id = "var") %>% 
   arrange(desc(`Moran I statistic`))
+```
+
+# Biodiversity comparison
+```{r}
+richness <- rast(here("data", "biodiversity_mapping", "Reptiles_total_richness.tif"))
+df <- 
+  left_join(get_coords(sf = TRUE), get_het()) %>%
+  mutate(`Reptile species richness` = extract(richness, get_coords(sf = TRUE), ID = FALSE)[,1]) %>%
+  mutate(`Reptile species richness` = as.numeric(as.character(`Reptile species richness`))) %>%
+  drop_na(Ho) %>%
+  # Drop Island individual 
+  # REMOVE CHANNEL ISLAND SAMPLE
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")
+
+pdf(here(plotpath, "richness_vs_ho.pdf"), width = 13, height =4)
+plt1 <- 
+  gglm("Reptile species richness", "Ho", df) + 
+  scale_color_viridis_c(option = "plasma")
+plt2 <-
+  ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = Ho)) +
+  scale_color_viridis_c(option = "plasma") +
+  theme_void()
+plt3 <-
+  ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = `Reptile species richness`)) +
+  labs(col = "Reptile\nspecies\nrichness") +
+  scale_color_viridis_c(option = "plasma") +
+  theme_void()
+plot_grid(plt1, plt2, plt3, nrow = 1)
+dev.off()
 ```

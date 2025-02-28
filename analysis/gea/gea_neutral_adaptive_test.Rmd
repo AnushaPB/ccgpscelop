@@ -143,7 +143,8 @@ dev.off()
 
 ```{r}
 coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transform(3310)
-coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
+
+coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho) 
 
 gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
 genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
@@ -214,6 +215,10 @@ dev.off()
 
 # Spatial models
 ```{r}
+coords <- coords %>% 
+  filter(IID != "Scelocci_CCGPMC_MW01-3-14") 
+nrow(coords)
+
 # Run OLS and get residuals
 f <- formula(genes_ho ~ neutral_ho)
 ols_model <- lm(f, data = coords)
@@ -272,32 +277,178 @@ ggplot(coords, aes(x = sem_fitted, y = genes_ho)) +
 dev.off()
 ```
 
-### All variables
+### Residual models
 ```{r}
 mod_vars <- c("NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
 mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))%>% left_join(coords, by = c("SampleID" = "IID"))
 mod_df_scaled <- mod_df %>% mutate(across(all_of(mod_vars), scale)) 
 ```
+
 ```{r}
-f <- paste("sem_resids ~", paste(paste0(mod_vars), collapse = " + "))
+f <- paste("ols_resids ~", paste(paste0(mod_vars), collapse = " + "))
 mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
 summary(mod)
 AIC(mod) 
 car::vif(mod) 
 # Get RSQ
-summary(mod) # R^2 = 0.53
+summary(mod) # R^2 = 0.32
+
+coords$ols_resids2 <- residuals(mod)
+
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids2 ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
+
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
+
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = mod_df_scaled, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids2 <- residuals(sem_model)
+coords$sem_fitted2 <- sem_model$fitted
+summary(sem_model)
+
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids2, listw)$estimate
+moran.test(coords$sem_resids2, listw)$estimate
+
+# Get significant variables
+sig_vars <-
+  broom::tidy(sem_model) %>% 
+  filter(p.value < 0.05, term != "(Intercept)", term != "lambda") %>% 
+  arrange(estimate) %>%
+  pull(term)
 
 pdf(here(plotpath, "sp_resids_all.pdf"), width = 22, height = 7)
-gglm_ls <- map(mod_vars, ~gglm(x = .x, y = "sem_resids", mod_df))
-ggpartial_ls <- map(mod_vars, ~ggpartial(x = .x, y = "sem_resids", f = mod_vars, col = .x, df = mod_df))
+gglm_ls <- map(mod_vars, ~gglm(x = .x, y = "ols_resids", mod_df))
+ggpartial_ls <- map(mod_vars, ~ggpartial(x = .x, y = "ols_resids", f = mod_vars, col = .x, df = mod_df))
 do.call(
   cowplot::plot_grid,
   c(c(gglm_ls, ggpartial_ls), nrow = 2)
 )
 check_model(mod)
 dev.off()
+
+div_plt <- 
+  ggplot(coords, aes(x = neutral_ho, y = genes_ho)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  stat_cor(method = "pearson", label.y = min(coords$genes_ho) - 0.05) +
+  theme_classic() +
+  theme(legend.position = "none")
+
+resid_plt1 <-
+  ggplot(coords, aes(y = ols_fitted, x = genes_ho)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Genome-wide diversity predicted adaptive heterozygosity") +
+  xlab("Observed adaptive heterozygosity") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  stat_cor(method = "pearson", label.y = min(coords$ols_fitted) - 0.05) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+resid_plt2 <-
+  ggplot(coords, aes(y = sem_fitted2, x = ols_resids)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Predicted adaptive residuals") +
+  xlab("Observed adaptive residuals") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  stat_cor(method = "pearson", label.y = min(coords$sem_fitted2) - 0.01) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+ca <- get_ca()
+resid_map <- 
+  ggplot(coords) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = ols_resids), pch = 21, cex = 2.5) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(fill = "Adaptive\nresiduals") +
+  theme_void()
+
+pdf(here(plotpath, "sp_resids_sig.pdf"), width = 17*0.8, height = 10*0.8)
+combo <- plot_grid(div_plt, resid_plt2, resid_map, nrow = 1)
+ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "ols_resids", f = mod_vars, col = "ols_resids", df = mod_df, cex = 2) +
+scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0))
+plot_grid(combo, plot_grid(plotlist = ggpartial_ls, nrow = 1, align = "hv"), nrow = 2, rel_heights = c(0.6, 0.5))
+dev.off()
 ```
 
+### Adaptive diversity model 2
+```{r}
+f <- paste("genes_ho ~ neutral_ho +", paste(paste0(mod_vars), collapse = " + "))
+mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+summary(mod)
+AIC(mod) 
+car::vif(mod) 
+# Get RSQ
+summary(mod) # R^2 = 0.32
+
+coords$ols_resids2 <- residuals(mod)
+
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids2 ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
+
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
+
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = mod_df_scaled, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids2 <- residuals(sem_model)
+coords$sem_fitted2 <- sem_model$fitted
+summary(sem_model)
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids2, listw)$estimate
+moran.test(coords$sem_resids2, listw)$estimate
+
+# TEMPROARY USE LM BECAUSE CERTAIN VARS ARE SIGNIFICANT FOR SEM THAT DONT MAKE SENSE (NEED TO FIGURE OUT PARTIAL REGRESSIONs)
+mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+sig_vars <-
+  broom::tidy(mod) %>% 
+  filter(p.value < 0.05, term != "(Intercept)", term != "lambda") %>% 
+  arrange(desc(abs(estimate))) %>%
+  pull(term)
+
+resid_plt2 <-
+  ggplot(coords, aes(y = sem_fitted2, x = genes_ho)) +
+  geom_point(aes(col = genes_ho), cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Predicted adaptive diversity") +
+  xlab("Observed adaptive diversity") +
+  scale_color_viridis_c(option = "mako") +
+  stat_cor(method = "pearson", label.y = min(coords$sem_fitted2) - 0.01) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+mod_vars2 <- c("neutral_ho", "NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
+pdf(here(plotpath, "sp_resids_sig2.pdf"), width = 16, height = 7)
+ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "genes_ho", f = mod_vars2, col = "genes_ho", df = mod_df, cex = 2))
+plot_grid(resid_plt2, plot_grid(plotlist = ggpartial_ls, nrow = 2, align = "hv"), ncol = 2, rel_widths = c(3, 5))
+dev.off()
+```
+ 
 # Future correlations
 ```{r}
 files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")

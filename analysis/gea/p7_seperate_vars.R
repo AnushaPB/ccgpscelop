@@ -4,7 +4,7 @@ outpath <- here("analysis", "gea", "outputs")
 genes <- read_csv(here(outpath, "bio1ndvi_gea_gene_snp.csv"))
 
 cortest <- 
-  read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_cortest_full.csv")) %>% 
+  read_csv(here(outpath, "58-Sceloporus_RDA_cortest_full.csv")) %>% 
   dplyr::rename(locus = snp) %>%
   filter(locus %in% genes$locus) %>%
   filter(outlier_method == "p") %>%
@@ -45,21 +45,29 @@ joined <-
 write_csv(joined, here(outpath, "bio1ndvi_genes_cortest.csv"))
 
 # FIGURING OUT MYSTERY
-
-outpath <- here("analysis", "gea", "outputs")
+library(here)
+library(tidyverse)
+r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
 rdasig <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
-rdasig05 <- rdasig %>% filter(p.values < 0.05)
-cortest <- read_csv(here(outpath, "RDA_bio1_ndvi", "58-Sceloporus_RDA_cortest_full.csv"))
-all(rdasig$locus %in% cortest$snp) 
-# FALSE
-all(rdasig05$locus %in% cortest$snp) 
-# FALSE
 
-nrow(rdasig)
-#[1] 50071003
-nrow(cortest)
-#[1] 5405596
+# Filter pairs where both SNP_A and SNP_B are in rdasig$locus
+# (e..g, pairs with R2 > 0.6 where both SNPs ended up in RDA)
+filtered_r <- 
+  r %>%
+  filter(SNP_A %in% rdasig$locus & SNP_B %in% rdasig$locus)
 
-diff_loci <- setdiff(rdasig$locus, cortest$snp) 
-length(diff_loci) # 48,558,133
-diff_loci[1]
+# Count number of pairs
+nrow(filtered_r)
+
+# Count number of SNPs
+length(unique(c(filtered_r$SNP_A, filtered_r$SNP_B)))
+
+# Example:
+snpa <- filtered_r[1, ] %>% pull(SNP_A)
+snpb <- filtered_r[1, ] %>% pull(SNP_B)
+rdasig %>% filter(locus == snpa | locus == snpb)
+r %>% filter((SNP_A == snpa & SNP_B == snpb) | (SNP_A == snpa & SNP_B == snpb))
+
+# Approximation of number of SNPs to retain
+filtered_r %>% distinct(SNP_A) %>% nrow()
+filtered_r %>% distinct(SNP_B) %>% nrow()

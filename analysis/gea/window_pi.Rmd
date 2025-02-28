@@ -1,14 +1,21 @@
+
 ```{r}
 library(tidyverse)
 library(here)
-outpath <- here("analysis", "genetic_diversity", "outputs")
-plotpath <- here("analysis", "genetic_diversity", "plots")
+library(sf)
+source(here("general_functions.R"))
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
 wpi <- read_table(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus_10kb_windowpi.windowed.pi"))
 
 i  <- 
   wpi %>% 
   count(CHROM) %>% 
   arrange(desc(n)) %>% 
+  # Pull out long scaffolds (chr and Scaffold_13)
   filter(n > 1000) %>% 
   pull(CHROM)
 
@@ -18,7 +25,7 @@ gg_df <-
   mutate(CUMSUM = cumsum(BIN_START)) %>%
   mutate(CHROM = factor(CHROM, levels = i)) 
 
-pdf(here(outpath, "windowed_pi.pdf"), width = 12, height = 10)
+pdf(here(plotpath, "windowed_pi.pdf"), width = 12, height = 10)
 ggplot(gg_df) +
   geom_vline(aes(xintercept = BIN_START, col = PI), alpha = 0.5) +
   geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
@@ -32,12 +39,718 @@ ggplot(gg_df) +
         strip.background = element_blank(),
         strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
   scale_color_viridis_c(option = "plasma", direction = -1) +
-  labs(y = expression("Mean " * pi * " (10kb window)"), col = "-log(mean p) (10kb window)") 
+  labs(y = expression("Mean " * pi * " (10kb window)"), col =expression("Mean " * pi * " (10kb window)"))
+dev.off()
+```
+
+# Load GEA data
+```{r}
+gea <- read_csv(here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_snp.csv"))
+
+gea <- 
+  gea %>% 
+  mutate(
+    id = str_extract(full_name, "GNX-\\d+"),
+    name = str_extract(full_name, "(?<=Name=)[^\\[]+"),
+    uniprotid = str_extract(full_name, "(?<=\\[)[^:]+")
+  )
+
+snpcount <- 
+  gea %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+```
+
+```{r}
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+
+# Fix names by removing lagging _letter
+names(gea_dos) <- gsub("_[A-Z]+$", "", names(gea_dos))
+
+# Confirm orders are the same
+stopifnot(all(coords$SampleID == gea_dos$IID))
+```
+
+# Looking at all genes of interest
+
+```{r}
+goi_names <- c("Heat shock", "Inositol 1,4,5-trisphosphate receptor type 1", "Inositol 1,4,5-trisphosphate receptor type 2", "Neuropeptide FF receptor 1", "Calcitonin receptor", "Growth hormone receptor", "Transient receptor potential cation channel subfamily V member 3", "Transient receptor potential cation channel subfamily A member 1", "TRPM8", "Endothelial PAS domain-containing protein 1")
+
+goi <- gea %>% filter(reduce(map(goi_names, ~str_detect(full_name, .x)), `|`)) %>% filter(scaffold %in% snpcount$CHROM)
+goi_dos <- gea_dos[, c("IID", goi$locus)]
+dim(goi_dos)
+
+goibin <- 
+  goi %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) 
+
+goicount <- 
+  goibin %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(genecount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+unique(goicount$CHROM)
+
+pdf(here(plotpath, "goi.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan", lwd = 1) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+dev.off()
+
+goicount %>% group_by(CHROM) %>% summarise(genecount = max(genecount)) %>% arrange(desc(genecount))
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+```
+### Scaffold13/HSP
+
+```{r}
+
+chr_snpcount <- snpcount %>% filter(CHROM == "Scaffold_13__1_contigs__length_49873245")
+chr_goicount <- goicount %>% filter(CHROM == "Scaffold_13__1_contigs__length_49873245")
+
+chr_df <- gg_df %>% filter(CHROM == "Scaffold_13__1_contigs__length_49873245")
+
+bigbin <- chr11_goicount %>% filter(genecount == max(genecount)) %>% pull(BIN_START)
+gene_names <- goibin %>% filter(BIN_START == bigbin) %>% distinct(full_name) %>% pull(full_name) #"ID=GNX-157396;Name=Heat shock protein beta-1 [Q00649.1:Gallus gallus (Chicken)];Note=protein-coding%2C cov 0.0;coverage=0.0"
+#[2] "ID=GNX-25822;Name=Heat shock protein beta-2 [Q99PR8.2:Mus musculus (Mouse)];Note=protein-coding%2C cov 0.0;coverage=0.0"  
+
+gene_loc <- bed %>% filter(V9 %in% gene_names) %>% rename(start = V4, end = V5)
+gene_snps <- goi %>% filter(scaffold == "Scaffold_13__1_contigs__length_49873245", start > min(gene_loc$start), end < max(gene_loc$end))
+
+pdf(here(plotpath, "goi_scaff13.pdf"), width = 12, height = 3)
+ggplot(chr_df) +
+  geom_vline(data = chr_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr_goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), breaks = seq(0, max(chr_df$BIN_START), by = 20000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr_df) +
+  geom_vline(data = chr_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr_goicount, aes(xintercept = BIN_START), col = "cyan", lwd = 1) +
+  geom_rect(data = gene_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(min(gene_loc$start - 1e6), max(gene_loc$end + 1e6))) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+
+ggplot(chr_df) +
+  geom_vline(data= gene_snps, aes(xintercept = start), col = "cyan", lwd = 1) +
+  geom_rect(data = gene_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = median(gene_loc$start + (gene_loc$end - gene_loc$start)/2) , y = 0.0001, label = "HSP", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(min(gene_loc$start), max(gene_loc$end))) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
 dev.off()
 ```
 
 ```{r}
-gea <- read_csv(here("analysis", "gea", "outputs", "gea_gene_snp.csv"))
+genebin <- goibin %>% filter(BIN_START == bigbin)
+
+gene_dos <- gea_dos[, c("IID", genebin$locus)]
+gene_df <- 
+  left_join(coords, gene_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(starts_with("chr"), names_to = "locus", values_to = "value") %>%
+  left_join(itpr2)
+
+gene_df_split <- 
+  gene_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+gene_pca <- 
+  gene_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+
+    # Calculate % var explained by PC1
+    pca_var <- pca$sdev^2
+    pca_var <- pca_var / sum(pca_var)
+
+    # Cumulative variance explained by PC1 + PC2
+    cum_var2 <- round(cumsum(pca_var)[2] * 100, 2)
+    var_exp1 <- round(pca_var[1] * 100, 2)
+    var_exp2 <- round(pca_var[2] * 100, 2)
+
+    pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1], var_exp1 =var_exp1, var_exp2 = var_exp2,  cum_var2 = cum_var2) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+print(unique(itpr2_pca$var_exp1))
+print(unique(itpr2_pca$var_exp2))
+print(unique(itpr2_pca$cum_var2))
+
+pdf(here(plotpath, "hsp.pdf"), width = 20, height = 20)
+ggplot(gene_df) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = value)) +
+  scale_color_viridis_c() +
+  facet_wrap(id~locus) +
+  theme_void() 
+
+ggplot(gene_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+ggplot(gene_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC2), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void()
+dev.off()
+
+library(terra)
+elev <- get_dem()
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(gene_pca, mod_df) %>% st_as_sf()
+source(here("analysis", "genetic_diversity", "paleovars.R"))
+paleovars <- get_paleovars("lgm")$lgm$bio_1
+mod_df$lgm <- terra::extract(paleovars, mod_df)[,"bio_1"]
+mod_df <- left_join(mod_df, elev)
+lm(scale(PC1) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(lgm), data = mod_df) %>% summary()  
+lm(scale(PC1) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(elev), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(elev), data = mod_df) %>% summary()
+
+lm(PC1 ~  bio1 + tmean_dif, mod_df) %>% summary()
+#cor.test(mod_df$elev, mod_df$Ho, use = "pairwise.complete.obs")
+#lm(Ho ~ lgm_lig + elev + Q, mod_df) %>% summary()
+```
+```{r}
+pdf(here(plotpath, "hsp_pca.pdf"), width = 10, height = 10)
+plt1 <-
+  ggplot(gene_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 1) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+
+plt2 <- gglm("bio1", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt3 <- gglm("tmean_dif", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt4 <- ggpartial("bio1", "PC1", c("tmean_dif", "bio1"), drop_na(mod_df, tmean_dif, bio1, PC1), col  = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1)
+
+plt5 <- ggpartial("tmean_dif", "PC1", c("tmean_dif", "bio1"), drop_na(mod_df, tmean_dif, bio1, PC1), col  = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1)
+
+plt6 <- gglm("csi_past", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt7 <-  gglm("lgm", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+grid1 <- cowplot::plot_grid(plt2, plt3, plt4, plt5, plt6, plt7, nrow = 3, align = "hv")
+cowplot::plot_grid(plt1, grid1,ncol = 2, align = "h", rel_widths = c(1, 2))
+
+dev.off()
+
+```
+### CHR11/TRPV3
+```{r}
+chr11_snpcount <- snpcount %>% filter(CHROM == "chr11")
+chr11_goicount <- goicount %>% filter(CHROM == "chr11")
+
+chr11_df <- gg_df %>% filter(CHROM == "chr11")
+
+bigbin <- chr11_goicount %>% filter(genecount > 30) %>% pull(BIN_START)
+goibin %>% filter(BIN_START == bigbin) %>% distinct(full_name) %>% pull(full_name) # Transient receptor potential cation channel subfamily V member 3
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+itrp2_loc <- bed %>% filter(V9 == "ID=GNX-113073;Name=Transient receptor potential cation channel subfamily V member 3 [Q8K424.2:Mus musculus (Mouse)];Note=protein-coding%2C cov 0.0;coverage=0.0") %>% rename(start = V4, end = V5)
+itpr2_goi <- goi %>% filter(scaffold == "chr11", start > itrp2_loc$start, end < itrp2_loc$end)
+
+pdf(here(plotpath, "goi_chr11.pdf"), width = 12, height = 3)
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), breaks = seq(0, max(chr5_df$BIN_START), by = 20000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START), col = "cyan", lwd = 1) +
+  geom_rect(data = itrp2_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000 , y = 0.0001, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(3000000, 4000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+
+ggplot(chr11_df) +
+  geom_vline(data= itpr2_goi, aes(xintercept = start), col = "cyan", lwd = 1) +
+  geom_rect(data = itrp2_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000  , y = 0.0001, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(itrp2_loc$start, itrp2_loc$end)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+dev.off()
+```
+
+```{r}
+trpv3 <- goibin %>% filter(BIN_START == bigbin)
+
+trpv3_dos <- gea_dos[, c("IID", trpv3$locus)]
+trpv3_df <- 
+  left_join(coords, trpv3_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(starts_with("chr"), names_to = "locus", values_to = "value") %>%
+  left_join(trpv3)
+
+trpv3_df_split <- 
+  trpv3_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+trpv3_pca <- 
+  trpv3_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+
+    # Calculate % var explained by PC1
+    pca_var <- pca$sdev^2
+    pca_var <- pca_var / sum(pca_var)
+
+    # Cumulative variance explained by PC1 + PC2
+    cum_var2 <- round(cumsum(pca_var)[2] * 100, 2)
+    var_exp1 <- round(pca_var[1] * 100, 2)
+    var_exp2 <- round(pca_var[2] * 100, 2)
+
+    pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1], var_exp1 =var_exp1, var_exp2 = var_exp2,  cum_var2 = cum_var2) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+print(unique(trpv3_pca$var_exp1))
+print(unique(trpv3_pca$var_exp2))
+print(unique(trpv3_pca$cum_var2))
+
+pdf(here(plotpath, "trpv3.pdf"), width = 20, height = 20)
+ggplot(trpv3_df) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = value)) +
+  scale_color_viridis_c() +
+  facet_wrap(id~locus) +
+  theme_void() 
+
+ggplot(trpv3_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+ggplot(trpv3_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC2), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void()
+dev.off()
+
+library(terra)
+elev <- get_dem()
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(trpv3_pca, mod_df) %>% st_as_sf()
+source(here("analysis", "genetic_diversity", "paleovars.R"))
+paleovars <- get_paleovars("lgm")$lgm$bio_1
+mod_df$lgm <- terra::extract(paleovars, mod_df)[,"bio_1"]
+mod_df <- left_join(mod_df, elev)
+lm(scale(PC1) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(lgm), data = mod_df) %>% summary()  
+lm(scale(PC1) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(elev), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(elev), data = mod_df) %>% summary()
+
+lm(PC1 ~ lgm_lig + bio1, mod_df) %>% summary()
+#cor.test(mod_df$elev, mod_df$Ho, use = "pairwise.complete.obs")
+#lm(Ho ~ lgm_lig + elev + Q, mod_df) %>% summary()
+```
+```{r}
+pdf(here(plotpath, "trpv3_pca.pdf"), width = 10, height = 10)
+plt1 <-
+  ggplot(trpv3_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 1) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+
+plt2 <- gglm("bio1", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt3 <- gglm("tmean_dif", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt4 <- ggpartial("bio1", "PC1", c("tmean_dif", "bio1"), drop_na(mod_df), col  = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1)
+
+plt5 <- ggpartial("tmean_dif", "PC1", c("tmean_dif", "bio1"), drop_na(mod_df), col  = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1)
+
+plt6 <- gglm("csi_past", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+plt7 <-  gglm("lgm", "PC1", mod_df, col = "PC1") + scale_color_viridis_c(option = "plasma", direction = -1) 
+
+grid1 <- cowplot::plot_grid(plt2, plt3, plt4, plt5, plt6, plt7, nrow = 3, align = "hv")
+cowplot::plot_grid(plt1, grid1,ncol = 2, align = "h", rel_widths = c(1, 2))
+
+dev.off()
+
+```
+
+### CHR5/ITPR2
+```{r}
+chr5_snpcount <- snpcount %>% filter(CHROM == "chr5")
+chr5_goicount <- goicount %>% filter(CHROM == "chr5")
+
+chr5_df <- gg_df %>% filter(CHROM == "chr5")
+
+bigbin <- chr5_goicount %>% filter(genecount > 40) %>% pull(BIN_START)
+goibin %>% filter(BIN_START == bigbin) %>% distinct(full_name) %>% pull(full_name) # Inositol 1,4,5-trisphosphate receptor type 2
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+itrp2_loc <- bed %>% filter(V9 == "ID=GNX-24724;Name=Inositol 1,4,5-trisphosphate receptor type 2 [Q14571.2:Homo sapiens (Human)];Note=protein-coding%2C cov 3.7;coverage=3.7") %>% rename(start = V4, end = V5)
+itpr2_goi <- goi %>% filter(scaffold == "chr5", start > itrp2_loc$start, end < itrp2_loc$end)
+
+pdf(here(plotpath, "goi_chr5.pdf"), width = 12, height = 3)
+ggplot(chr5_df) +
+  geom_vline(data = chr5_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr5_goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), breaks = seq(0, max(chr5_df$BIN_START), by = 20000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr5_df) +
+  geom_vline(data = chr5_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr5_goicount, aes(xintercept = BIN_START), col = "cyan", lwd = 1) +
+  geom_rect(data = itrp2_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 88800000 , y = 0.0001, label = "ITPR 2", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(88000000, 90000000), breaks = seq(88000000, 90000000, by = 500000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+
+ggplot(chr5_df) +
+  geom_vline(data= itpr2_goi, aes(xintercept = start), col = "cyan", lwd = 1) +
+  geom_rect(data = itrp2_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = 0.0006), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 88800000 , y = 0.0001, label = "ITPR 2", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(88667242, 88923454), breaks = seq(88667242, 88923454, by = 50000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+dev.off()
+```
+
+```{r}
+itpr2 <- goibin %>% filter(BIN_START == bigbin)
+
+itpr2_dos <- gea_dos[, c("IID", itpr2$locus)]
+itpr2_df <- 
+  left_join(coords, itpr2_dos, by = c("SampleID" = "IID")) %>%
+  pivot_longer(starts_with("chr"), names_to = "locus", values_to = "value") %>%
+  left_join(itpr2)
+
+itpr2_df_split <- 
+  itpr2_df %>%
+  group_by(id, name, uniprotid) %>%
+  group_split()
+
+itpr2_pca <- 
+  itpr2_df_split %>%
+  map(~{
+    df <- 
+      .x %>% 
+      st_drop_geometry() %>% 
+      select(SampleID, locus, value) %>% 
+      group_by(locus) %>%
+      # Imputation to median
+      mutate(value = case_when(is.na(value) ~ median(value, na.rm = TRUE), TRUE ~ value)) %>%
+      pivot_wider(names_from = locus, values_from = value) 
+    pca <- prcomp(df[, -1], scale = TRUE)
+
+    # Calculate % var explained by PC1
+    pca_var <- pca$sdev^2
+    pca_var <- pca_var / sum(pca_var)
+
+    # Cumulative variance explained by PC1 + PC2
+    cum_var2 <- round(cumsum(pca_var)[2] * 100, 2)
+    var_exp1 <- round(pca_var[1] * 100, 2)
+    var_exp2 <- round(pca_var[2] * 100, 2)
+
+    pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], SampleID = df[,1], id = .x$id[1], name = .x$name[1], uniprotid = .x$uniprotid[1], var_exp1 =var_exp1, var_exp2 = var_exp2,  cum_var2 = cum_var2) 
+    return(pca_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords) %>%
+  st_as_sf()
+
+print(unique(itpr2_pca$var_exp1))
+print(unique(itpr2_pca$var_exp2))
+print(unique(itpr2_pca$cum_var2))
+
+pdf(here(plotpath, "itpr2.pdf"), width = 20, height = 20)
+ggplot(itpr2_df) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = value)) +
+  scale_color_viridis_c() +
+  facet_wrap(id~locus) +
+  theme_void() 
+
+ggplot(itpr2_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+ggplot(itpr2_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC2), cex = 8) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void()
+dev.off()
+
+library(terra)
+elev <- get_dem()
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(itpr2_pca, mod_df) %>% st_as_sf()
+source(here("analysis", "genetic_diversity", "paleovars.R"))
+paleovars <- get_paleovars("lgm")$lgm$bio_1
+mod_df$lgm <- terra::extract(paleovars, mod_df)[,"bio_1"]
+mod_df <- left_join(mod_df, elev)
+lm(scale(PC1) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(lgm), data = mod_df) %>% summary()  
+lm(scale(PC1) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC1) ~ scale(elev), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm_lig), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(lgm), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(bio1), data = mod_df) %>% summary()
+lm(scale(PC2) ~ scale(elev), data = mod_df) %>% summary()
+
+#cor.test(mod_df$elev, mod_df$Ho, use = "pairwise.complete.obs")
+#lm(Ho ~ lgm_lig + elev + Q, mod_df) %>% summary()
+```
+```{r}
+pdf(here(plotpath, "itpr2_pca.pdf"), width = 25*0.7, height = 5*0.7)
+plt1 <-
+  ggplot(itpr2_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC1), cex = 1) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+
+plt2 <-
+  ggplot(mod_df, aes(x = lgm_lig, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = make_pretty_names("lgm_lig"), y = "PC1") +
+  ggpubr::stat_cor(label.y = -6.5)
+
+plt3 <- 
+  ggplot(mod_df, aes(x = lgm, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "LGM temperature", y = "PC1") +
+  ggpubr::stat_cor(label.y = -6.5)
+
+
+plt4 <-
+  ggplot(mod_df, aes(x = bio1, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Current temperature", y = "PC1") +
+  ggpubr::stat_cor(label.y = -6.5)
+
+plt5 <-
+  ggplot(mod_df, aes(x = elev, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Elevation", y = "PC1") +
+  ggpubr::stat_cor(label.y = -6.5)
+
+cowplot::plot_grid(plt1, plt5, plt4, plt3, plt2, nrow = 1, align = "h")
+
+
+plt1 <-
+  ggplot(itpr2_pca) +
+  geom_sf(data = ca) + 
+  geom_sf(aes(col = PC2), cex = 1) +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  theme_void() 
+
+plt2 <-
+  ggplot(mod_df, aes(x = lgm_lig, y = PC2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = make_pretty_names("lgm_lig"), y = "PC2") +
+  ggpubr::stat_cor(label.y = -3.5)
+
+plt3 <- 
+  ggplot(mod_df, aes(x = lgm, y = PC2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "LGM temperature", y = "PC2") +
+  ggpubr::stat_cor(label.y = -3.5)
+
+
+plt4 <-
+  ggplot(mod_df, aes(x = bio1, y = PC2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Current temperature", y = "PC2") +
+  ggpubr::stat_cor(label.y = -3.5)
+
+
+plt5 <-
+  ggplot(mod_df, aes(x = elev, y = PC2)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Elevation", y = "PC2") +
+  ggpubr::stat_cor(label.y = -3.5)
+cowplot::plot_grid(plt1, plt5, plt4, plt3, plt2, nrow = 1, align = "h")
+dev.off()
+```
+```{r}
+
+# Calculate correlation matrix
+cor_matrix <- cor(itpr2_dos[,-1], use = "pairwise.complete.obs")
+# For each SNP, calculate how many have a correlation > 0.8
+map_dbl(1:nrow(cor_matrix), ~sum(abs(cor_matrix[.x,]) > 0.8))
+
+```
+
+# HSP
+```{r}
 hsp <-
   gea %>% 
   filter(grepl("Heat shock protein", full_name)) %>%
@@ -48,20 +761,9 @@ hsp <-
   group_by(CHROM, BIN_START) %>%
   summarise(pcount = n()) 
 
-snpcount <- 
-  gea %>%
-  #head(1000) %>% 
-  rename(CHROM = scaffold) %>%
-  mutate(CHROM = factor(CHROM, levels = i)) %>%
-  mutate(BIN_START = floor(start / 10000) * 10000) %>%
-  group_by(CHROM, BIN_START) %>%
-  summarise(pcount = n()) %>%
-  ungroup() %>%
-  drop_na(CHROM)
 
 # Check difference in number of SNPs counted
 print((sum(snpcount$pcount) - nrow(gea)))
-
 
 outpath <- here("analysis", "gea", "plots")
 pdf(here(outpath, "windowed_pi_gea.pdf"), width = 12, height = 10)
@@ -85,14 +787,6 @@ dev.off()
 
 # Looking at genes with many SNPs
 ```{r}
-gea <- 
-  gea %>% 
-  mutate(
-    id = str_extract(full_name, "GNX-\\d+"),
-    name = str_extract(full_name, "(?<=Name=)[^\\[]+"),
-    uniprotid = str_extract(full_name, "(?<=\\[)[^:]+")
-  )
-
 id_counts <-
   gea %>% 
   group_by(id, name, uniprotid, full_name) %>% 
@@ -104,30 +798,14 @@ id_counts <-
     ratio = n/approxsize
   ) %>%
   filter(n > 10) %>%
-  arrange(desc(n))
+  arrange(desc(n)) %>%
+  mutate(name = case_when(is.na(name) ~ full_name, TRUE ~ name)) %>%
+  ungroup()
 
 # ITPR2 - known to play a role in heat stress; https://www.nature.com/articles/s41598-021-95816-8
-id_counts$name[1:10]
+id_counts %>% select(name, n) %>% head(10) 
 
 id_counts %>% select(name, n) %>% filter(grepl("shock", name)) 
-```
-
-```{r}
-gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
-
-coords <- 
-  get_coords(sf = TRUE) %>% 
-  filter(SampleID %in% gea_dos$IID) %>% 
-  st_transform(3310) %>%
-  # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
-gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
-
-# Fix names by removing lagging _letter
-names(gea_dos) <- gsub("_[A-Z]$", "", names(gea_dos))
-
-# Confirm orders are the same
-stopifnot(all(coords$SampleID == gea_dos$IID))
 ```
 
 ```{r}
@@ -203,12 +881,13 @@ mod_df <- left_join(hsp70_pca, mod_df)
 cor_test <- 
   mod_df %>% 
   group_by(id) %>% 
-  summarise(cor = cor(PC, CHELSA_bio1_1981.2010_V.2.1, use = "pairwise.complete.obs"))
+  summarise(cor = cor(PC, bio1, use = "pairwise.complete.obs"))
   
 ```
 
 
 ```{r}
+
 epas1 <- gea %>% filter(grepl("Endothelial PAS domain-containing protein 1", full_name))
 epas1_dos <- gea_dos[, c("IID", epas1$locus)]
 epas1_df <- 
@@ -363,6 +1042,204 @@ ggplot(top_pca) +
   theme_void() 
 dev.off()
 
+```
+
+# Tajima's D for S. CA
+```{r}
+tjd50k <- 
+  read_table(here(outpath, "58-Sceloporus_50kb_tajimad_pop9.Tajima.D")) %>% 
+  mutate(TajimaD = as.numeric(TajimaD)) %>%
+  filter(CHROM %in% snpcount$CHROM) %>%
+  mutate(CHROM = factor(CHROM, levels = unique(snpcount$CHROM))) 
+tjd10k <- 
+  read_table(here(outpath, "58-Sceloporus_10kb_tajimad_pop9.Tajima.D")) %>% 
+  mutate(TajimaD = as.numeric(TajimaD)) %>%
+  filter(CHROM %in% snpcount$CHROM) %>%
+  mutate(CHROM = factor(CHROM, levels = unique(snpcount$CHROM))) 
+
+pdf(here(plotpath, "tajimasd.pdf"), width = 12, height = 10)
+ggplot(tjd50k) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan", lwd = 1) +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.9, lwd = 0.5) +
+  geom_hline(yintercept = 0, lty = 2, col = "white") +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Tajima's D (50kb window)"), col = "log(# Sig. SNPs) (10kb window)")
+dev.off() 
+```
+
+```{r}
+chr11_snpcount <- snpcount %>% filter(CHROM == "chr11")
+chr11_goicount <- goicount %>% filter(CHROM == "chr11")
+
+chr11_df <- tjd10k %>% filter(CHROM == "chr11")
+
+bigbin <- chr11_goicount %>% filter(genecount > 20) %>% pull(BIN_START)
+goibin %>% filter(BIN_START == bigbin) %>% distinct(full_name) %>% pull(full_name) # Transient receptor potential cation channel subfamily V member 3
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+trpv3_loc <- bed %>% filter(V9 == "ID=GNX-113073;Name=Transient receptor potential cation channel subfamily V member 3 [Q8K424.2:Mus musculus (Mouse)];Note=protein-coding%2C cov 0.0;coverage=0.0") %>% rename(start = V4, end = V5)
+trpv3_goi <- goi %>% filter(scaffold == "chr11", start > trpv3_loc$start, end < trpv3_loc$end)
+
+pdf(here(plotpath, "tjd_chr11.pdf"), width = 12, height = 3)
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan") +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), breaks = seq(0, max(chr5_df$BIN_START), by = 20000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START), col = "cyan", lwd = 1) +
+  geom_rect(data = trpv3_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = -1.5), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000 , y = -2, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(3000000, 4000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Tajima's D (50 kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr11_df) +
+  geom_vline(data= trpv3_goi, aes(xintercept = start), col = "cyan", lwd = 1) +
+  geom_rect(data = trpv3_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = -1.5), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000  , y =  -2, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(trpv3_loc$start, trpv3_loc$end)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Tajima's D (50kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+dev.off()
+```
+
+
+# fst
+```{r}
+fst50kb <- 
+  read_table(here(outpath, "58-Sceloporus_50kb_fst_pop9pop6.windowed.weir.fst")) %>% 
+  filter(CHROM %in% snpcount$CHROM) %>%
+  mutate(CHROM = factor(CHROM, levels = unique(snpcount$CHROM))) 
+
+fst10kb <-
+  read_table(here(outpath, "58-Sceloporus_10kb_fst_pop9pop6.windowed.weir.fst")) %>% 
+  filter(CHROM %in% snpcount$CHROM) %>%
+  mutate(CHROM = factor(CHROM, levels = unique(snpcount$CHROM)))
+pdf(here(plotpath, "windowfst.pdf"), width = 12, height = 10)
+ggplot(fst50kb) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan", lwd = 1) +
+  geom_line(aes(x = BIN_START, y = MEAN_FST), alpha = 0.9, lwd = 0.5) +
+  geom_hline(yintercept = 0, lty = 2, col = "white") +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("FST (50kb window)"), col = "log(# Sig. SNPs) (10kb window)")
+dev.off() 
+```
+
+
+```{r}
+chr11_snpcount <- snpcount %>% filter(CHROM == "chr11")
+chr11_goicount <- goicount %>% filter(CHROM == "chr11")
+
+chr11_df <- fst10kb %>% filter(CHROM == "chr11")
+
+bigbin <- chr11_goicount %>% filter(genecount > 20) %>% pull(BIN_START)
+goibin %>% filter(BIN_START == bigbin) %>% distinct(full_name) %>% pull(full_name) # Transient receptor potential cation channel subfamily V member 3
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+trpv3_loc <- bed %>% filter(V9 == "ID=GNX-113073;Name=Transient receptor potential cation channel subfamily V member 3 [Q8K424.2:Mus musculus (Mouse)];Note=protein-coding%2C cov 0.0;coverage=0.0") %>% rename(start = V4, end = V5)
+trpv3_goi <- goi %>% filter(scaffold == "chr11", start > trpv3_loc$start, end < trpv3_loc$end)
+
+pdf(here(plotpath, "fst_chr11.pdf"), width = 12, height = 3)
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan") +
+  geom_line(aes(x = BIN_START, y = MEAN_FST), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), breaks = seq(0, max(chr5_df$BIN_START), by = 20000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean FST (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr11_df) +
+  geom_vline(data = chr11_snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= chr11_goicount, aes(xintercept = BIN_START), col = "cyan", lwd = 1) +
+  geom_rect(data = trpv3_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = -1.5), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000 , y = -2, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = MEAN_FST), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(3000000, 4000000)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("FST (50 kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+ggplot(chr11_df) +
+  geom_vline(data= trpv3_goi, aes(xintercept = start), col = "cyan", lwd = 1) +
+  geom_rect(data = trpv3_loc, aes(xmin = start, xmax = end, ymin = -Inf, ymax = -1.5), fill = "blue", alpha = 1) +
+  annotate(geom = "text", x = 3210000  , y =  -2, label = "TRPV3", col = "white", size = 3, face = "bold") +
+  geom_line(aes(x = BIN_START, y = MEAN_FST), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0), limits = c(trpv3_loc$start, trpv3_loc$end)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("FST (50kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+
+dev.off()
 ```
 
 # OLD:

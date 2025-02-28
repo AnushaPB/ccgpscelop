@@ -181,7 +181,7 @@ ggplot(same_summarize_df) +
   scale_color_viridis_c(option = "plasma")
 ```
 
-# Write out individuals for SMC++
+# Write out individuals for SMC++ and window calculations
 ```{r}
 library(here)
 library(tidyverse)
@@ -212,6 +212,8 @@ pop_df <-
   st_as_sf(coords = c("x", "y")) %>%
   st_set_crs(st_crs(4326))
 
+pdf(here(plotpath, "pop_locations.pdf"), width = 10, height = 10)
 ggplot(pop_df) +
   geom_sf(aes(col = pop))
+dev.off()
 ```

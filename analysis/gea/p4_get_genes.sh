@@ -14,4 +14,4 @@ grep -P "\tgene\t" $GFF > outputs/all_genes.bed
 
 # Get the GEA genes from the environmental PCs
 bedtools intersect -wo -a outputs/bio1ndvi_gea.bed -b outputs/all_genes.bed > outputs/bio1ndvi_gea_genes.bed
-bedtools intersect -wo -a outputs/pca_gea.bed -b outputs/all_genes.bed > outputs/pca_gea_genes.bed
+#bedtools intersect -wo -a outputs/pca_gea.bed -b outputs/all_genes.bed > outputs/pca_gea_genes.bed

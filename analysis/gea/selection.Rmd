@@ -1,0 +1,13 @@
+```{r}
+library(tidyverse)
+library(here)
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
+tjd <- read_table(here(outpath, "58-Sceloporus_50kb_tajimad_pop9.Tajima.D"))
+fst <- read_table(here(outpath, "58-Sceloporus_50kb_fst_pop9pop6.windowed.weir.fst"))
+
+
+```

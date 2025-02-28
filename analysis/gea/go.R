@@ -1,4 +1,65 @@
 
+
+get_ortho <- function(genes_org, target_organism, file_prefix, cache = TRUE){
+
+  path <- here("analysis", "gea", "outputs", paste0(file_prefix, "_gene_orthologs.csv"))
+
+  if (file.exists(path) & cache == TRUE) {
+    message("Using cached file", path)
+    return(read_csv(path))
+  }
+
+  organisms <- unique(genes_org$organism)
+  names(organisms) <- organisms
+
+  ortho_result <- 
+    map(
+      organisms,
+      ~{
+        convert_ortho(
+          query = genes_org %>% filter(organism == .x) %>% pull(uniprot_id),
+          organism = .x,
+          target_organism = target_organism
+        )
+      }, .progress = TRUE
+    )
+
+  # Combine orthologs and original human genes to get the final query names
+  organism_name <- 
+    case_when(
+      target_organism == "hsapiens" ~ "Homo sapiens", 
+      target_organism == "ggallus" ~ "Gallus gallus",
+      TRUE ~ NA)
+
+  if (is.na(organism_name)) stop ("Organism must be ggallus or hsapiens")
+
+  original <- filter(genes_org, grepl(organism_name, organism)) %>% dplyr::select(uniprot_id)
+  genes_and_orthos <- 
+    ortho_result %>%
+    compact() %>%
+    bind_rows() %>%
+    dplyr::select(ortholog_name, uniprot_id = query) %>%
+    bind_rows(original) %>%
+    mutate(query = case_when(is.na(ortholog_name) ~ uniprot_id, TRUE ~ ortholog_name)) 
+
+  # Count uniprotid duplicates (uniprot_id with more than one ortholog)
+  dup <- genes_and_orthos %>% count(uniprot_id) %>% filter(n > 1) %>% nrow()
+  if (dup > 0) warning(dup, " uniprot_ids with more than one ortholog, taking first ortholog")
+
+  # Take the first ortholog for each uniprot_id so no genes are overrepresented because they have more orthologs 
+  genes_and_orthos <- 
+    genes_and_orthos %>%
+    group_by(uniprot_id) %>%
+    dplyr::slice(1) %>%
+    ungroup()
+
+  # Write out the orthologs
+  message("Writing out orthologs to ", path)
+  write_csv(genes_and_orthos, path)
+
+  return(genes_and_orthos)
+}
+
 convert_ortho <- function(query, organism, target_organism){
   # Convert to gprofiler format
   source_organism <- convert_to_orgcode(organism)
@@ -52,7 +113,40 @@ run_go <- function(query, org_key){
 }
 
 
-go_fish <- function(query_size, term_size, intersection_size, query_size_all, intersection_size_all) {
+go_correction <- function(go_result, all_genes){
+  gea_genes <- 
+    go_result$result %>% 
+    as_tibble() %>%
+    # Just keep GO terms
+    filter(grepl("GO", source)) %>%
+    dplyr::select(intersection_size, query_size, term_size, term_name, source, term_id, p_value)
+
+  # Note: if you get an error here it means that there are NAs in query_size, which should not be the case - make sure no filtering was done on all_genes (all genes should not be filtered by p)
+  comparison <- 
+    right_join(all_genes, gea_genes, by = "term_id") %>%
+    rowwise() %>%
+    mutate(fish_p = go_fish(query_size, intersection_size, query_size_all, intersection_size_all))
+    
+  # Term size all and term size should be the same
+  stopifnot(comparison$term_size_all == comparison$term_size)
+
+  # Get significant terms 
+  # *precision:* The precision of the enrichment, calculated as the ratio of intersection_size to query_size. Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set.
+  # *recall:* The recall of the enrichment, calculated as the ratio of intersection_size to term_size. Recall measures the proportion of genes associated with the GO term that are present in the reference set.
+  sig <- 
+    comparison %>% 
+    # Correct p-values using fdr
+    mutate(fish_p = p.adjust(fish_p, method = "fdr")) %>%
+    filter(fish_p < 0.05) %>% 
+    arrange(fish_p) %>% 
+    mutate(precision = intersection_size / query_size,
+           recall = intersection_size / term_size) %>%
+    dplyr::select(term_name, term_id, source, fish_p, query_size_all, intersection_size, precision, recall)
+
+  return(sig)
+}
+
+go_fish <- function(query_size, intersection_size, query_size_all, intersection_size_all) {
   # Calculate the counts for the contingency table
   a <- intersection_size  # Number of GEA genes in the category
   b <- query_size - intersection_size  # Number of GEA genes not in the category
@@ -62,9 +156,67 @@ go_fish <- function(query_size, term_size, intersection_size, query_size_all, in
   # Create the contingency table
   contingency_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
   
-  # Perform Fisher's exact test
-  result <- fisher.test(contingency_table)
+  # Perform Fisher's exact test (one-sided for enrichment)
+  result <- fisher.test(contingency_table, alternative = "greater")
   
   # Return the p-value
   return(result$p.value)
 }
+
+
+
+go_table <- function(df, n = 5) {
+  # Rename columns
+  df <- 
+    df %>%
+    dplyr::rename(
+      `p` = fish_p,
+      `Precision` = precision,
+      `Recall` = recall,
+      `Term name` = term_name,
+      `Term ID` = term_id,
+      `No. genes` = intersection_size
+    ) %>%
+    mutate(`Term Name` = str_to_sentence(`Term name`)) %>%
+    head(n) %>%
+    dplyr::select(`Term name`, `Term ID`, Precision, Recall, `No. genes`, p) 
+  
+  # Create gt table
+  gt_table <- 
+    df %>%
+    gt() %>%
+    fmt_scientific(
+      columns = p,
+      decimals = 2
+    ) %>%
+    fmt_number(
+      columns = c(`Precision`, `Recall`),
+      decimals = 2
+    ) %>%
+    data_color(
+      columns = c(`Precision`, `Recall`),
+      fn = scales::col_numeric(
+        palette = RColorBrewer::brewer.pal(9, "YlGnBu"),
+        domain = c(min(df$Precision, df$Recall), max(df$Precision, df$Recall))
+      )
+    )
+  
+  return(gt_table)
+}
+
+go_topbp <- function(x, head = 5){
+  x %>% 
+  filter(grepl("GO:BP", source)) %>%
+  dplyr::select(term_name, intersection_size, precision, fish_p) %>%
+  arrange(desc(intersection_size)) %>%
+  head(head)
+}
+
+go_topmf <- function(x, head = 5){
+  x %>% 
+  filter(grepl("GO:MF", source)) %>%
+  dplyr::select(term_name, intersection_size, precision, fish_p) %>%
+  arrange(desc(intersection_size)) %>%
+  head(head)
+}
+
