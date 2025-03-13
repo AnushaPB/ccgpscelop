@@ -170,7 +170,7 @@ make_pretty_names <- function(vars){
     if (x == "cur_lgm") return("Paleoclimate change\n(CUR - LGM)")
     if (x == "lgm_lig") return("Paleoclimate change\n(LGM - LIG)")
     if (x == "eh_lgm") return("Paleoclimate change\n(EH - LGM)")
-    if (x == "csi_custom") return("Temperature stability\n(MH to CUR)")
+    if (x == "csi_custom") return("Temperature stability\n(MIS19 to CUR)")
     if (grepl("bio1", x)) return("Contemporary temperature")
     if (grepl("csi_past", x)) return("Past climate stability")
     if (grepl("csi_future", x)) return("Future climate stability")
@@ -183,4 +183,40 @@ make_pretty_names <- function(vars){
     if (grepl("Ho", x)) return("Genome-wide heterozygosity")
     return(x)
   })
+}
+
+scaffold_theme <- function() {
+  list(
+    scale_x_continuous(labels = scales::comma, expand = c(0, 0)),
+    scale_y_continuous(labels = scales::comma),
+    theme_classic(),
+    facet_wrap(~scaffold, scales = "fixed", ncol = 1),
+    theme(
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      axis.line = element_blank(),
+      axis.ticks = element_blank(),
+      strip.background = element_blank(),
+      strip.text.x = element_text(hjust = 0, size = 10),
+      legend.position = "bottom",
+    )
+  )
+}
+
+
+scaffold_theme_y <- function() {
+  list(
+    scale_x_continuous(labels = scales::comma, expand = c(0, 0)),
+    scale_y_continuous(labels = scales::comma),
+    theme_classic(),
+    facet_wrap(~scaffold, scales = "fixed", ncol = 1),
+    theme(
+      axis.text.x = element_blank(), 
+      axis.title.x = element_blank(), 
+      axis.line.x = element_blank(),
+      strip.background = element_blank(),
+      strip.text.x = element_text(hjust = 0, size = 10),
+      legend.position = "bottom",
+    )
+  )
 }
