@@ -15,6 +15,10 @@ data_processing/chromosemble/mummer-4.0.0rc1
 data_processing/chromosemble/outputs
 data_processing/chromosemble/*.delta
 *.txt
+*.log
+*.adj
+*.raw
+
 
 maxent.jar
 
