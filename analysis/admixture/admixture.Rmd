@@ -144,6 +144,18 @@ Q %>%
   group_split() %>%
   map(~as.character(pull(.x, SampleID))) %>%
   iwalk(\(x, idx) write(x, here(outpath, paste0("pop", idx, ".txt"))))
+
+# Write out K=3 for models
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 3) %>%
+  write_csv(here(outpath, "Q3.csv"))
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 5) %>%
+  write_csv(here(outpath, "Q5.csv"))
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
