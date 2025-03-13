@@ -17,13 +17,15 @@ source(here("analysis", "genetic_diversity", "genetic_diversity.R"))
 
 plotpath <- here("analysis", "gea", "plots")
 outpath <- here("analysis", "gea", "outputs")
+```
 
+```{r}
 # Read in het data
 callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
 
 neutral <- 
-  format_het(here("analysis", "gea", "outputs", "nogea.het"), callable_sites = callable_sites) %>%
-  mutate(neutral_ho = Ho) %>%
+  format_het(here("analysis", "gea", "outputs", "nogea_thinned.het"), callable_sites = callable_sites) %>%
+  mutate(neutral_ho = 1 - `O(HOM)`/`N(NM)`) %>%
   dplyr::select(IID, neutral_ho)
 
 gea <- 
@@ -36,20 +38,131 @@ genes <-
   mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
   dplyr::select(IID, genes_ho)
 
+geanogenes <-
+  format_het(here("analysis", "gea", "outputs", "geanogenes.het"), callable_sites = 1) %>%
+  mutate(geanogenes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, geanogenes_ho)
+
+nonsyn <- 
+  format_het(here("analysis", "gea", "outputs", "nonsyn.het"), callable_sites = 1) %>%
+  mutate(nonsyn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, nonsyn_ho)
+
+syn <- 
+  format_het(here("analysis", "gea", "outputs", "syn.het"), callable_sites = 1) %>%
+  mutate(syn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, syn_ho)
+
+freqfilter <- 
+  format_het(here("analysis", "gea", "outputs", "nogea_frqfilter.het"), callable_sites = 1) %>%
+  mutate(filter_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, filter_ho)
+
+pop_df <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv")) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
+
 df <- 
   left_join(neutral, gea, by = "IID") %>%
-  left_join(genes, by = "IID") 
+  left_join(genes, by = "IID")  %>%
+  left_join(geanogenes, by = "IID") %>%
+  left_join(nonsyn, by = "IID") %>%
+  left_join(syn, by = "IID") %>%
+  left_join(freqfilter, by = "IID") %>%
+  left_join(pop_df, by = c("IID" = "SampleID")) %>%
+  # Remove channel island
+  left_join(read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")), by = c("IID" = "SampleID")) %>%
+  drop_na(Ho)
 ```
 
 ```{r}
-cols = c("GEA" = "cyan", "GEA genes" = "magenta")
+df$socal <- df$cluster == 9
+names(df)
+mod_vars <- c("neutral_ho", "NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "genes_ho", "gea_ho", "geanogenes_ho", "nonsyn_ho", "syn_ho", "filter_ho", "neutral_ho")
+mod_df <- df %>% mutate(across(all_of(mod_vars), scale))
+mod <- lm(genes_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = mod_df)  
+broom::tidy(mod) %>% 
+  filter(p.value < 0.05)
+
+
+lm(syn_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = df) %>% 
+broom::tidy() %>% 
+filter(p.value < 0.05)
+
+lm(nonsyn_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = df) %>% broom::tidy() %>% 
+filter(p.value < 0.05)
+
+
+```
+
+```{r}
+gg_df <-
+ df %>% 
+ pivot_longer(c(ends_with("_ho"), -filter_ho, -neutral_ho)) %>%
+ mutate(cluster = cluster == 2)
+
+pdf(here(plotpath, "gea_test.pdf"), width = 7, height = 6)
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y") 
+
+ggplot(gg_df, aes(x = filter_ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Freq filtered heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y") 
+
+ggplot(gg_df, aes(x = filter_ho, y = value, col = name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+
+ggplot(df, aes(x = syn_ho, y = nonsyn_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Synonymous adaptive heterozygosity") +
+  ylab("Non-synonymous adaptive heterozygosity")
+
+
+ggplot(df, aes(x = neutral_ho, y = filter_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Freq filtered heterozygosity")
+dev.off()
+```
+
+```{r}
+cols = c("GEA no genes" = "cyan", "GEA genes" = "magenta")
 
 pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_ho.pdf"), width = 6, height = 5)
-cols = c("GEA" = "#00d5d1", "GEA genes" = "#e800a6")
+cols = c("GEA no genes" = "#00d5d1", "GEA genes" = "#e800a6")
 ggplot(df) +
-  geom_point(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = "GEA"), alpha = 0.5) +
+  geom_point(aes(x = neutral_ho, y = geanogenes_ho, color = "GEA no genes", fill = "GEA no genes"), alpha = 0.5) +
   geom_point(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = "GEA genes"), alpha = 0.5) +
-  geom_smooth(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = "GEA"), method = "lm") +
+  geom_smooth(aes(x = neutral_ho, y = geanogenes_ho, color = "GEA no genes", fill = "GEA no genes"), method = "lm") +
   geom_smooth(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = "GEA genes"), method = "lm") +
   theme_classic() +
   scale_color_manual(values = cols) +

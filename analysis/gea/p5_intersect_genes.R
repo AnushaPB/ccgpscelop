@@ -79,14 +79,23 @@ intersect_genes <- function(prefix){
   write_csv(genes_org, here(outpath, paste0(prefix, "_genes_list.csv")))
 
   # Calculate statistics
+  summary_stats <- data.frame(
+    Statistic = c("Number of RDA + Linked SNPs", "Number of SNPs in genes", "Number of unique genes", "Number of unique genes with UniProtID (GO genes)"),
+    Value = c(nrow(rda), nrow(gene_pos), gene_pos$full_name %>% unique() %>% length(), genes_org$full_name %>% unique() %>% length())
+  )
+
+  # Print statistics
   cat(
     "Summary Statistics:\n",
     "-------------------\n",
-    sprintf("Number of RDA + Linked SNPs: %d\n", nrow(rda)),
-    sprintf("Number of SNPs in genes: %d\n", nrow(gene_pos)),
-    sprintf("Number of unique genes: %d\n", gene_pos$full_name %>% unique() %>% length()),
-    sprintf("Number of unique genes with UniProtID (GO genes): %d\n", genes_org$full_name %>% unique() %>% length())
+    sprintf("Number of RDA + Linked SNPs: %d\n", summary_stats$Value[1]),
+    sprintf("Number of SNPs in genes: %d\n", summary_stats$Value[2]),
+    sprintf("Number of unique genes: %d\n", summary_stats$Value[3]),
+    sprintf("Number of unique genes with UniProtID (GO genes): %d\n", summary_stats$Value[4])
   )
+
+  # Save statistics to a file
+  write_csv(summary_stats, here(outpath, paste0(prefix, "_summary_stats.csv")))
 }
 
 
