@@ -24,7 +24,6 @@ outpath <- here("analysis", "genetic_diversity", "outputs")
 plotpath <- here("analysis", "genetic_diversity", "plots")
 
 coords <- get_coords(sf = TRUE)
-het <- get_het()
 dem <- get_dem(r= TRUE)
 ```
 
@@ -53,7 +52,7 @@ lgm <- rast(here("data", "env", "california_chelsa_pmip_ccsm4.tif"))
 names(lgm) <- "lgm"
 
 # Get paleoclimate data and convert from C/10 to C
-lig <- get_paleovars("lig")$lig$bio_1/10 
+lig <- get_paleovars("lig", cache = TRUE)$lig$bio_1/10 
 paleovars <- get_paleovars(c("lh", "mh", "eh", "yds", "ba", "hs1", "lig", "mis19"))
 paleobio1 <- map(paleovars, ~.x$bio_1) %>% rast()/10
 
@@ -67,6 +66,7 @@ names(lgm_lig) <- "lgm_lig"
 # Calculate climate stability
 chelsabio1 <- list(cur, lgm)
 csi_stack <- c(as.list(chelsabio1), as.list(paleobio1)) %>% map(~resample(.x, cur)) %>% rast()
+names(csi_stack)
 
 # Calculate the variance of the four raster stacks
 csi_custom <- app(csi_stack, var, na.rm = FALSE)
@@ -224,6 +224,9 @@ tmean_mod_df <-
   mutate(tmean_dif = tmean_cur - tmean_his) %>%
   right_join(coords) %>% 
   dplyr::select(SampleID, tmean_dif, tmean_cur)
+
+tmean_dif <- tmean_dif_r %>% project("epsg:3310")
+names(tmean_dif) <- "tmean_dif"
 ```
 
 Combine into a raster stack:
@@ -233,7 +236,7 @@ env_list <-
     NDVI = ndvi,
     bio1 = bio1,
     gHM = ghm,
-    tmean_dif = tmean_dif_r,
+    tmean_dif = tmean_dif,
     cur_lgm = cur_lgm,
     lgm_lig = lgm_lig
   )
@@ -251,20 +254,39 @@ iwalk(env_list, ~writeRaster(.x, here(path, paste0(.y, ".tif")), overwrite = TRU
 ```
 
 ```{r}
+# TEMPORARY CHECK
+het1 <- get_het()
+het2 <- read_table(here("analysis/gea/outputs/nogea.het")) %>% mutate(Ho = 1 - `O(HOM)`/`N(NM)`) %>%  rename(SampleID = IID)
+het1$SampleID[!(het1$SampleID %in% het2$SampleID)]
+het1 <- get_het() %>% filter(SampleID %in% het2$SampleID)
+cor(het1$Ho, het2$Ho, use = "pairwise.complete.obs")
+
+depth <-  
+  read_table(here("data", "ccgp_data", "58-Sceloporus.idepth")) %>% 
+  rename(SampleID = INDV) 
+
 test_df <- 
-  left_join(paleoclim_mod_df, het) %>% 
+  left_join(paleoclim_mod_df, het1) %>% 
   left_join(q_mod_df) %>%
   left_join(tmean_mod_df) %>%
   left_join(env_mod_df) %>%
   drop_na(Ho, cur_lgm, lgm_lig, csi_custom, Q) %>%
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14")  
-cor(test_df$Ho, test_df[, c("cur_lgm", "lgm_lig", "csi_custom")], use = "pairwise.complete.obs")
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
 
-pdf(here(plotpath, "paleoclim.pdf"), width = 13, height = 4.5)
+cor(test_df[, c("cur_lgm", "lgm_lig", "csi_custom", "tmean_dif")], use = "pairwise.complete.obs")
+cor(test_df$Ho, test_df[, c("cur_lgm", "lgm_lig", "csi_custom", "tmean_dif")], use = "pairwise.complete.obs")
+
+png(here(plotpath, "paleoclim.png"), width = 400, height = 400)
+plot(test_df$cur_lgm, test_df$Ho)
+dev.off()
+
+pdf(here(plotpath, "paleoclim.pdf"), width = 20, height = 4.5)
+
 plot_grid(
   ggmap(cur_lgm),
   ggmap(lgm_lig),
   ggmap(csi_custom),
+  ggmap(project(tmean_dif, csi_custom)),
   nrow = 1
 )
 
@@ -272,14 +294,15 @@ plot_grid(
   gglm("cur_lgm", "Ho", test_df),
   gglm("lgm_lig", "Ho", test_df),
   gglm("csi_custom", "Ho", test_df),
+  gglm("tmean_dif", "Ho", test_df),
   nrow = 1
 )
-
 
 plot_grid(
   ggpartial("cur_lgm", "Ho", c("cur_lgm", "Q"), test_df, col = "Ho", cex = 2),
   ggpartial("lgm_lig", "Ho", c("lgm_lig", "Q"), test_df, col = "Ho", cex = 2),
   ggpartial("csi_custom", "Ho", c("csi_custom", "Q"), test_df, col = "Ho", cex = 2),
+  ggpartial("tmean_dif", "Ho", c("tmean_dif", "Q"), test_df, col = "Ho", cex = 2),
   nrow = 1
 )
 
@@ -287,19 +310,14 @@ plot_grid(
   gglm("lgm_lig", "Ho", test_df),
   gglm("bio1", "Ho", test_df),
   gglm("tmean_dif", "Ho", test_df),
+  gglm("Q", "Ho", test_df),
   nrow = 1
 )
 
-plot_grid(
-  ggpartial("lgm_lig", "Ho", c("lgm_lig", "Q", "bio1", "tmean_dif"), test_df, col = "Ho", cex = 2),
-  ggpartial("bio1", "Ho",  c("lgm_lig", "Q", "bio1", "tmean_dif"), test_df, col = "Ho", cex = 2),
-  ggpartial("tmean_dif", "Ho",  c("lgm_lig", "Q", "bio1", "tmean_dif"), test_df, col = "Ho", cex = 2),
-  nrow = 1
-)
 dev.off()
 
 mod <- lm(Ho ~ Q + lgm_lig + bio1 + tmean_dif, data = test_df)
-gg_df <- test_df %>% mutate(resids = resids, Predicted = fitted(mod), resids = residuals(mod)) %>% left_join(coords)
+gg_df <- test_df %>% mutate(Predicted = fitted(mod), resids = residuals(mod)) %>% left_join(coords)
 pdf(here(plotpath, "paleoclim_residuals.pdf"), width = 5, height = 4.5)
 ggplot(gg_df) +
   geom_sf(data = ca) +
@@ -320,11 +338,11 @@ dev.off()
 
 # Create model data
 ```{r}
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "cur_lgm", "lgm_lig", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "cur_lgm", "lig_lgm", "x", "y")
 
 mod_df <- 
   get_coords() %>% 
-  left_join(get_het()) %>%
+  left_join(get_het("58-Sceloporus_chr.het")) %>%
   left_join(genes) %>%
   left_join(env_mod_df) %>%
   left_join(paleoclim_mod_df) %>%
@@ -332,11 +350,13 @@ mod_df <-
   left_join(csi_mod_df) %>%
   left_join(glacier_mod_df) %>%
   left_join(tmean_mod_df) %>%
+  # Replace csi_past with csi_custom
   mutate(csi_past = csi_custom) %>%
   dplyr::select(Ho, Ho_gea, SampleID, geometry, all_of(mod_vars)) %>%
   drop_na(Ho) %>%
   # REMOVE CHANNEL ISLAND SAMPLE
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
+  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
 
 nrow(mod_df) # 160
 
@@ -376,7 +396,7 @@ mod_sf <- st_as_sf(mod_df_imputed_scaled) %>% st_transform(3310)
 ```{r}
 export_df <- 
   st_drop_geometry(mod_df_imputed) %>% 
-  select(SampleID, x, y, everything(), -geometry)
+  dplyr::select(SampleID, x, y, everything(), -geometry)
 write_csv(export_df, here(outpath, "model_df.csv"))
 ```
 
@@ -401,7 +421,7 @@ high_corr_pairs
 # cur_lgm, csi_past, and lgm_lig are all correlated
 
 # Uncorrelated set of model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
 ```
 
 # Run Ho models
@@ -507,9 +527,8 @@ f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 # Compare full model and best model
 full_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
 #best_model <- errorsarlm(f_best, data = mod_sf, listw = listw, zero.policy = TRUE)
-
-full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-impacts_model <- impacts(full_model, listw = listw, tr = TRUE) 
+#full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+#impacts_model <- impacts(full_model, listw = listw, tr = TRUE) 
 
 # Significant variables are the same between the full model and the best model
 broom::tidy(full_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
@@ -521,7 +540,16 @@ summary(best_model)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
 r2_alternative <- cor(sem_model$fitted.values, sem_model$y)^2
-r2_alternative # 50%
+print(r2_alternative) # 50%
+
+# McFadden's pseudo R²
+# Fit a null model with only an intercept
+sem_null <- errorsarlm(Ho ~ 1, data = mod_sf, listw = listw, zero.policy = TRUE)
+# Extract log-likelihoods and compute McFadden's pseudo R²
+ll_model <- as.numeric(logLik(sem_model))
+ll_null <- as.numeric(logLik(sem_null))
+pseudo_r2 <- 1 - (ll_model / ll_null)
+print(pseudo_r2) # -0.02 ... this is an understimate 
 ```
 
 ## Variance partioning analysis

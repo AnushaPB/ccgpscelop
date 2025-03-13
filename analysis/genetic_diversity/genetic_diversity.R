@@ -1,11 +1,11 @@
 
 
-get_het <- function(){
+get_het <- function(file = "58-Sceloporus.het"){
   # callable sites for denominator
   callable <- read.csv(here("data_processing", "callable_counts.csv"))
   callable_sites <- callable %>% pull(callable_sites)
 
-  het <- format_het(here("analysis", "genetic_diversity", "outputs", "58-Sceloporus.het"), callable_sites = callable_sites)
+  het <- format_het(here("analysis", "genetic_diversity", "outputs", file), callable_sites = callable_sites)
   
   if ("IID" %in% names(het)) het$SampleID <- het$IID
   if ("INDV" %in% names(het)) het$SampleID <- het$INDV

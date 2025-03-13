@@ -2,8 +2,9 @@
 source activate ccgpscelop
 BASE_PATH=../../data/ccgp_data
 # !!! NOTE: running into issues with this file so currently het/window_pi was created on Rancor using Anne's 58-Sceloporus_annotated plink files
-PLINK=$BASE_PATH/58-Sceloporus_complete_coords_annotated_chr
-PLINK_PRUNED=$BASE_PATH/58-Sceloporus_complete_coords_pruned_0.6_chr
+PLINK=$BASE_PATH/58-Sceloporus_complete_coords_annotated
+PLINK_CHR=$BASE_PATH/58-Sceloporus_complete_coords_annotated_chr
+PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6_chr
 
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
@@ -17,8 +18,18 @@ PLINK_PRUNED=$BASE_PATH/58-Sceloporus_complete_coords_pruned_0.6_chr
 # set const-fid to set FID (population ID) to 0; otherwise Error: Multiple instances of '_' in sample ID.
 plink --bfile $PLINK --het --out outputs/58-Sceloporus --allow-extra-chr
 
+# Calculate heterozygosity for only chromosomes
+plink --bfile $PLINK_CHR --het --out outputs/58-Sceloporus_chr --allow-extra-chr
+
 # Calculate heterozygosity from pruned data
 plink --bfile $PLINK_PRUNED --het --out outputs/58-Sceloporus_pruned --allow-extra-chr
 
 # PCA ---------------------------------------------------------------------------------
 plink --bfile $PLINK_PRUNED --pca 3 --out outputs/58-Sceloporus_pca
+
+# Run PCA for each chromosome
+for i in {1..11}
+do
+    plink --bfile $PLINK_PRUNED --pca 3 --out outputs/58-Sceloporus_pca_chr$i --allow-extra-chr --chr $i
+done
+
