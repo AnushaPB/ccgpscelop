@@ -1,8 +1,8 @@
 get_paleovars <- function(paleovars = c("mis19", "lig", "lgm", "hs1", "ba", "yds", "eh", "mh", "lh", "cur"), cache = FALSE, process = TRUE) {
-  ca <- get_ca()
+  coords <- get_coords(sf = TRUE)
   # download data
   walk(paleovars, ~ {
-    rpaleoclim::paleoclim(.x, "2_5m", region = ext(ca), cache_path = here("data", "env", "paleoclim"))
+    rpaleoclim::paleoclim(.x, "2_5m", region = st_bbox(coords), cache_path = here("data", "env", "paleoclim"))
   })
 
   # Define the file names and paths
@@ -13,6 +13,7 @@ get_paleovars <- function(paleovars = c("mis19", "lig", "lgm", "hs1", "ba", "yds
   # Load and process the data using purrr
   if (process) {
     env_list <- purrr::map(file_paths, ~ {
+      ca <- get_ca()
       data <- rpaleoclim::load_paleoclim(.x)
       data <- terra::crop(data, ca)
       data <- terra::mask(data, ca)
@@ -33,6 +34,7 @@ get_paleovars <- function(paleovars = c("mis19", "lig", "lgm", "hs1", "ba", "yds
     # Add unique names
     # Note: doesn't work to just turn list into stack, the names will be the list names plus the index
     env_list_names <- unlist(imap(env_list, ~paste0(.y, "_", names(.x))))
+    env_list <- map(env_list, ~terra::crop(.x, ext(coords)))
     env_stack <- rast(env_list)
     names(env_stack) <- env_list_names
     writeRaster(env_stack, path, overwrite = TRUE)
