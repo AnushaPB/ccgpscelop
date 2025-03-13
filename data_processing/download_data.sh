@@ -17,10 +17,19 @@ rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/58-Sceloporus_callabl
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.coords.txt ../data/ccgp_data
 
 # VCF files:
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_annotated.vcf.gz ../data/ccgp_data
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_annotated.vcf.gz.csi ../data/ccgp_data
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_pruned_0.6.vcf.gz ../data/ccgp_data
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/58-Sceloporus_complete_coords_pruned_0.6.vcf.gz.csi ../data/ccgp_data
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_complete_coords_annotated.vcf.gz ../data/ccgp_data
+#rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_complete_coords_annotated.vcf.gz .
+#rsync --list-only hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_complete_coords_annotated.vcf.gz 
+
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_complete_coords_annotated.vcf.gz.csi ../data/ccgp_data
+#rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_complete_coords_annotated.vcf.gz.csi .
+
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus/58-Sceloporus_annotated_pruned_0.6.vcf.gz ../data/ccgp_data
+#rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz .
+
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz.csi ../data/ccgp_data
+#rsync -avz hgdownload.soe.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/CCGP/58-Sceloporus_annotated_pruned_0.6.vcf.gz.csi .
+
 
 # Depth and missingness:
 rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.idepth ../data/ccgp_data
