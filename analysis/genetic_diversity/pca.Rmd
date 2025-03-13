@@ -8,6 +8,34 @@ library(here)
 library(cowplot)
 source(here("general_functions.R"))
 outpath <- here("analysis", "genetic_diversity", "outputs")
+plotpath <- here("analysis", "genetic_diversity", "plots")
+ca <- get_ca()
+```
+
+```{r}
+pca_files <- list.files(outpath, pattern = "pca_chr.*\\.eigenvec$", full.names = TRUE)
+chr_names <- str_extract(pca_files, "chr\\d+") 
+mod_df <- read_csv(here(outpath, "model_df.csv"))
+pca_chr <- 
+  map2(pca_files, chr_names, ~read_table(.x, col_names = FALSE) %>% mutate(scaffold = .y)) %>%
+  bind_rows() %>%
+  rename(SampleID = X2, PC1 = X3, PC2 = X4, PC3 = X5) %>%
+  right_join(get_coords(sf = TRUE)) %>%
+  st_as_sf() %>%
+  drop_na() %>%
+  left_join(mod_df, by = "SampleID") 
+
+pdf(here(plotpath, "pca_chr.pdf"), width = 10, height = 10)
+ggplot(pca_chr) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = PC1)) +
+  facet_wrap(~scaffold) +
+  theme_void() +
+  scale_color_viridis_c(option = "turbo") +
+  theme(legend.position = "none")
+dev.off()
+```
+```{r}
 pca <- 
   read_table(here(outpath, "58-Sceloporus_pca.eigenvec"), col_names = FALSE) %>%
   rename(SampleID = X2, PC1 = X3, PC2 = X4, PC3 = X5) %>%
