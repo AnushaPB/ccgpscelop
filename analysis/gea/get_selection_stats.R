@@ -95,11 +95,27 @@ get_gea_genes <- function(nonsyn = FALSE){
   return(gea)
 }
 
+get_goi_names <- function(){
+  goi_names <- c("Heat shock", "Inositol 1,4,5-trisphosphate receptor type 1", "Inositol 1,4,5-trisphosphate receptor type 2", "Neuropeptide FF receptor 1", "Calcitonin receptor", "Growth hormone receptor", "Transient receptor potential cation channel subfamily V member 3", "Transient receptor potential cation channel subfamily A member 1", "TRPM8", "Endothelial PAS domain-containing protein 1")
+  names(goi_names) <- c(
+    "HSP",              # Heat shock → HSP (Heat Shock Protein)
+    "IP3R1",            # Inositol 1,4,5-trisphosphate receptor type 1
+    "IP3R2",            # Inositol 1,4,5-trisphosphate receptor type 2
+    "NPFFR1",           # Neuropeptide FF receptor 1
+    "CALCR",            # Calcitonin receptor
+    "GHR",              # Growth hormone receptor
+    "TRPV3",            # TRP cation channel subfamily V member 3
+    "TRPA1",            # TRP cation channel subfamily A member 1
+    "TRPM8",            # Already abbreviated
+    "EPAS1"             # Endothelial PAS domain-containing protein 1
+  )
+  return(goi_names)
+}
+
 get_goi <- function(type = "genes"){
   gea <- get_gea()
 
-  goi_names <- c("Heat shock", "Inositol 1,4,5-trisphosphate receptor type 1", "Inositol 1,4,5-trisphosphate receptor type 2", "Neuropeptide FF receptor 1", "Calcitonin receptor", "Growth hormone receptor", "Transient receptor potential cation channel subfamily V member 3", "Transient receptor potential cation channel subfamily A member 1", "TRPM8", "Endothelial PAS domain-containing protein 1")
-
+  goi_names <- get_goi_names()
   message("Genes of interest: ", paste(goi_names, collapse = ", "))
 
   # Get GEA SNPs that fall within GOI
