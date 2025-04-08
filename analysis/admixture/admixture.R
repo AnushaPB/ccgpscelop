@@ -22,6 +22,18 @@ get_cv <- function(id = "58-Sceloporus_pruned_0.6_thinned_10kb", K = 2:15){
   return(df)
 }
 
+get_pop <- function(K = 9){
+  path <- here("analysis", "admixture", "outputs")
+  pops <- as.character(1:K)
+  names(pops) <- pops
+  purrr::map(
+    pops,
+    ~readr::read_table(here(path, paste0("k", K, "_pop", .x, ".txt")), col_names = FALSE)
+  ) %>% 
+  bind_rows(.id = "pop") %>%
+  rename(SampleID = X1)
+}
+
 get_Q <- function(K, id = "58-Sceloporus_pruned_0.6_thinned_10kb", qmat_only = FALSE){
   # use fam to get sampleID order/names 
   fam <- data.frame(read_table(here("analysis", "admixture", "outputs", paste0(id, ".fam")), col_names = FALSE))
