@@ -1,0 +1,159 @@
+---
+title: "Genetic diversity"
+output:
+  github_document:
+    toc: TRUE
+---
+
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(tigris)
+library(raster)
+library(igraph)
+library(sp)
+library(gridExtra)
+library(wingen)
+devtools::load_all()
+
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+source(here("general_functions.R"))
+```
+
+```{r, echo = FALSE, message = FALSE, include=FALSE}
+# Load the U.S. state boundaries data
+ca <- get_ca()
+dem <- get_dem()
+coords <- get_coords(sf = TRUE)
+```
+
+
+# Heterozygosity
+```{r heterozygosity, fig.width = 7, fig.height = 7}
+# get het data
+het <- get_het()
+
+# Combine coords and het data
+coords <- 
+  left_join(coords, het, by = "SampleID") %>% 
+  drop_na(Ho)
+
+ggplot(coords) + 
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = Ho), col = "#00000087", pch = 21, cex = 3) +
+  scale_fill_viridis_c(option = "mako") +
+  theme_void()
+```
+
+```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Convert coordinates to a raster layer with 10km resolution
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+# Calculate windowed mean of Ho
+window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+
+# Plot windowed mean of Ho
+ggplot_gd(window_Ho, bkg = ca_proj, col = magma(100))
+
+# Perform kriging interpolation on windowed mean of Ho
+krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
+
+# Apply a mask to the kriging result
+count_mask <- resample(window_Ho$sample_count, krig_Ho)
+mask_Ho <- mask_gd(krig_Ho, ca_proj)
+mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 0.1)
+
+# Plot masked kriging result
+ggplot_gd(mask_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "Ho")
+
+
+ggplot_gd(window_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "Ho")
+```
+
+# ROH
+```{r ROH, fig.width = 7, fig.height = 7}
+roh <- get_roh()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = froh), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = log(froh + 1e-6)), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = froh0), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ labs(fill = "FROH") +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, fill = log(froh0 + 1e-6)), col = "#00000087", pch = 21, cex = 2.5) +
+ scale_fill_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ labs(fill = "log(FROH + 1e-6)") +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_sf(aes(geometry = geometry, col = pop), cex = 2.5) +
+ theme_void()
+
+ggplot(roh) +
+ geom_sf(data = ca) +
+ geom_raster(data = dem, aes(x = x, y = y, fill = elev)) + 
+ geom_sf(aes(geometry = geometry, col = log(froh + 1e-6)), pch = 16, cex = 2.5) +
+ scale_color_viridis_c(option = "inferno", labels = scales::label_number(scale = 1, accuracy = 0.001)) +
+ scale_fill_gradient(low = "gray40", high = "white", na.value = NA) +
+ theme_void()
+
+```
+
+
+```{r roh window, fig.width = 7, fig.height = 7, eval = FALSE}
+# project roh 
+coords_proj <- roh %>% st_as_sf() %>% st_transform(3310)
+
+# Calculate windowed mean of froh
+window_froh <- window_general(coords_proj$froh0, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
+
+# Plot windowed mean of froh
+ggplot_gd(window_froh, bkg = ca_proj, col = magma(100))
+
+# Perform kriging interpolation on windowed mean of froh
+krig_froh <- krig_gd(window_froh, grd = lyr, disagg_grd = 2)
+
+# Apply a mask to the kriging result
+count_mask <- resample(window_froh$sample_count, krig_froh)
+mask_froh <- mask_gd(krig_froh, ca_proj)
+#mask_froh <- mask_gd(mask_froh, count_mask, minval = 1)
+
+# Plot masked kriging result
+ggplot_gd(mask_froh, bkg = ca_proj, col = magma(100))
+```

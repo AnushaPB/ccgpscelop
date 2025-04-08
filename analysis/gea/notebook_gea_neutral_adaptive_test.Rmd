@@ -1,0 +1,540 @@
+```{r}
+library(vcfR)
+library(algatr)
+library(tidyverse)
+library(sf)
+library(terra)
+library(here)
+library(ggpubr)
+library(performance)
+library(gstat)
+library(sp)
+library(spatialreg)
+library(spdep)
+library(cowplot)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+
+plotpath <- here("analysis", "gea", "plots")
+outpath <- here("analysis", "gea", "outputs")
+```
+
+```{r}
+# Read in het data
+callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
+
+neutral <- 
+  format_het(here("analysis", "gea", "outputs", "frqmatch.het"), callable_sites = callable_sites) %>%
+  mutate(neutral_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, neutral_ho)
+
+gea <- 
+  format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%
+  mutate(gea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, gea_ho)
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, genes_ho)
+
+nonsyn <- 
+  format_het(here("analysis", "gea", "outputs", "nonsyn.het"), callable_sites = 1) %>%
+  mutate(nonsyn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, nonsyn_ho)
+
+syn <- 
+  format_het(here("analysis", "gea", "outputs", "syn.het"), callable_sites = 1) %>%
+  mutate(syn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, syn_ho)
+
+nonsynnotgea <- 
+  format_het(here("analysis", "gea", "outputs", "nonsynnotgea.het"), callable_sites = 1) %>%
+  mutate(nonsynnotgea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, nonsynnotgea_ho)
+
+allnonsyn <- 
+  format_het(here("analysis", "gea", "outputs", "allnonsyn.het"), callable_sites = 1) %>%
+  mutate(allnonsyn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, allnonsyn_ho)
+
+allnonsyn_frqmatch <- 
+  format_het(here("analysis", "gea", "outputs", "allnonsyn_frqmatch.het"), callable_sites = 1) %>%
+  mutate(allnonsynfrq_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, allnonsynfrq_ho)
+
+pop_df <- get_pops()
+
+df <- 
+  left_join(neutral, gea, by = "IID") %>%
+  left_join(genes, by = "IID")  %>%
+  left_join(nonsyn, by = "IID") %>%
+  left_join(syn, by = "IID") %>%
+  left_join(pop_df, by = c("IID" = "SampleID")) %>%
+  left_join(nonsynnotgea, by = "IID") %>%
+  left_join(allnonsyn, by = "IID") %>%
+  left_join(allnonsyn_frqmatch, by = "IID") %>%
+  # Remove channel island
+  left_join(read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")), by = c("IID" = "SampleID")) %>%
+  drop_na(Ho)
+```
+
+```{r}
+df$socal <- df$cluster == 9
+names(df)
+mod_vars <- c("neutral_ho", "NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "genes_ho", "gea_ho", "nonsyn_ho", "syn_ho", "nonsynnotgea_ho", "allnonsyn_ho", "allnonsynfrq_ho")
+mod_df <- df %>% mutate(across(any_of(mod_vars), scale))
+mod <- lm(genes_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = mod_df)  
+broom::tidy(mod) %>% 
+  filter(p.value < 0.05) %>%
+  arrange(desc(abs(estimate)))
+
+lm(syn_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = df) %>% 
+broom::tidy() %>% 
+filter(p.value < 0.05)
+
+lm(nonsyn_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = df) %>% broom::tidy() %>% 
+filter(p.value < 0.05)
+
+```
+
+```{r}
+gg_df <-
+ df %>% 
+ pivot_longer(c(ends_with("_ho"), -neutral_ho)) %>%
+ # Get socal cluster
+ mutate(socal = cluster == 9)
+
+pdf(here(plotpath, "gea_test.pdf"), width = 7, height = 6)
+
+ggplot(gg_df, aes(x = neutral_ho, y = value)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "SoCal") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y")  
+
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  #geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "Cluster") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y") 
+
+ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  #geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "Cluster") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y")  
+  
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = socal)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "SoCal") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y")  
+
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", aes(lty = name)) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(1, 16)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+ggplot(filter(gg_df, name %in% c("allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", aes(lty = name)) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(1, 16)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Frequency-adjusted non-synonymous heterozygosity") 
+
+
+ggplot(df, aes(x = syn_ho, y = nonsyn_ho, col = socal)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Synonymous adaptive heterozygosity") +
+  ylab("Non-synonymous adaptive heterozygosity")
+
+
+ggplot(df, aes(x = Ho, y = neutral_ho, col = socal)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Genome-wide heterozygosity")
+dev.off()
+```
+
+```{r}
+coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transform(3310)
+
+coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho) 
+
+gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
+genes_mod <- lm(nonsyn_ho ~ neutral_ho, data = coords)
+coords$gea_resid <- residuals(gea_mod)
+coords$genes_resid <- residuals(genes_mod)
+
+gg_df <- 
+  coords %>% 
+  pivot_longer(cols = c("gea_resid", "genes_resid"), names_to = "type", values_to = "Residuals") %>%
+  mutate(type = case_when(
+    type == "gea_resid" ~ "GEA",
+    type == "genes_resid" ~ "GEA genes"
+  )) %>%
+  filter(type == "GEA genes")
+
+ca <- get_ca()
+plt1 <- 
+  ggplot(coords) +
+  geom_point(aes(x = neutral_ho, y = nonsyn_ho, fill = genes_resid), pch = 21, cex = 2) +
+  geom_smooth(aes(x = neutral_ho, y = nonsyn_ho), method = "lm") +
+  theme_classic() +
+  scale_color_manual(values = cols) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(col = "", fill = "Residuals") +
+  xlab("Genome-wide genetic diversity") +
+  ylab("Adaptive genetic diversity") 
+
+plt2 <- 
+  ggplot(gg_df) +
+  #geom_sf(data = ca) +
+  geom_sf(aes(fill = Residuals), pch = 21, col = "gray20", cex = 2) + 
+  # divergent color scale
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  facet_wrap(~type) +
+  theme_void()
+
+plt3a <- 
+  ggplot(coords) +
+    #geom_sf(data = ca) +
+    geom_sf(aes(col = neutral_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "Genome-wide\ngenetic diversity") +
+    theme_void()
+
+plt3c <- 
+  ggplot(coords) +
+    #geom_sf(data = ca) +
+    geom_sf(aes(col = nonsyn_ho)) +
+    scale_color_viridis_c(option = "mako") +
+    labs(col = "Adaptive\ngenetic diversity") +
+    theme_void()
+
+
+library(cowplot)
+# Arrange plt3a, plt3b, plt3c in a single row
+plt3 <- plot_grid(plt3a, plt3c, nrow = 1)
+
+# Arrange plt1 and plt2 in a single row
+plt12 <- plot_grid(plt1, plt2, nrow = 1, rel_widths = c(2, 3), labels = c("B", "C"))
+
+# Arrange plt3 and plt12 in two rows
+final_plot <- plot_grid(plt3, plt12, nrow = 2, labels = c("A", "", ""))
+
+pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_resid.pdf"), width = 10, height = 7)
+final_plot
+dev.off()
+```
+
+# Spatial models
+```{r}
+coords <- coords %>% 
+  filter(IID != "Scelocci_CCGPMC_MW01-3-14") 
+nrow(coords)
+
+# Run OLS and get residuals
+f <- formula(nonsyn_ho ~ neutral_ho)
+ols_model <- lm(f, data = coords)
+coords$ols_resids <- residuals(ols_model)
+
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
+
+pdf(here(plotpath, "ols_variogram.pdf"))
+plot(ols_variogram, ols_vgm[["Exp"]], main = "OLS Residuals Variogram (Exponential)")
+plot(ols_variogram, ols_vgm[["Sph"]], main = "OLS Residuals Variogram (Spherical)")
+plot(ols_variogram, ols_vgm[["Gau"]], main = "OLS Residuals Variogram (Gaussian)")
+dev.off()
+
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
+
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = coords, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids <- residuals(sem_model)
+
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids, listw)$estimate
+moran.test(coords$sem_resids, listw)$estimate
+
+coords$sem_fitted <- sem_model$fitted
+coords$ols_fitted <- ols_model$fitted
+
+# Plot predicted vs observed
+pdf(here(plotpath, "predicted_vs_observed.pdf"), width = 4, height = 4)
+ggplot(coords, aes(x = ols_fitted, y = genes_ho)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm") +
+  xlab("Predicted Adaptive Heterozygosity") +
+  ylab("Observed Adaptive Heterozygosity") +
+  ggtitle("OLS") +
+  theme_classic()
+ggplot(coords, aes(x = sem_fitted, y = genes_ho)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_smooth(method = "lm") +
+  xlab("Predicted Adaptive Heterozygosity") +
+  ylab("Observed Adaptive Heterozygosity") +
+  ggtitle("SEM") +
+  theme_classic()
+dev.off()
+```
+
+### Residual models
+```{r}
+mod_vars <- c("NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
+mod_df <- coords
+mod_df_scaled <- mod_df %>% mutate(across(all_of(mod_vars), scale)) 
+```
+
+```{r}
+f <- paste("ols_resids ~", paste(paste0(mod_vars), collapse = " + "))
+mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+summary(mod)
+AIC(mod) 
+car::vif(mod) 
+# Get RSQ
+summary(mod) # R^2 = 0.23
+
+coords$ols_resids2 <- residuals(mod)
+
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids2 ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
+
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
+
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = mod_df_scaled, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids2 <- residuals(sem_model)
+coords$sem_fitted2 <- sem_model$fitted
+summary(sem_model)
+
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids2, listw)$estimate # 0.41
+moran.test(coords$sem_resids2, listw)$estimate # -0.06
+
+# Get significant variables
+sig_vars <-
+  broom::tidy(sem_model) %>% 
+  filter(p.value < 0.05, term != "(Intercept)", term != "lambda") %>% 
+  arrange(estimate) %>%
+  pull(term)
+
+pdf(here(plotpath, "sp_resids_all.pdf"), width = 22, height = 7)
+gglm_ls <- map(mod_vars, ~gglm(x = .x, y = "ols_resids", mod_df))
+ggpartial_ls <- map(mod_vars, ~ggpartial(x = .x, y = "ols_resids", f = mod_vars, col = .x, df = mod_df))
+do.call(
+  cowplot::plot_grid,
+  c(c(gglm_ls, ggpartial_ls), nrow = 2)
+)
+check_model(mod)
+dev.off()
+
+div_plt <- 
+  ggplot(coords, aes(x = neutral_ho, y = nonsyn_ho)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  stat_cor(method = "pearson", label.y = min(coords$nonsyn_ho) - 0.05) +
+  theme_classic() +
+  theme(legend.position = "none")
+
+resid_plt1 <-
+  ggplot(coords, aes(y = ols_fitted, x = nonsyn_ho)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Genome-wide diversity predicted adaptive heterozygosity") +
+  xlab("Observed adaptive heterozygosity") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  stat_cor(method = "pearson", label.y = min(coords$ols_fitted) - 0.05) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+resid_plt2 <-
+  ggplot(coords, aes(y = sem_fitted2, x = ols_resids)) +
+  geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Predicted adaptive residuals") +
+  xlab("Observed adaptive residuals") +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  stat_cor(method = "pearson", label.y = min(coords$sem_fitted2) - 0.01) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+ca <- get_ca()
+resid_map <- 
+  ggplot(coords) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = ols_resids), pch = 21, cex = 2.5) +
+  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
+  labs(fill = "Adaptive\nresiduals") +
+  theme_void()
+
+pdf(here(plotpath, "sp_resids_sig.pdf"), width = 17*0.8, height = 10*0.8)
+combo <- plot_grid(div_plt, resid_plt2, resid_map, nrow = 1)
+ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "ols_resids", f = mod_vars, col = "ols_resids", df = mod_df, cex = 2) +
+scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0))
+plot_grid(combo, plot_grid(plotlist = ggpartial_ls, nrow = 1, align = "hv"), nrow = 2, rel_heights = c(0.6, 0.5))
+dev.off()
+```
+
+### Adaptive diversity model 2
+```{r}
+f <- paste("nonsyn_ho ~ neutral_ho +", paste(paste0(mod_vars), collapse = " + "))
+mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+summary(mod)
+AIC(mod) 
+car::vif(mod) 
+# Get RSQ
+summary(mod) # R^2 = 0.60
+
+coords$ols_resids2 <- residuals(mod)
+
+# Fit variograms to the residuals
+ols_variogram <- variogram(ols_resids2 ~ 1, data = coords)
+ols_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(ols_variogram, model = vgm(.x)))
+names(ols_vgm) <- c("Exp", "Sph", "Gau")
+
+# Based on visual inspection, the exponential model seems to fit best
+# Get the range of the variogram (3 times the range parameter)
+vgm_range <- ols_vgm[["Exp"]] %>% filter(model == "Exp") %>% pull(range)
+print(vgm_range)
+
+# Create a spatial weights matrix using the range from the variogram
+nb <- dnearneigh(coords, d1 = 0, d2 = vgm_range)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+# Fit an SEM model
+sem_model <- errorsarlm(f, data = mod_df_scaled, listw = listw, zero.policy = TRUE)
+summary(sem_model)
+coords$sem_resids2 <- residuals(sem_model)
+coords$sem_fitted2 <- sem_model$fitted
+summary(sem_model)
+# Calculate Moran's I before and after accounting for spatial autocorrelation
+moran.test(coords$ols_resids2, listw)$estimate # 0.45
+moran.test(coords$sem_resids2, listw)$estimate # 0.02
+
+# TEMPROARY USE LM BECAUSE CERTAIN VARS ARE SIGNIFICANT FOR SEM THAT DONT MAKE SENSE (NEED TO FIGURE OUT PARTIAL REGRESSIONs)
+mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+sig_vars <-
+  broom::tidy(mod) %>% 
+  filter(p.value < 0.05, term != "(Intercept)", term != "lambda") %>% 
+  arrange(desc(abs(estimate))) %>%
+  pull(term)
+
+var_combos <- 
+  expand.grid(sig_vars, sig_vars) %>% 
+  filter(Var1 != Var2) %>% 
+  mutate(across(everything(), as.character)) %>%
+  filter(Var1 != "neutral_ho", Var2 != "neutral_ho")
+
+pdf(here(plotpath, "corplots.pdf"), width = 28, height = 7)
+gglm_ls <- pmap(var_combos, ~gglm(x = ..1, y = ..2, df = mod_df))
+cowplot::plot_grid(plotlist = gglm_ls, nrow = 2)
+dev.off()
+
+resid_plt2 <-
+  ggplot(coords, aes(y = sem_fitted2, x = nonsyn_ho)) +
+  geom_point(aes(col = nonsyn_ho), cex = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ylab("Predicted adaptive diversity") +
+  xlab("Observed adaptive diversity") +
+  scale_color_viridis_c(option = "mako") +
+  stat_cor(method = "pearson", label.y = min(coords$sem_fitted2) - 0.01) +
+  theme_classic() +
+  theme(legend.position = "none") 
+
+mod_vars2 <- c("neutral_ho", "NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
+pdf(here(plotpath, "sp_resids_sig2.pdf"), width = 16, height = 7)
+ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "nonsyn_ho", f = mod_vars2, col = "nonsyn_ho", df = mod_df, cex = 2))
+plot_grid(resid_plt2, plot_grid(plotlist = ggpartial_ls, nrow = 2, align = "hv"), ncol = 2, rel_widths = c(3, 5))
+dev.off()
+```
+ 
+# Future correlations
+```{r}
+files <- list.files(here("data", "env", "csi", "Layers", "future"), full.names = TRUE, pattern = "csi*")
+csi_future <- rast(map(files, rast))
+csi_future <- crop(csi_future, ca)
+csi_future <- mask(csi_future, ca)
+names(csi_future) <- c("SSP 1-2.6", "SSP 2-4.5", "SSP 3-7.0", "SSP 5-8.5")
+
+df_sf <- 
+  coords%>%
+  mutate(csi_future = extract(csi_future, .)[,2]) 
+
+pdf(here(plotpath, "future.pdf"), width = 12, height = 4)
+plt1 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = neutral_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Genome-wide heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$neutral_ho))
+plt2 <-
+  ggplot(df_sf, aes(x = 1 - csi_future, y = genes_ho)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Adaptive heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$genes_ho))
+plt3 <- 
+  ggplot(df_sf, aes(x = 1 - csi_future, y = sem_resids)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(x = "Future climate stability", y = "Residual adaptive heterozygosity") +
+  ggpubr::stat_cor(method = "pearson", label.x = min(1 - df_sf$csi_future), label.y = min(df_sf$sem_resids))
+
+plot_grid(plt1, plt2, plt3, nrow = 1)
+dev.off()
+```

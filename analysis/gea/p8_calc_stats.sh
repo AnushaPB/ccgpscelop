@@ -88,7 +88,7 @@ plink --bfile outputs/allnonsyn \
       --freq --allow-extra-chr \
       --out outputs/allnonsyn      
 
-Rscript pick_frqs.R
+Rscript script_pick_frqs.R
 
 plink --bfile outputs/nogeanogenes \
       --extract outputs/neutral_snp_frqmatch.txt \

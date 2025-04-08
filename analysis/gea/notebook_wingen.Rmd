@@ -1,0 +1,533 @@
+```{r}
+library(wingen)
+library(here)
+library(sf)
+library(tidyverse)
+library(terra)
+library(vcfR)
+library(cowplot)
+library(spdep)
+library(spatialreg)
+library(furrr)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
+# Load dosage data
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+dos <- read_table(here("analysis", "gea", "outputs", "nogea_thinned.raw"))
+
+# Load coords and model dataframe
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(coords, mod_df)
+
+# Subset to only samples in coords
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == gea_dos$IID))
+stopifnot(all(dos$IID == coords$SampleID))
+
+# Convert to heterozygosity using ifelse for matrices
+het <- dos[, -(1:6)]
+gea_het <- gea_dos[, -(1:6)]
+het <- matrix(ifelse(het == 1, 1, 0), nrow = nrow(het), ncol = ncol(het))
+gea_het <- matrix(ifelse(gea_het == 1, 1, 0), nrow = nrow(gea_het), ncol = ncol(gea_het))
+
+# Confirm conversion works (same number of 1s)
+stopifnot(sum(het == 1, na.rm = TRUE) == sum(dos[, -(1:6)] == 1, na.rm = TRUE))
+stopifnot(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+
+# Make test dataset with calculate heterozygosity
+test_df <- data.frame(Ho_gea = rowMeans(gea_het, na.rm = TRUE), Ho = rowMeans(het, na.rm = TRUE), coords)
+```
+
+```{r}
+# Create raster with 10km resolution
+lyr <- coords_to_raster(coords, res = 10000, buffer = 10)
+
+png(here(plotpath, "gea_genes.png"), width = 800, height = 800)
+sc <- preview_gd(lyr, coords, wdim = 9, sample_count = FALSE)
+#sc[sc == 0] <- NA
+#plot(sc)
+dev.off()
+
+# Load env list
+env_paths <- list.files(here("data", "env", "model_rasters"))
+env_list <- map(here("data", "env", "model_rasters", env_paths), rast)
+names(env_list) <- gsub(".tif", "", env_paths)
+# Resample all rasters to lyr
+env_list <- map(env_list, ~resample(.x, lyr))
+
+run_wingen <- function(wdim, min_n = 1, cache = TRUE, overwrite = TRUE) {
+  # Path to save output
+  path = here("analysis", "gea", "outputs", paste0("windowed_ho_gea_wdim_", wdim, "_min_n_", min_n, ".tif"))
+
+  # If file exists and cache is TRUE, return the raster
+  if (file.exists(path) && cache) {
+    stack <- rast(path)
+    return(stack)
+  }
+
+  # Set up parallel processing
+  future::plan("multisession", workers = 10)
+
+  # Custom function to run wingen on environmental data
+  run_wingen_env <- function(x){
+    custom <- function(x) mean(x, na.rm = TRUE)
+    w <- window_general(mod_df[[x]], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+    return(w[[1]]) 
+  } 
+
+  # run_wingen_env <- function(x){
+  #   custom <- function(x) mean(x, na.rm = TRUE)
+  #   env_df <- as.data.frame(env_list[[x]], xy = TRUE)
+  #   w <- window_general(env_df[[x]], env_df[, c("x", "y")], lyr, stat = custom, wdim = wdim, min_n = min_n)
+  #   return(w[[1]]) 
+  # } 
+  
+  # Check that order is the same
+  stopifnot(mod_df$SampleID == coords$SampleID)
+
+  # Run wingen on var columns in mod_df
+  mod_vars <- names(env_list)
+  names(mod_vars) <- mod_vars
+
+  # Check that all variables are in the model df
+  stopifnot(all(mod_vars %in% names(mod_df)))
+  
+  # Run wingen on environmental data
+  wenv <- purrr::map(mod_vars, run_wingen_env, .progress = TRUE)  
+  wenv <- rast(wenv)
+
+  # Run wingen on heterozygosity data
+  wg <- window_general(het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
+  wg_gea <- window_general(gea_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
+
+  # End parallel process
+  future::plan("sequential")
+  
+  stack <- c(wg[["Ho"]], wg_gea[["Ho"]], wenv)
+  names(stack) <- c("Ho", "Ho_gea", names(wenv))
+  writeRaster(stack, filename = path, overwrite = overwrite)
+
+  return(stack)
+}
+
+ca <- get_ca() %>% st_transform(st_crs(3310))
+
+# Run wingen
+# Mask to california so ocean values don't mess things up 
+options(future.globals.maxSize = 1e9)
+stack <- map(c(3, 5, 7, 9), ~mask(run_wingen(wdim = .x, min_n = 1, cache = TRUE), ca))
+names(stack) <- c("wdim3", "wdim5", "wdim7", "wdim9")
+
+pdf(here(plotpath, "wingen.pdf"), width = (5 * nlyr(stack[[1]]))/2, height = 10)
+map(stack, ~do.call(plot_grid, c(ggplot_gd(.x, ca), nrow = 2)))
+dev.off()
+```
+
+```{r}
+df <- as.data.frame(stack[[3]])
+cor_matrix <- cor(df, use = "pairwise.complete.obs")
+high_cor_pairs <- which(abs(cor_matrix) > 0.6 & abs(cor_matrix) < 1, arr.ind = TRUE)
+high_cor_pairs <- high_cor_pairs[high_cor_pairs[, 1] < high_cor_pairs[, 2], ]
+high_cor_pairs <- data.frame(
+  var1 = rownames(cor_matrix)[high_cor_pairs[, 1]],
+  var2 = colnames(cor_matrix)[high_cor_pairs[, 2]],
+  cor = cor_matrix[high_cor_pairs]
+)
+high_cor_pairs
+```
+
+# Models
+
+```{r}
+run_models <- function(stack, wdim){
+  # Model variables
+  # Note: Correlated variables were removed based on correlation matrix from previous step
+  mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "tmean_dif")
+
+  # Create dataframe from stack
+  df <- as.data.frame(stack, xy = TRUE) %>% drop_na(Ho, all_of(mod_vars))
+  scale_df <- df %>% mutate_all(scale)
+    
+  # Convert to sf and sp objects (sp needed for semivariograms)
+  df_sf <- st_as_sf(df, coords = c("x", "y"), crs = 3310)
+  sf_data_sp <- as(df_sf, "Spatial")
+
+  # Compute the semivariogram for heterozygosity
+  variogram_model <- gstat::variogram(Ho ~ 1, sf_data_sp)
+  vgm_model <- gstat::fit.variogram(variogram_model, model = gstat::vgm("Exp"))
+
+  # Get the range value and use as the radius (the distance at which the semivariogram reaches its sill)
+  radius <- vgm_model$range[2]
+
+  # Estimate neighborhood radius based on window size
+  #radius <- wdim * res(stack)[1] * sqrt(2)
+  message("Radius: ", radius)
+
+  # Create weights list based on neighborhood radius and coordinates
+  wcoords <- st_as_sf(scale_df, coords = c("x", "y"), crs = st_crs(3310))
+  nb <- dnearneigh(wcoords, d1 = 0, d2 = radius)
+  listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+  # Genome-wide diversity model
+  f_Ho <- paste("Ho ~", paste(mod_vars, collapse = " + "))
+  sem_Ho <- errorsarlm(f_Ho, data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Adaptive diversity model
+  f_Ho_gea <- paste("Ho_gea ~", paste(mod_vars, collapse = " + "))
+  sem_Ho_gea <- errorsarlm(f_Ho_gea, data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Adaptive diversity ~ genome-wide diversity model
+  sem_gendiv <- errorsarlm("Ho_gea ~ Ho", data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Get adaptive residuals and run residual model
+  df$resids <- residuals(sem_gendiv)
+  scale_df$resids <- df$resids
+  resid_f <- "resids ~ NDVI + gHM + bio1 + cur_lgm + tmean_dif"
+  sem_resid <- errorsarlm(resid_f, data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+  # Plots
+  create_plots(df, wdim)
+
+  # Combine and return models
+  models <- list(
+    sem_Ho = sem_Ho,
+    sem_Ho_gea = sem_Ho_gea,
+    sem_gendiv = sem_gendiv,
+    sem_resid = sem_resid
+  )
+
+  # Results
+  results <- list(model = models, df = df, stack = stack, wdim = wdim, radius = radius)
+
+  return(results)
+}
+
+create_plots <- function(df, wdim){
+  plts1a <- do.call(plot_grid, c(map(mod_vars, ~ gglm(.x, "Ho", drop_na(df))), nrow = 1))
+  plts1b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "Ho", mod_vars, drop_na(df))), nrow = 1))
+  plts2a <- do.call(plot_grid, c(map(mod_vars, ~ gglm(.x, "Ho_gea", drop_na(df))), nrow = 1))
+  plts2b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(df))), nrow = 1))
+  plts3a <- do.call(plot_grid, c(map(mod_vars, ~ gglm(.x, "resids", drop_na(df))), nrow = 1))
+  plts3b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "resids", mod_vars, drop_na(df))), nrow = 1))
+
+  plotpath <- here("analysis", "gea", "plots")
+  plotname <- paste0("all_model_results_wdim", wdim, ".pdf")
+  pdf(here(plotpath, plotname), width = 21, height = 7)
+  print(plot_grid(plts1a, plts1b, nrow = 2))
+  print(plot_grid(plts2a, plts2b, nrow = 2))
+  print(plot_grid(plts3a, plts3b, nrow = 2))
+  dev.off()
+}
+
+```
+
+```{r}
+# Run models
+wdim <- c(3, 5, 7, 9)
+
+# Note: can't use parallel processing here because of the terra rast objects
+results <- map2(stack, wdim, ~run_models(stack = .x, wdim = .y), .progress = TRUE)
+
+results_df <-
+  map(results, "model") %>%
+  map(~{map(.x, broom::tidy) %>% bind_rows(.id = "model")}) %>%
+  bind_rows(.id = "wdim")
+
+results_df %>% filter(p.value < 0.05)
+
+results_df %>% 
+  group_by(model, term) %>% 
+  filter(term != "(Intercept)", term != "lambda") %>%
+  summarize(
+    mean = mean(estimate), 
+    min = min(estimate), 
+    max = max(estimate), 
+    sd = var(estimate),
+    sig = mean(p.value < 0.05)
+  ) %>%
+  filter(sig == 1)
+```
+
+# OLD:
+```{r}
+library(MuMIn)
+df <- as.data.frame(stack, xy = TRUE)
+scale_df <- df %>% mutate_all(scale)
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+f_Ho <- paste("Ho ~", paste(mod_vars, collapse = " + "))
+dredge <- dredge(lm(f_Ho, data = scale_df, na.action = na.fail))
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod_Ho <- lm(best_model_f, data = scale_df)
+vars_Ho <- broom::tidy(mod_Ho)$term[-1]
+
+f_Ho_gea <- paste("Ho_gea ~", paste(mod_vars, collapse = " + "))
+dredge <- dredge(lm(f_Ho_gea, data = scale_df, na.action = na.fail))
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod_Ho_gea <- lm(best_model_f, data = scale_df)
+vars_Ho_gea <- broom::tidy(mod_Ho_gea)$term[-1]
+
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+coords_df <- 
+  extract(stack, st_as_sf(test_df), ID = FALSE) %>%
+  mutate(across(all_of(mod_vars), scale))
+
+lm(f_Ho, data = coords_df) %>% broom::tidy()
+lm(f_Ho_gea, data = coords_df) %>% broom::tidy()
+
+pdf(here(plotpath, "wingen_lm_wdim11.pdf"), width = 24, height = 12)
+plot_list1 <- purrr::map(vars_Ho, ~ gglm(.x, "Ho", scale_df))
+partial_plot_list1 <- purrr::map(vars_Ho, ~ ggpartial(.x, "Ho", mod_vars, drop_na(scale_df)))
+plot_list2 <- purrr::map(vars_Ho_gea, ~ gglm(.x, "Ho_gea", scale_df))
+partial_plot_list2 <- purrr::map(vars_Ho_gea, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(scale_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+dev.off()
+
+ca <- get_ca() %>% st_transform(st_crs(stack))
+plt1 <-
+  ggplot(scale_df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void() 
+
+plt2 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <- 
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange") 
+
+pltB <- ggpartial("tmean_dif", "resids", c("tmean_dif", "csi_past"), df, col = FALSE)
+
+pdf(here("analysis", "gea", "plots", "wingen.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+```
+
+```{r}
+mod_sf <-
+  extract(stack, coords, ID = FALSE, xy = TRUE) %>%
+  st_as_sf(coords = c("x", "y"), crs = 3310)
+
+library(spdep)
+library("spatialreg")
+
+dim = 11 * res(stack)[1]
+diag = sqrt(2) * dim
+radius = diag / 2
+
+nb <- dnearneigh(mod_sf, d1 = 0, d2 = radius)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+f <- formula("Ho ~ NDVI + gHM + bio1 + lgm_lig + csi_past + glacier + tmean_dif + Q")
+slm_model <- lagsarlm(f , data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+sem_model <- errorsarlm(f, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+nb <- dnearneigh(mod_sf, d1 = 0, d2 = radius)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+f <- formula("Ho ~ NDVI + gHM + bio1 + lgm_lig + csi_past + glacier + tmean_dif + Q")
+slm_model <- lagsarlm(f , data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+sem_model <- errorsarlm(f, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+data.frame(slm = AIC(slm_model), sem = AIC(sem_model), radius = radius)
+
+library(furrr)
+plan(multisession, workers = 10)
+dredge_result <- sem_dredge(f, data = mod_sf, listw = listw)
+
+stack_df <- as.data.frame(stack, xy = TRUE) %>% st_as_sf(coords = c("x", "y"), crs = 3310)
+sub <- stack_df[sample(nrow(stack_df), 1000),]
+nb <- dnearneigh(sub, d1 = 0, d2 = radius)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+dredge_result2 <- sem_dredge(f, data = sub, listw = listw)
+plan(sequential)
+
+dredge_result %>% arrange(AIC) %>% head(3)
+best_model_formula <- dredge_result %>% arrange(AIC) %>% head(1) %>% pull(model_formula)
+best_model_vars <- all.vars(formula(best_model_formula))[-1]
+best_model <- errorsarlm(best_model_formula, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+summary(best_model)
+
+pdf(here("analysis", "gea", "plots", "wingen_spmod.pdf"), width = 12, height = 4)
+do.call(plot_grid, c(map(best_model_vars, ~ gglm(.x, "Ho", drop_na(mod_sf))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ ggpartial(.x, "Ho", best_model_vars, drop_na(mod_sf))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ gglm(.x, "Ho", drop_na(df))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ ggpartial(.x, "Ho", best_model_vars, drop_na(df))), nrow = 1))
+dev.off()
+
+```
+
+
+## wdim = 15
+```{r}
+library(MuMIn)
+df <- as.data.frame(stack2, xy = TRUE)
+scale_df <- df %>% mutate_all(scale)
+mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+f_Ho <- paste("Ho ~", paste(mod_vars, collapse = " + "))
+dredge <- dredge(lm(f_Ho, data = scale_df, na.action = na.fail))
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod_Ho <- lm(best_model_f, data = scale_df)
+vars_Ho <- broom::tidy(mod_Ho)$term[-1]
+
+f_Ho_gea <- paste("Ho_gea ~", paste(mod_vars, collapse = " + "))
+dredge <- dredge(lm(f_Ho_gea, data = scale_df, na.action = na.fail))
+best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
+mod_Ho_gea <- lm(best_model_f, data = scale_df)
+vars_Ho_gea <- broom::tidy(mod_Ho_gea)$term[-1]
+
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+coords_df <- 
+  extract(stack, st_as_sf(test_df), ID = FALSE) %>%
+  mutate(across(all_of(mod_vars), scale))
+
+lm(f_Ho, data = coords_df) %>% broom::tidy()
+lm(f_Ho_gea, data = coords_df) %>% broom::tidy()
+
+pdf(here(plotpath, "wingen_lm_wdim15.pdf"), width = 24, height = 12)
+plot_list1 <- purrr::map(vars_Ho, ~ gglm(.x, "Ho", scale_df))
+partial_plot_list1 <- purrr::map(vars_Ho, ~ ggpartial(.x, "Ho", mod_vars, drop_na(scale_df)))
+plot_list2 <- purrr::map(vars_Ho_gea, ~ gglm(.x, "Ho_gea", scale_df))
+partial_plot_list2 <- purrr::map(vars_Ho_gea, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(scale_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+dev.off()
+
+ca <- get_ca() %>% st_transform(st_crs(stack))
+plt1 <-
+  ggplot(scale_df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void() 
+
+plt2 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <- 
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange") 
+
+pltB <- ggpartial("tmean_dif", "resids", c("tmean_dif", "csi_past"), df, col = FALSE)
+
+pdf(here("analysis", "gea", "plots", "wingen.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+```
+
+```{r}
+mod_sf <-
+  extract(stack, coords, ID = FALSE, xy = TRUE) %>%
+  st_as_sf(coords = c("x", "y"), crs = 3310)
+
+library(spdep)
+library("spatialreg")
+
+dim = 11 * res(stack)[1]
+diag = sqrt(2) * dim
+radius = diag / 2
+
+nb <- dnearneigh(mod_sf, d1 = 0, d2 = radius)
+listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+f <- formula("Ho ~ NDVI + gHM + bio1 + lgm_lig + csi_past + glacier + tmean_dif + Q")
+slm_model <- lagsarlm(f , data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+sem_model <- errorsarlm(f, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+
+data.frame(slm = AIC(slm_model), sem = AIC(sem_model), radius = radius)
+
+library(furrr)
+plan(multisession, workers = 10)
+f <- formula("Ho ~ NDVI + gHM + bio1 + cur_lgm + lgm_lig + csi_past + glacier + tmean_dif + Q")
+dredge_result <- sem_dredge(f, data = mod_sf, listw = listw)
+plan(sequential)
+
+dredge_result %>% arrange(AIC) %>% head(3)
+best_model_formula <- dredge_result %>% arrange(AIC) %>% head(1) %>% pull(model_formula)
+best_model_vars <- all.vars(formula(best_model_formula))[-1]
+best_model <- errorsarlm(best_model_formula, data = mod_sf, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+summary(best_model)
+
+pdf(here("analysis", "gea", "plots", "wingen_spmod_wdim15.pdf"), width = 20, height = 4)
+do.call(plot_grid, c(map(best_model_vars, ~ gglm(.x, "Ho", drop_na(mod_sf))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ ggpartial(.x, "Ho", best_model_vars, drop_na(mod_sf))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ gglm(.x, "Ho", drop_na(df))), nrow = 1))
+do.call(plot_grid, c(map(best_model_vars, ~ ggpartial(.x, "Ho", best_model_vars, drop_na(df))), nrow = 1))
+dev.off()
+
+```

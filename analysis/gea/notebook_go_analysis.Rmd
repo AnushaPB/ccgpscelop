@@ -1,0 +1,458 @@
+```{r}
+library(tidyverse)
+library(here)
+#BiocManager::install("topGO")
+library(topGO)
+library(cowplot)
+library(gprofiler2)
+
+source(here("analysis", "gea", "functions_go.R"))
+plotpath <- here("analysis", "gea", "plots")
+outpath <- here("analysis", "gea", "outputs")
+```
+
+```{r}
+# Get all GEA variants in genes 
+genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_gene_nonsyn.csv"))
+
+# Get all annotated genes
+all_genes <-read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv"))
+
+# Filter to only include genes with non-synonymous GEA variants
+genes_org <- 
+  all_genes %>% 
+  # THIS IS REALLY DUMB - why did i amke original_entyr and full_name mean different things in different files. Go fix this. Also this shouldn't reall need to be two steps
+  filter(original_entry %in% genes_nonsyn$full_name)
+
+# Check the number of unique genes
+print(paste("Number of genes:", nrow(genes_org)))
+print(paste("Number of unique genes:", nrow(genes_org %>% distinct(uniprot_id))))
+print(paste("Number of all genes:", nrow(all_genes)))
+print(paste("Number of unique all genes:", nrow(all_genes %>% distinct(uniprot_id))))
+
+#https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+#install.packages("gprofiler2")
+library(gprofiler2)
+
+genes_org %>% count(organism) %>% arrange(desc(n)) %>% head(20)
+```
+
+# Find gene orthologs
+Note: warnings are normal, they are just saying that some genes don't have orthologs in the other species
+```{r}
+genes_hsapiens <- get_ortho(genes_org, target_organism = "hsapiens", file_prefix = "hsapiens")
+genes_ggallus <- get_ortho(genes_org, "ggallus", file_prefix = "ggallus")
+all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all")
+all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all")
+
+genes_hsapiens <- genes_org %>% mutate(query = uniprot_id)
+genes_ggallus <- genes_org%>% mutate(query = uniprot_id)
+all_genes_hsapiens <- all_genes%>% mutate(query = uniprot_id)
+all_genes_ggallus <- all_genes%>% mutate(query = uniprot_id)
+```
+
+# Run GO 
+
+Column descriptions for gprofiler output:
+ 
+query: The name or identifier of the query. This indicates which query the results are associated with.
+significant: A logical value (TRUE or FALSE) indicating whether the term is significantly enriched.
+p_value: The p-value for the enrichment of the term. It indicates the statistical significance of the enrichment.
+term_size: The total number of genes associated with the GO term in the background set.
+query_size: The total number of genes in the query set.
+intersection_size: The number of genes in the query set that are also associated with the GO term.
+*precision:* The precision of the enrichment, calculated as the ratio of intersection_size to query_size. Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set.
+*recall:* The recall of the enrichment, calculated as the ratio of intersection_size to term_size. Recall measures the proportion of genes associated with the GO term that are present in the reference set.
+term_id: The identifier of the GO term or other ontology term.
+source: The source of the term, such as "GO:BP" for Gene Ontology Biological Process, "GO:MF" for Gene Ontology Molecular Function, or "GO:CC" for Gene Ontology Cellular Component.
+term_name: The name of the GO term or other ontology term.
+effective_domain_size: The effective domain size, which represents the number of genes in the background set that are considered for the enrichment analysis.
+source_order: The order of the source in the results, which can be used for sorting or prioritizing results.
+parents: The parent terms of the GO term or other ontology term. This provides hierarchical context for the term.
+highlighted: A logical value (TRUE or FALSE) indicating whether the term is highlighted in the results. This can be used for visualization or emphasis in the output.
+Run GO analysis for hsapiens genes
+
+```{r}
+# Load correlations between SNPs and variables (from _seperate_vars.R)
+cors <- 
+  read_csv(here(outpath, "bio1ndvi_genes_cortest.csv")) %>%
+  # Drop loci without significant correlations with NDVI or BIO1
+  drop_na(group) %>%
+  dplyr::select(locus, group) %>%
+  # [TODO: FIX] Some loci are currently duplicated so right now i am just taking the first one [NEED TO FIX]
+  group_by(locus) %>%
+  dplyr::slice(1) %>%
+  ungroup()
+```
+
+### hsapiens
+```{r}
+if (!file.exists(here("analysis", "gea", "outputs", "all_genes_go_hsapiens.csv"))) {
+  go_result_all <-
+    gost(
+      query = all_genes_hsapiens$query, 
+      organism = "hsapiens", ordered_query = FALSE, 
+      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = FALSE, 
+      user_threshold = 0.05, correction_method = "g_SCS", 
+      domain_scope = "annotated", custom_bg = NULL, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+    )
+  
+  write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_go_hsapiens.csv"))
+}
+
+all_genes_go_hsapiens <- 
+  read_csv(here("analysis", "gea", "outputs", "all_genes_go_hsapiens.csv")) %>% 
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(term_id, intersection_size, query_size, term_size, p_value)
+
+# Add _all to the names of the columns
+names(all_genes_go_hsapiens)[-1] <- paste0(names(all_genes_go_hsapiens), "_all")[-1]
+```
+
+```{r}
+# Link genes and snps
+rda_hsapiens_genes <-
+  # file from csq.R
+  genes_nonsyn %>%
+  dplyr::select(locus, original_entry = full_name) %>%
+  # Join with genes
+  left_join(dplyr::select(genes_org, original_entry, uniprot_id)) %>%
+  drop_na(uniprot_id) %>%
+  # Join with orthologs
+  left_join(genes_hsapiens, by = "uniprot_id") %>%
+  # Some genes don't have hsapiens orthologs/query names, so drop them
+  drop_na(query) %>%
+  # Join with the correlation results 
+  # DISTINCT IS TEMPORARY TO DEAL WITH DUPLICATES (LUCKILY GROUPS ARE SAME FOR DUPLICATES)
+  # Drop group NA to remove loci without significant correlations with NDVI or BIO1
+  left_join(cors, by = "locus") 
+
+bio1_query_hsapiens <- rda_hsapiens_genes %>% filter(grepl("bio1", group)) %>% pull(query)
+length(bio1_query_hsapiens)
+ndvi_query_hsapiens <- rda_hsapiens_genes %>% filter(grepl("ndvi", group)) %>% pull(query)
+length(ndvi_query_hsapiens)
+both_query_hsapiens <- rda_hsapiens_genes %>% pull(query)
+
+go_bio1_hsapiens <- run_go(bio1_query_hsapiens, "hsapiens")
+go_ndvi_hsapiens <- run_go(ndvi_query_hsapiens, "hsapiens")
+go_both_hsapiens <- run_go(both_query_hsapiens, "hsapiens")
+
+sig_bio1_hsapiens <- go_correction(go_bio1_hsapiens, all_genes_go_hsapiens)
+sig_ndvi_hsapiens <- go_correction(go_ndvi_hsapiens, all_genes_go_hsapiens)
+sig_both_hsapiens <- go_correction(go_both_hsapiens, all_genes_go_hsapiens)
+# TODO: check out if  HSP genes are associated with BIO1/NDVI or both
+```
+
+```{r}
+go_topbp(sig_bio1_hsapiens)
+go_topbp(sig_ndvi_hsapiens)
+go_topbp(sig_both_hsapiens)
+```
+
+## ggallus
+
+```{r}
+if (!file.exists(here("analysis", "gea", "outputs", "all_genes_go_ggallus.csv"))) {
+  go_result_all <-
+    gost(
+      query = all_genes_ggallus$query, 
+      organism = "ggallus", ordered_query = FALSE, 
+      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = FALSE, 
+      user_threshold = 0.05, correction_method = "g_SCS", 
+      domain_scope = "annotated", custom_bg = NULL, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+    )
+  
+  write_csv(go_result_all$result, here("analysis", "gea", "outputs", "all_genes_go_ggallus.csv"))
+}
+
+all_genes_go_ggallus <- 
+  read_csv(here("analysis", "gea", "outputs", "all_genes_go_ggallus.csv")) %>% 
+  as_tibble() %>%
+  # Just keep GO terms
+  filter(grepl("GO", source)) %>%
+  dplyr::select(term_id, intersection_size, query_size, term_size, p_value)
+
+names(all_genes_go_ggallus)[-1] <- paste0(names(all_genes_go_ggallus), "_all")[-1]
+```
+
+```{r}
+# Link genes and snps
+rda_ggallus_genes <-
+  # file from intersect_genes.R
+  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_snp.csv")) %>%
+  dplyr::select(locus, original_entry = full_name) %>%
+  # Join with genes
+  left_join(dplyr::select(genes_org, original_entry, uniprot_id)) %>%
+  drop_na(uniprot_id) %>%
+  # Join with orthologs
+  left_join(genes_ggallus, by = "uniprot_id") %>%
+  # Some genes don't have human orthologs/query names, so drop them
+  drop_na(query) %>%
+  # Join with the correlation results 
+  # DISTINCT IS TEMPORARY TO DEAL WITH DUPLICATES (LUCKILY GROUPS ARE SAME FOR DUPLICATES)
+  # Drop group NA to remove loci without significant correlations with NDVI or BIO1
+  left_join(cors, by = "locus") 
+
+
+bio1_query_ggallus <- rda_ggallus_genes %>% filter(grepl("bio1", group)) %>% pull(query)
+length(bio1_query_ggallus)
+ndvi_query_ggallus <- rda_ggallus_genes %>% filter(grepl("ndvi", group)) %>% pull(query)
+length(ndvi_query_ggallus)
+both_query_ggallus <- rda_ggallus_genes %>% pull(query)
+
+go_bio1_ggallus <- run_go(bio1_query_ggallus, "ggallus")
+go_ndvi_ggallus <- run_go(ndvi_query_ggallus, "ggallus")
+go_both_ggallus <- run_go(both_query_ggallus, "ggallus")
+
+sig_bio1_ggallus <- go_correction(go_bio1_ggallus, all_genes_go_ggallus)
+sig_ndvi_ggallus <- go_correction(go_ndvi_ggallus, all_genes_go_ggallus)
+sig_both_ggallus <- go_correction(go_both_ggallus, all_genes_go_ggallus)
+```
+
+# Compare results
+```{r}
+bp_bio1_hsapiens <- sig_bio1_hsapiens %>% filter(grepl("GO:BP", source))
+bp_ndvi_hsapiens <- sig_ndvi_hsapiens %>% filter(grepl("GO:BP", source))
+bp_both_hsapiens <- sig_both_hsapiens %>% filter(grepl("GO:BP", source))
+bp_bio1_ggallus <- sig_bio1_ggallus %>% filter(grepl("GO:BP", source))
+bp_ndvi_ggallus <- sig_ndvi_ggallus %>% filter(grepl("GO:BP", source))
+bp_both_ggallus <- sig_both_ggallus %>% filter(grepl("GO:BP", source))
+
+go_topbp(sig_bio1_hsapiens)
+go_topbp(sig_ndvi_hsapiens)
+go_topbp(sig_both_hsapiens)
+go_topbp(sig_bio1_ggallus)
+go_topbp(sig_ndvi_ggallus)
+go_topbp(sig_both_ggallus)
+
+library(gt)
+gtsave(go_table(bp_bio1_hsapiens), here(plotpath, "bp_bio1_hsapiens.html"))
+gtsave(go_table(bp_ndvi_hsapiens), here(plotpath, "bp_ndvi_hsapiens.html"))
+gtsave(go_table(bp_both_hsapiens), here(plotpath, "bp_both_hsapiens.html"))
+gtsave(go_table(bp_ndvi_ggallus), here(plotpath, "bp_ndvi_ggallus.html"))
+gtsave(go_table(bp_bio1_ggallus), here(plotpath, "bp_bio1_ggallus.html"))
+gtsave(go_table(bp_bio1_ggallus), here(plotpath, "bp_bio1_ggallus.html"))
+
+
+# gtsave(go_table(arrange(bp_both_hsapiens, desc(precision))), here(plotpath, "bp_both_hsapiens.html"))
+# gtsave(go_table(arrange(bp_both_hsapiens, fish_p)), here(plotpath, "bp_both_hsapiens.html"))
+# gtsave(go_table(arrange(bp_both_hsapiens, desc(recall)), n = 10), here(plotpath, "bp_both_hsapiens.html"))
+
+# gtsave(go_table(arrange(bp_both_ggallus, desc(precision))), here(plotpath, "bp_both_ggallus.html"))
+# gtsave(go_table(arrange(bp_both_ggallus, fish_p)), here(plotpath, "bp_both_ggallus.html"))
+# gtsave(go_table(arrange(bp_both_ggallus, desc(recall)), n = 10), here(plotpath, "bp_both_ggallus.html"))
+
+# gtsave(go_table(arrange(bp_bio1_ggallus, desc(recall)), n = 10), here(plotpath, "bp_bio1_ggallus.html"))
+# gtsave(go_table(arrange(bp_ndvi_ggallus, desc(recall)), n = 10), here(plotpath, "bp_ndvi_ggallus.html"))
+
+```
+
+# NEED TO TEST:
+```{r}
+custom_bg <- 
+  gost(
+      query = genes_hsapiens$query, 
+      organism = "hsapiens", ordered_query = FALSE, 
+      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, evcodes = FALSE, 
+      user_threshold = 0.05, correction_method = "g_SCS",
+      domain_scope = "custom_annotated", custom_bg = all_genes_hsapiens$query, 
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+  )
+custom_result <- custom_bg$result %>% filter(p_value < 0.05)
+custom_result
+bp <- custom_result %>% filter(source == "GO:BP")
+mf <- custom_result %>% filter(source == "GO:MF")
+```
+
+# Check for genes of interest
+# Proteins of interest
+```{r}
+search <- function(x, y = NULL){
+  if (is.null(y)) y <- genes_org 
+  y %>% filter(grepl(x, full_name)) %>% pull(full_name)
+}
+#Humans
+#HSP70 (Heat Shock Protein 70): This protein helps protect cells from stress-induced damage, including heat stress. It plays a crucial role in protein folding and repair.
+search("HSP70")
+search("HSP")
+search("Heat shock") # many of these! Heat shock 70 kDA is included in the list
+search("Heat shock 70") # found!
+length(search("Heat shock"))
+search("heat shock")
+#UCP1 (Uncoupling Protein 1): Found in brown adipose tissue, UCP1 is involved in thermogenesis, helping humans generate heat in cold environments.
+search("UCP1")
+search("UCP")
+search("Uncoupling")
+search("uncoupling")
+#MC1R (Melanocortin 1 Receptor): This receptor is involved in pigmentation and can affect skin's response to UV radiation, which is a crucial adaptation in different climates.
+search("MC1R") 
+search("Melanocortin") #"Melanocortin-2 receptor accessory protein 2 [Q96G30.2:Homo sapiens (Human)]"
+search("melanocortin")
+#EPAS1 (Endothelial PAS Domain Protein 1): This gene, also known as HIF-2α, is involved in the response to hypoxia and is associated with high-altitude adaptation.
+search("EPAS1") 
+search("PAS")# a hit! "Neuronal PAS domain-containing protein 4 [Q8IUM7.1:Homo sapiens (Human)]"
+search("Endothelial") #  "Endothelial cell-selective adhesion molecule [Q96AP7.1:Homo sapiens (Human)]"
+
+#Mice
+#FGF21 (Fibroblast Growth Factor 21): This protein helps regulate metabolism and energy expenditure, playing a role in cold adaptation by promoting brown fat activity.
+search("FGF21")
+search("FGF") #"FGFR1 oncogene partner 2 homolog [Q5R561.1:Pongo abelii (Sumatran orangutan) (Pongo pygmaeus abelii)]"
+search("Fibroblast growth factor 21")
+search("Fibroblast growth factor") #several
+#PRDM16 (PR Domain Containing 16): Important in the development of brown adipose tissue, which is crucial for thermoregulation in cold environments.
+search("PRDM16")
+search("PRDM")
+#HIF1A (Hypoxia-Inducible Factor 1 Alpha): Similar to humans, this protein helps mice adapt to low oxygen levels by regulating genes involved in oxygen homeostasis.
+search("HIF1A")
+search("HIF")
+search("Hypoxia") # [1] "Hypoxia up-regulated protein 1 [Q5ZLK7.1:Gallus gallus (Chicken)]"
+#[2] "Hypoxia-inducible factor 3-alpha [Q9Y2N7.2:Homo sapiens (Human)]" 
+# ADRB3 (Beta-3 Adrenergic Receptor): This receptor is involved in the regulation of lipolysis and thermogenesis in brown fat, aiding in cold adaptation.
+search("ADRB3")
+search("Adrenergic")
+search("ADR")
+
+#Chickens
+#HSP70 (Heat Shock Protein 70): Like in humans, HSP70 in chickens helps protect cells from heat stress.
+search("Heat shock") # found HSP 70!
+#UCP (Uncoupling Protein): Chickens also have uncoupling proteins that play a role in thermogenesis, helping them cope with temperature fluctuations.
+search("UCP") 
+#TRPV4 (Transient Receptor Potential Vanilloid 4): This protein is involved in temperature sensation and regulation.
+#TRP in general is associated with thermosensation
+# https://www.sciencedirect.com/science/article/abs/pii/S0959438815000306
+search("TRPV4")
+search("TRPV")
+search("Transient receptor potential")
+# [1] "Transient receptor potential cation channel subfamily M member 6 [Q9BX84.2:Homo sapiens (Human)]"
+# [2] "Transient receptor potential cation channel subfamily A member 1 [Q8BLA8.1:Mus musculus (Mouse)]"
+# [3] "Transient receptor potential cation channel subfamily M member 4 [Q8TD43.1:Homo sapiens (Human)]"
+# [4] "Transient receptor potential cation channel subfamily M member 1 [Q7Z4N2.2:Homo sapiens (Human)]"
+# [5] "Transient receptor potential cation channel subfamily V member 2 [Q9WTR1.2:Mus musculus (Mouse)]"
+# [6] "Transient receptor potential cation channel subfamily V member 3 [Q8K424.2:Mus musculus (Mouse)]"
+search("TRP")
+# [1] "TRPM8 channel-associated factor homolog [Q5XHI4.1:Xenopus laevis (African clawed frog)]"
+# [2] "TRPM8 channel-associated factor 2 [A6NFQ2.2:Homo sapiens (Human)]"   
+#ADRB2 (Beta-2 Adrenergic Receptor): This receptor plays a role in the regulation of metabolic processes and is involved in the adaptation to cold stress.
+search("ADRB2")
+
+#Additional 
+#Aquaporins (AQPs): These proteins are involved in water transport across cell membranes and play a role in osmoregulation, which can be crucial in adapting to varying humidity levels.
+search("Aquaporin")
+# [1] "Aquaporin-2 [P79099.2:Bos taurus (Bovine)]"  
+# [2] "Aquaporin-11 [Q8NBQ7.1:Homo sapiens (Human)]"
+# [3] "Aquaporin-1 [P47865.3:Bos taurus (Bovine)]"  
+#Leptin: This hormone, involved in regulating energy balance, can influence how organisms respond to different climatic conditions, especially in terms of energy storage and expenditure.
+search("Leptin")
+# [1] "Leptin receptor gene-related protein [Q5PSV5.1:Meleagris gallopavo (Wild turkey)]"          
+# [2] "Leptin [Q9XSW9.1:Sminthopsis crassicaudata (Fat-tailed dunnart) (Phascogale crassicaudata)]"
+search("leptin")
+
+# From this paper on mammals: https://www.nature.com/articles/s41598-021-95816-8
+# specific candidate variants and genes are related to the neuronal system (ITPR1, ITPR2, and GRIA4) and neuroactive ligand–receptor interaction functions for heat tolerance (NPFFR2, CALCR, and GHR), providing a novel insight that can help to develop genetic and management approaches to combat heat stress.
+search("Inositol 1,4,5-trisphosphate receptor type 1") # found! (ITPR1)
+search("Inositol 1,4,5-trisphosphate receptor type 2") # found! (ITPR2)
+search("Glutamate receptor ionotropic") # Found Glutamate receptor ionotropic but not type 4 (only GRIK and GRIN, not GRIA)
+search("Neuropeptide FF receptor 1") # Found NFFR1 but not 2
+search("Calcitonin receptor") 
+search("Growth hormone receptor") # Found! (GHR)
+
+# From this paper on sticklebacks: https://www.nature.com/articles/s41598-021-95816-8
+# We determined maximum critical thermal limits (CTmax) and the associated gene expression responses in three heat shock (hsp60, hsp70, hsp90) and two key metabolic (idh2, fbp2) genes at ecologically relevant moderate heat stress (26 °C) as well as at the critical thermal limit (CTmax)
+search("Heat shock 70") # found!
+search("Heat shock 90")
+search("Heat shock 60")
+search("Isocitrate dehydrogenase") # Found IDH but not IDH2
+search("bisphosphatase") # Found FBP 
+
+# From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
+#TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
+search("TRPP1L2")
+search("TRPP1L3")
+search("TRPV1")
+search("Transient receptor potential cation channel subfamily V member 1")
+#TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
+search("TRPV3")
+search("Transient receptor potential cation channel subfamily V member 3") # Found!
+search("TRPA1")
+search("Transient receptor potential cation channel subfamily A member 1") # Found!
+search("TRPM8") # Found!
+
+search("TRP")
+search("Transient receptor potential")
+search("Transient")
+```
+
+```{r}
+source(here("analysis", "gea", "get_selection_stats.R"))
+goi <- get_goi_names()
+```
+
+```{r}
+# Look at genes associated with biological regulation in humans
+br_genes <- 
+  go_bio1_hsapiens$result %>% 
+  filter(grepl("biological regulation", term_name))%>%
+  pull(intersection) %>%
+  # split by comma
+  strsplit(",") %>%
+  unlist()
+br_genes <- genes_org %>% filter(uniprot_id %in% br_genes)
+br_genes$gene_name
+search("Heat shock", br_genes) # HSP 70!
+search("PAS", br_genes) # nada
+
+# Z-scores
+# NOTE: only has score along axis it was significant on
+rda_z <- read_csv(here(outpath, "bio1ndvi_significant_snps.csv")) %>% filter(locus %in% genes_nonsyn$locus)
+rda_genes <-
+  genes_nonsyn %>%
+  right_join(rda_z) %>%
+  left_join(genes_org)
+
+# Look at HSP 70
+hsp70 <- rda_genes %>% filter(grepl("Heat shock 70", full_name)) %>% dplyr::select(loading, axis, full_name)
+nrow(hsp70)
+
+rda_genes$HSP70 <- grepl("Heat shock 70", rda_genes$full_name)
+rda_genes$goi <- rowSums(bind_cols(map(goi, ~grepl(.x, rda_genes$full_name)))) > 0
+rda_genes$goi_name <- map_chr(rda_genes$full_name, function(name) {
+  match <- keep(goi, ~ str_detect(name, .x))
+  if (length(match) > 0) match[[1]] else NA_character_
+}, .progress = TRUE)
+
+
+gg_df <- 
+  rda_genes %>% 
+  distinct(locus, loading, axis, HSP70, goi, goi_name) %>% 
+  pivot_wider(names_from = "axis", values_from = "loading")
+
+pdf(here(plotpath, "goi_hist.pdf"), width = 10, height = 3)
+ggplot(gg_df) +
+  geom_histogram(aes(x = `1`)) +
+  geom_vline(data = filter(gg_df, HSP70), aes(xintercept = `1`))
+ggplot(gg_df) +
+  geom_histogram(aes(x = `2`)) +
+  geom_vline(data = filter(gg_df, HSP70), aes(xintercept = `2`))
+ggplot(gg_df) +
+  geom_histogram(aes(x = `1`)) +
+  geom_vline(data = filter(gg_df, goi), aes(xintercept = `1`, col = goi_name)) + 
+  theme_classic() +
+  labs(col = "Genes of interest")
+ggplot(gg_df) +
+  geom_histogram(aes(x = `2`)) +
+  geom_vline(data = filter(gg_df, goi), aes(xintercept = `2`, col = goi_name))+ 
+  theme_classic() +
+  labs(col = "Genes of interest")
+dev.off()
+```
+
+```{r}
+
+```

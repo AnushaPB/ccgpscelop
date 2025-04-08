@@ -1,0 +1,495 @@
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(tigris)
+library(raster)
+library(igraph)
+library(sp)
+library(gridExtra)
+library(wingen)
+library(furrr)
+source(here("analysis", "chromenv", "functions_chromenv.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
+source(here("general_functions.R"))
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+
+#  Number of RDA + Linked SNPs: 958850
+#  Number of SNPs in genes: 396217
+# Number of non-synonymous SNPs in genes: 20344
+
+396217/958850
+20344/958850 * 5.81
+20344/396217 * 5.81
+
+```
+
+```{r}
+# GEA
+gea <- get_gea_genes(nonsyn = FALSE) %>% distinct()
+gea_nonsyn <- get_gea_genes(nonsyn = TRUE) %>% distinct() # FIGURE OUT HOW TO DEAL WITH DUPLICATES: GNX-391/GNX-359 (overlapping genes, same SNP)
+
+# Tajima's D
+tjd <- get_tajimad(windowkb = 10) 
+
+# Non-synonymous SNPs
+nonsyn <- get_nonsyn() %>% rename(start = position) # NOTE: position = SNP position= start
+
+# Chromenv
+chromenv <- get_chromenv() %>% filter(p_adj < 0.05) %>% filter(var %in% c("csi_past", "tmean_dif"))
+chromenv_neg <- chromenv %>% filter(estimate < 0) %>% filter(var %in% c("csi_past", "tmean_dif"))
+
+# CHECKING BOTTOM 5% CALCULATION
+tjd_neg <- tjd %>% group_by(pop) %>% mutate(bottom = TajimaD < quantile(TajimaD, 0.05, na.rm = TRUE))
+tjd_neg %>% ungroup() %>% filter(bottom) %>% summarize(mean(outliers == "Bottom 5%")) == 1
+tjd_neg %>% ungroup() %>% filter(!bottom) %>% summarize(mean(outliers == "Bottom 5%", na.rm = TRUE)) == 0
+# Using bottom and top 10% 
+tjd_neg <- tjd %>% group_by(pop) %>% mutate(bottom = TajimaD < quantile(TajimaD, 0.10, na.rm = TRUE))
+tjd_neg <- tjd_neg %>% ungroup() %>% filter(bottom)
+tjd_pos <- tjd %>% group_by(pop) %>% mutate(top = TajimaD > quantile(TajimaD, 0.10, na.rm = TRUE))
+tjd_pos <- tjd_pos %>% ungroup() %>% filter(top)
+
+tjd_quant <- tjd %>% group_by(pop) %>% summarize(q10 = quantile(TajimaD, 0.10, na.rm = TRUE))
+```
+
+```{r}
+plan(multisession, workers = 10)
+combo_df <- 
+  gea_nonsyn %>%
+  # # NOTE: some loci fall in more than one gene, so using distinct() to pull out unique set of loci
+  distinct(locus, start, scaffold) %>%
+  group_by(locus) %>%
+  group_split() %>%
+  future_map(~{
+    # Get position and scaffold
+    start <- .x$start
+    scaffold <- .x$scaffold
+
+    # ...is in Bottom 5% of Tajima's D
+    tjd_lgl <- tjd_neg %>% filter(scaffold == !!scaffold, BIN_START <= start, BIN_END >= start) %>% nrow(.) > 0
+
+    # ...is in a region with negative association between diversity and an env variable
+    chromenv_neg_lgl <- chromenv_neg %>% filter(scaffold == !!scaffold, BIN_START <= start, BIN_END >= start) %>% nrow(.) > 0
+
+    # ...is in a region with any association between diversity and an env variable
+    chromenv_lgl <- chromenv %>% filter(scaffold == !!scaffold, BIN_START <= start, BIN_END >= start) %>% nrow(.) > 0
+
+    # Combine into df
+    data.frame(locus = .x$locus, tjd = tjd_lgl, chromenv = chromenv_lgl, chromenv_neg = chromenv_neg_lgl)
+  }, .progress = TRUE) 
+plan(sequential)
+
+combo_df <- bind_rows(combo_df)
+
+summary_df <-
+  combo_df %>%
+  bind_rows() %>%
+  summarize(
+    both_count = sum(tjd & chromenv_neg), 
+    tjd_count = sum(tjd & !chromenv_neg), 
+    chromenv_count = sum(chromenv_neg & !tjd), 
+    neither_count = sum(!tjd & !chromenv_neg),
+    both_mean = mean(tjd & chromenv_neg),
+    tjd_mean = mean(tjd & !chromenv_neg),
+    chromenv_mean = mean(chromenv_neg & !tjd),
+    neither_mean = mean(!tjd & !chromenv_neg)
+  ) %>%
+  mutate(across(ends_with("_mean"), ~round(.x * 100, 0)))
+summary_df
+
+gea_combo_df <- left_join(gea_nonsyn, combo_df, by = "locus")
+
+goi <- get_goi(type = "genes")
+goi_combo <- gea_combo_df %>% filter(full_name %in% goi$full_name) 
+
+# Look at all SNPs with very negative TJD & chromenv
+gea_combo_df %>% 
+  filter(tjd & chromenv_neg) %>% 
+  distinct(name) %>%
+  drop_na()
+
+# Look at all SNPs with very negative TJD
+gea_combo_df %>% 
+  filter(tjd) %>% 
+  distinct(name) %>%
+  drop_na()
+
+# Look at genes of interests: 
+# No genes of interest have both negative TJD and chromenv
+goi_combo %>% filter(tjd & chromenv_neg) %>% dplyr::select(scaffold, name, tjd, chromenv_neg)
+
+# Many HSP have negative TJD
+goi_combo %>% filter(tjd | chromenv_neg) %>% distinct(name, tjd, chromenv_neg) %>% arrange(chromenv_neg, tjd)
+
+# TPRM8 is not in a negative tajima's D region
+goi_combo %>% filter(grepl("TRPM8", full_name))
+```
+```
+
+```{r}
+# Get full information about associations with SNPs of interest
+# For chromenv - get the variable with the negative assocation
+# For TJD - get the population with the negative association
+plan(multisession, workers = 10)
+details <- 
+  gea_combo_df %>%
+  # # NOTE: some loci fall in more than one gene, so using distinct() to pull out unique set of loci
+  distinct(locus, start, scaffold) %>%
+  group_by(locus) %>%
+  group_split() %>%
+  future_map(~{
+    # Get position and scaffold
+    start <- .x$start
+    scaffold <- .x$scaffold
+
+    # Get region with association
+    result1 <-
+      chromenv %>% 
+      filter(scaffold == !!scaffold, BIN_START <= start, BIN_END >= start) %>% 
+      dplyr::select(var, estimate) %>%
+      mutate(locus = .x$locus)
+    
+    # Get TJD
+    result2 <-
+      tjd %>% 
+      filter(scaffold == !!scaffold, BIN_START <= start, BIN_END >= start) %>% 
+      dplyr::select(pop, TajimaD) %>%
+      mutate(locus = .x$locus)
+
+    if (nrow(result1) == 0) result1 <- NULL
+    if (nrow(result2) == 0) result2 <- NULL
+    
+    return(list(chromenv = result1, tjd = result2))
+    # Combine
+  }, .progress = TRUE) 
+plan(sequential)
+
+# Pull out details
+chromenv_var <- map(details, "chromenv") %>% compact() %>% bind_rows()
+tjd_pop <- map(details, "tjd") %>% compact() %>% bind_rows()
+
+# Chromenv:
+left_join(goi_combo, chromenv_var) %>% 
+  drop_na(var) %>% 
+  dplyr::select(var, name, estimate)
+## Tmean_dif:
+left_join(gea_combo_df, chromenv_var, relationship = "many-to-many") %>% 
+  drop_na(name) %>% 
+  filter(estimate < 0) %>%
+  filter(var == "tmean_dif") %>% 
+  distinct(var, name)
+
+# TJD
+## TJD for all SNPs
+all_tjd <- left_join(gea_combo_df, tjd_pop, relationship = "many-to-many")
+all_tjd %>% 
+  drop_na(name) %>% 
+  filter(TajimaD < 0) %>%
+  distinct(TajimaD, name, pop)
+
+## TJD for GOI
+goi_tjd <- left_join(goi_combo, tjd_pop)
+goi_tjd %>% 
+  drop_na(TajimaD) %>% 
+  filter(TajimaD < 0) %>%
+  dplyr::select(pop, name, TajimaD) %>% 
+  left_join(tjd_quant)
+
+goi_tjd <-  left_join(goi_combo, tjd_pop)
+hsp <- 
+  goi_tjd %>% 
+  drop_na(TajimaD) %>% 
+  dplyr::select(pop, name, TajimaD) %>% 
+  left_join(tjd_quant) %>%
+  filter(grepl("Heat shock", name)) # Most of the negative Tajima's D are not in pop9
+```
+
+Run models of Tajima's D vs environmental variables:
+```{r}
+pop_tmean_dif <- 
+  read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>% 
+  left_join(get_pops()) %>%
+  group_by(cluster) %>%
+  summarize(across(c("NDVI", "glacier", "tmean_dif", "gHM", "bio1", "csi_past"), \(x) mean(x, na.rm = TRUE))) %>%
+  mutate(pop = paste0("pop", as.character(cluster))) %>%
+  dplyr::select(-cluster) %>%
+  ungroup() %>%
+  mutate(across(c("NDVI", "glacier", "tmean_dif", "gHM", "bio1", "csi_past"), \(x) scale(x, center = TRUE, scale = TRUE)))
+
+mod_df <- 
+  left_join(all_tjd, pop_tmean_dif, by = "pop") %>% 
+  distinct(name, pop, TajimaD, NDVI, glacier, tmean_dif, gHM, bio1, csi_past)
+
+lm_result <- 
+  mod_df %>%
+  group_by(name) %>%
+  group_split() %>%
+  map(~{
+    if (drop_na(.x, TajimaD, NDVI, glacier, tmean_dif, gHM, bio1, csi_past) %>% nrow() == 0) return(NULL)
+    lm(TajimaD ~ NDVI + glacier + tmean_dif + gHM + bio1 + csi_past , data = .x) %>% 
+      broom::tidy() %>% 
+      filter(term != "(Intercept)") %>%
+      mutate(name = unique(.x$name))
+  }, .progress = TRUE) %>%
+  bind_rows()
+
+lm_result %>% filter(name %in% goi_combo$name) %>% filter(p.adjust(p.value, "fdr") < 0.05) #nada
+
+# A lot of significants
+lm_result %>% filter(p.adjust(p.value, "fdr") < 0.05) 
+
+# Look for negative associations with tmean_dif
+lm_result %>% 
+  filter(p.adjust(p.value, "fdr") < 0.05)  %>% 
+  filter(estimate < 0, term == "tmean_dif") %>% 
+  drop_na(name) %>%
+  arrange(estimate) %>%
+  dplyr::select(name, term, estimate, p.value)
+
+# Look for negative associations with csi_past
+lm_result %>% 
+  filter(p.adjust(p.value, "fdr") < 0.05)  %>% 
+  filter(estimate < 0, term == "csi_past") %>% 
+  drop_na(name) %>%
+  arrange(estimate) %>%
+  dplyr::select(name, term, estimate, p.value)
+
+```
+
+# Exploration of SNPs/genes of interest
+```{r}
+# Count different kinds of non-synonymous SNPs
+nonsyn %>% group_by(csq) %>% count() %>% arrange(desc(n))
+
+# Count different kinds of non-synonymous GEA SNPs
+gea_nonsyn %>% dplyr::select(scaffold, start) %>% left_join(nonsyn) %>% count(csq) %>% arrange(desc(n))
+
+# Each SNP has one annotation
+nonsyn %>% filter(scaffold == "chr2") %>% group_by(scaffold, start) %>% count() %>% arrange(desc(n))
+
+itpr1_snps <- 
+  gea_combo_df %>% 
+  filter(name == "Inositol 1,4,5-trisphosphate receptor type 1 ") %>% 
+  distinct(scaffold, start) %>%
+  left_join(nonsyn, by = c("start", "scaffold"))
+
+itpr1_snps %>% count(csq) %>% arrange(desc(n))
+
+tjd_pop9 <- 
+  tjd %>% 
+  filter(pop == "pop9", scaffold == "chr2") %>% 
+  filter(BIN_START >= min(itpr1_snps$start) - 500000, BIN_END <= max(itpr1_snps$start) + 500000)
+
+itpr1_gene <-
+  all_genes %>% 
+  filter(grepl("Inositol 1,4,5-trisphosphate receptor type 1 ", full_name)) %>% 
+  distinct(scaffold, start, end) %>%
+  filter(scaffold == "chr2")
+
+tjd_quant
+pdf(here(plotpath, "itpr1_pop9.pdf"), width = 10, height = 3)
+ggplot(tjd_pop9) +
+  geom_rect(data = itpr1_gene, aes(xmin = start, xmax = end, fill = "ITPR1"), ymin = -Inf, ymax = Inf) +
+  geom_vline(data = itpr1_snps, aes(xintercept = start, col = csq)) +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "black") +
+  geom_hline(yintercept = -1.13, linetype = "dashed", lwd = 0.5, col = "red") +
+  scaffold_theme() +
+  scale_x_continuous(expand = c(0, 0), breaks = seq(min(tjd_pop9$BIN_START), max(tjd_pop9$BIN_START), by = 500000), labels = scales::comma) +
+  ggtitle("Tajima's D (pop9)") +
+  labs(fill = "Gene", color = "Non-synonymous GEA SNPs") +
+  scale_color_manual(values = c("purple2", "gray", "green2", "cyan3")) +
+  theme(axis.text.x = element_text(), axis.ticks.x = element_line(), axis.line = element_line())
+dev.off()
+
+```
+
+```{r}
+pop9_top_locus <-
+ goi_tjd %>% 
+ filter(pop == "pop9") %>% 
+ left_join(gea_combo_df) %>% 
+ drop_na(uniprotid) %>%
+ arrange(TajimaD) %>%
+ head(10)
+
+pop9_top_locus %>% dplyr::select(name, scaffold)
+
+top_locus = "Heat shock protein beta-1 " 
+top_snps <- 
+  gea_combo_df %>% 
+  filter(name == top_locus) %>% 
+  distinct(scaffold, start) %>%
+  left_join(nonsyn, by = c("start", "scaffold"))
+
+top_snps %>% count(csq) %>% arrange(desc(n))
+
+tjd_pop9 <- 
+  tjd %>% 
+  filter(pop == "pop9", scaffold == "chr7") %>% 
+  filter(BIN_START >= min(top_snps$start) - 500000, BIN_END <= max(top_snps$start) + 500000)
+
+top_gene <-
+  all_genes %>% 
+  filter(grepl(top_locus, full_name)) %>% 
+  distinct(scaffold, start, end) %>%
+  filter(scaffold == "chr7")
+
+pdf(here(plotpath, "top_gene_pop9.pdf"), width = 10, height = 3)
+ggplot(tjd_pop9) +
+  geom_rect(data = top_gene, aes(xmin = start, xmax = end, fill = !!top_locus), ymin = -Inf, ymax = Inf) +
+  geom_vline(data = top_snps, aes(xintercept = start, col = csq)) +
+  geom_line(aes(x = BIN_START, y = TajimaD), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "black") +
+  geom_hline(yintercept = -1.13, linetype = "dashed", lwd = 0.5, col = "red") +
+  scaffold_theme() +
+  scale_x_continuous(expand = c(0, 0), breaks = seq(min(tjd_pop9$BIN_START), max(tjd_pop9$BIN_START), by = 500000), labels = scales::comma) +
+  ggtitle("Tajima's D (pop9)") +
+  labs(fill = "Gene", color = "Non-synonymous GEA SNPs") +
+  scale_color_manual(values = c("purple2", "gray", "green2", "cyan3")) +
+  theme(axis.text.x = element_text(), axis.ticks.x = element_line(), axis.line = element_line())
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+plotchrom_c <- function(data, fill){
+  scaff_rect <- get_scaff_rect(data)
+  ggplot(data) +
+    geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = .data[[fill]])) +
+    geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+    scaffold_theme() +
+    scale_fill_viridis_c(option = "magma")
+}
+
+tjd <- get_tajimad()
+
+goi <- get_goi() %>% filter(scaffold %in% unique(tjd$scaffold)) %>% mutate(scaffold = factor(scaffold, levels = unique(tjd$scaffold)))
+```
+```{r}
+# Get genes
+genes <- 
+  get_genes() %>%
+  mutate(BIN_START = floor(start / 500000) * 500000) %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+genes_bin <-
+  genes %>%
+  group_by(scaffold, BIN_START, BIN_END) %>%
+  summarise(ngenes = n()) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Create bins for BIN_START
+nonsyn <- 
+  get_nonsyn() %>%
+  mutate(BIN_START = floor(position / 500000) * 500000)  %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Calculate number of nonsynonymous mutations per bin of 100k
+nonsyn_bin <- 
+  nonsyn %>% 
+  group_by(scaffold, BIN_START, BIN_END) %>% 
+  summarise(nonsyn = n()) %>%
+  filter(scaffold %in% unique(sem_df$scaffold))
+
+# Create bins for BIN_START
+syn <- 
+  get_syn() %>%
+  mutate(BIN_START = floor(position / 500000) * 500000)  %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Calculate number of nonsynonymous mutations per bin of 100k
+syn_bin <- 
+  syn %>% 
+  group_by(scaffold, BIN_START, BIN_END) %>% 
+  summarise(syn = n()) %>%
+  filter(scaffold %in% unique(sem_df$scaffold))
+
+syn_nonsyn <-
+  full_join(syn_bin, nonsyn_bin, by = c("scaffold", "BIN_START", "BIN_END")) %>%
+  # DON"T MAKE SYN 0 OR YOU WILL GET INFINITY
+ # mutate(syn = ifelse(is.na(syn), 0, syn)) %>%
+  mutate(nonsyn = ifelse(is.na(nonsyn), 0, nonsyn)) %>%
+  mutate(ratio = nonsyn / syn)
+
+scaff_rect <- get_scaff_rect(tjd)
+
+#fst <- get_fst()
+
+```
+
+```{r}
+pdf(here(plotpath, "stats.pdf"), width = 12, height = 10)
+ggplot(syn_nonsyn) +
+  geom_rect(data = goi, aes(xmin = start, xmax = end), ymin = min(syn_nonsyn$ratio, na.rm = TRUE), ymax = max(syn_nonsyn$ratio, na.rm = TRUE), col = "red", fill = NA) +
+  geom_line(aes(x = BIN_START, y = ratio), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "white") +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = min(syn_nonsyn$ratio, na.rm = TRUE), ymax = max(syn_nonsyn$ratio, na.rm = TRUE), col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("Non-synonymous : Synonymous") +
+  theme(axis.text.y = element_text(), axis.ticks.y = element_line())
+
+ggplot(genes_bin) +
+  geom_line(aes(x = BIN_START, y = ngenes), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "white") +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = min(genes_bin$ngenes, na.rm = TRUE), ymax = max(genes_bin$ngenes, na.rm = TRUE), col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("Gene count") +
+  theme(axis.text.y = element_text(), axis.ticks.y = element_line())
+
+ggplot(tjd) +
+  geom_rect(data = goi, aes(xmin = start, xmax = end), ymin = min(tjd$TajimaD, na.rm = TRUE), ymax = max(tjd$TajimaD, na.rm = TRUE), col = "red", fill = NA) +
+  geom_line(aes(x = BIN_START, y = TajimaD, col = pop), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "white") +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 0, col = "black", fill = NA, lty = "dashed") +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = min(tjd$TajimaD, na.rm = TRUE), ymax = max(tjd$TajimaD, na.rm = TRUE), col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("Tajima's D") 
+
+tjd2 <- filter(tjd, pop %in% c("pop1", "pop6"), scaffold %in% c("chr1", "chr2", "chr3", "chr4", "chr5"))
+ggplot(tjd2) +
+  geom_rect(data = goi, aes(xmin = start, xmax = end), ymin = min(tjd2$TajimaD, na.rm = TRUE), ymax = max(tjd2$TajimaD, na.rm = TRUE), col = "red", fill = NA) +
+  geom_line(aes(x = BIN_START, y = TajimaD, col = pop), alpha = 0.7, lwd = 0.5) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 0, col = "black", fill = NA, lty = "dashed") +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = min(tjd2$TajimaD, na.rm = TRUE), ymax = max(tjd2$TajimaD, na.rm = TRUE), col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("Tajima's D (pop1 vs pop6)") 
+dev.off()
+```
+
+```{r}
+test <- tjd %>% filter(scaffold == "chr1") %>% mutate(scaffold = factor(scaffold, levels = unique(scaffold)))
+pdf(here(plotpath, "tjd_bin.pdf"), width = 10, height = 20)
+ggplot(tjd) +
+  geom_tile(aes(x = BIN_START, y = pop, fill = TajimaD)) +
+  facet_wrap(~scaffold, ncol = 1) +
+  scale_fill_gradient2(midpoint = 0, low = "cyan3", mid = "white", high = "orange2", limits = c(-0.55, 0.55)) +
+ # geom_rect(data = goi, aes(xmin = start, xmax = end), ymin = -Inf, ymax = Inf, col = "red", fill = NA) +
+ theme_void() +
+ theme(axis.text.y = element_text()) +
+ scale_x_continuous(expand = c(0, 0))
+dev.off()
+
+tjd %>% filter(scaffold == "chr1", pop == "pop9")
+```

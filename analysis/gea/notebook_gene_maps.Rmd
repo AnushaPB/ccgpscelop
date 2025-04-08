@@ -1,0 +1,751 @@
+```{r}
+library(tidyverse)
+library(here)
+library(sf)
+library(vcfR)
+
+source(here("general_functions.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+ca <- get_ca()
+```
+
+```{r}
+df <- read_csv(here(outpath, "bio1ndvi_gea_gene_nonsyn.csv"))
+
+# Load dosage data
+dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+# Load coords and model dataframe
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+# Subset to only samples in coords
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == coords$SampleID))
+
+# CORRECT DOS NAMES
+colnames(dos) <- gsub("_[A-Z]$", "", colnames(dos))
+```
+
+```{r}
+plot_genes <- function(gene, gene_name = NULL, df){
+  if (is.null(gene_name)) gene_name = gene
+  gene_loci <- df %>% filter(grepl(gene, full_name)) %>% pull(locus)
+  if (length(gene_loci) == 0) {
+    warning("No loci found for ", gene, "; Skipping")
+    return(NULL)
+  }
+
+  gene_dos <- dos[, gene_loci]
+  gene_dos$SampleID <- dos$IID
+
+  nona_dos <- 
+    gene_dos %>%
+    mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+  gene_df <- 
+    coords %>% 
+    left_join(gene_dos, by = "SampleID")  %>%
+    pivot_longer(-c(SampleID, geometry), names_to = "locus", values_to = "dos")
+
+  plt1 <- 
+    ggplot(gene_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = dos)) +
+    scale_color_viridis_c() +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene_name) +
+    facet_wrap(~locus)
+
+  if (ncol(dos) < 2) {
+    return(list(dos = plt1, pca = NULL))
+  }
+  
+  gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+  gene_df <- 
+    coords %>% 
+    left_join(gene_dos, by = "SampleID") %>%
+    mutate(PC1 = gene_pca$x[, 1]) %>%
+    pivot_longer(-c(SampleID, geometry, PC1), names_to = "locus", values_to = "dos")
+
+  plt2 <-
+    ggplot(gene_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(fill = PC1), pch = 21, cex = 2, col = rgb(0,0,0,0)) +
+    scale_fill_viridis_c(option = "turbo") +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene_name) 
+  
+  return(list(dos = plt1, pca = plt2))
+}
+
+genes <- get_goi_names()
+
+plt_list <- imap(genes, \(x, i) plot_genes(gene = x, gene_name = i, df)) %>% compact()
+
+plt_dos <- map(plt_list, pluck, "dos")
+plt_pca <- map(plt_list, pluck, "pca") %>% compact()
+
+pdf(here(plotpath, "maps_of_gea_genes.pdf"), width = 8, height = 8)
+plt_dos
+dev.off()
+
+pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 15, height = 10)
+cowplot::plot_grid(plotlist = plt_pca, nrow = 2)
+dev.off()
+
+```
+
+
+# Compare HSP70 and temperature
+
+```{r}
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+coords_df <- left_join(coords, mod_df)
+
+gene_loci <- 
+  df %>% filter(grepl("Heat shock", full_name)) %>% pull(locus)
+gene_dos <- dos[, gene_loci]
+gene_dos$SampleID <- dos$IID
+
+nona_dos <- 
+  gene_dos %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+gene_df <- 
+  coords_df %>% 
+  left_join(gene_dos, by = "SampleID") %>%
+  mutate(PC1 = gene_pca$x[, 1])   
+
+pdf(here(plotpath, "gene_map.pdf"), width = 8, height = 8)
+ggplot(gene_df, aes(y = PC1, x = bio1)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+dev.off()
+
+summary(lm(PC1 ~ bio1, data = gene_df))
+
+cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
+  cor_result <- cor.test(.x, gene_df$bio1)
+  tibble(r = cor_result$estimate, p = cor_result$p.value)
+})
+cor_results$locus <- colnames(select(nona_dos, -SampleID))
+
+cor_results %>% arrange(desc(abs(r))) 
+#  1 -0.340  0.0000108 chr2_103247522_G_C
+#  2 -0.328  0.0000224 chr5_153615785_C_T
+#  3  0.249  0.00152   chr9_25970915_C_T 
+#  4 -0.244  0.00190   chr9_25967268_G_A 
+#  5 -0.235  0.00274   chr9_25986335_C_T 
+#  6  0.201  0.0109    chr9_25967457_C_T 
+#  7  0.199  0.0116    chr9_25986389_C_T 
+#  8  0.176  0.0264    chr2_103247737_G_C
+#  9 -0.156  0.0492    chr1_366003709_G_C
+# 10 -0.0834 0.294     chr5_187268636_C_T
+# 11  0.0757 0.341     chr3_213287000_G_C
+# 12 -0.0279 0.726     chr9_25966826_G_A 
+# 2 -0.328  0.0000224 chr5_153615785_C_T
+ 3  0.249  0.00152   chr9_25970915_C_T 
+ 4 -0.244  0.00190   chr9_25967268_G_A 
+ 5 -0.235  0.00274   chr9_25986335_C_T 
+ 6  0.201  0.0109    chr9_25967457_C_T 
+ 7  0.199  0.0116    chr9_25986389_C_T 
+ 8  0.176  0.0264    chr2_103247737_G_C
+ 9 -0.156  0.0492    chr1_366003709_G_C
+10 -0.0834 0.294     chr5_187268636_C_T
+11  0.0757 0.341     chr3_213287000_G_C
+12 -0.0279 0.726     chr9_25966826_G_A 
+```
+
+
+```{r}
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+coords_df <- left_join(coords, mod_df)
+
+gene_loci <- 
+  df %>% filter(grepl("TRPM8", full_name)) %>% pull(locus)
+dos <- dos[dos$IID %in% coords_df$SampleID, ]
+gene_dos <- dos[, gene_loci]
+gene_dos$SampleID <- dos$IID
+
+nona_dos <- 
+  gene_dos %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+gene_df <- 
+  coords_df %>% 
+  right_join(gene_dos, by = "SampleID") %>%
+  mutate(PC1 = gene_pca$x[, 1])   
+
+pdf(here(plotpath, "gene_map2.pdf"), width = 4, height = 4)
+ggplot(gene_df, aes(y = PC1, x = bio1)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+
+ggplot(gene_df, aes(y = chr5_7801341_G_A, x = bio1)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+
+ggplot(gene_df, aes(y = chr5_7801341_G_A, x = tmean_dif)) +
+  geom_smooth(method = "lm") +
+  geom_point()
+dev.off()
+
+summary(lm(PC1 ~ bio1, data = gene_df))
+
+cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
+  cor_result <- cor.test(.x, gene_df$bio1)
+  tibble(r = cor_result$estimate, p = cor_result$p.value)
+})
+cor_results$locus <- colnames(select(nona_dos, -SampleID))
+
+cor_results %>% arrange(desc(abs(r))) 
+#        r          p locus                                              
+#    <dbl>      <dbl> <chr>                                              
+# 1 -0.360 0.00000295 chr5_7801341_G_A                                   
+# 2 -0.266 0.000685   Scaffold_138__1_contigs__length_2391489_2298866_T_C
+# 3  0.250 0.00144    chr5_7833956_A_C                                   
+# 4 -0.105 0.188      Scaffold_138__1_contigs__length_2391489_2298855_C_T
+```
+
+
+# Similarity to core map
+
+```{r}
+mod_df <- 
+  read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>%
+  left_join(get_pops()) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326)
+
+socal_temp <- 
+  mod_df %>%
+  group_by(cluster) %>%
+  summarize(bio1 = mean(bio1, na.rm = TRUE)) %>%
+  filter(cluster == 9) %>%
+  pull(bio1)
+
+mod_df <- mod_df %>% mutate(tempdif_from_socal = bio1 - socal_temp)
+
+pdf(here(plotpath, "temp_dif_from_socal_map.pdf"), width = 5, height = 5)
+ggplot(mod_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = tempdif_from_socal)) +
+  scale_color_viridis_c() +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  labs(title = "Temperature difference from SoCal")
+dev.off()
+```
+```{r}
+socal_dif_test <- function(gene, gene_name = NULL, df, mod_df){
+  if (is.null(gene_name)) gene_name = gene
+  gene_loci <- df %>% filter(grepl(gene, full_name)) %>% pull(locus)
+  if (length(gene_loci) == 0) {
+    warning("No loci found for ", gene, "; Skipping")
+    return(NULL)
+  }
+
+  dos <- dos[dos$IID %in% mod_df$SampleID, ]
+  gene_dos <- dos[, gene_loci]
+  gene_dos$SampleID <- dos$IID
+
+  nona_dos <- 
+    gene_dos %>%
+    mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+  gene_df <- 
+    mod_df %>% 
+    select(SampleID, tempdif_from_socal, geometry) %>%
+    left_join(gene_dos, by = "SampleID")  %>%
+    pivot_longer(-c(SampleID, geometry, tempdif_from_socal), names_to = "locus", values_to = "dos")
+
+  cor_test <-
+    gene_df %>%
+    group_by(locus) %>%
+    summarize(
+      p_value = cor.test(dos, tempdif_from_socal, method = "pearson")$p.value,
+      r = cor.test(dos, tempdif_from_socal, method = "pearson")$estimate
+    ) %>%
+    mutate(p_adj = p.adjust(p_value, method = "fdr")) %>%
+    filter(p_adj < 0.05) %>%
+    st_drop_geometry()
+  
+  gene_df <- 
+    gene_df %>% 
+    right_join(cor_test, by = "locus") 
+  
+  nona_dos <- nona_dos[, c("SampleID", cor_test$locus)]
+   
+  plt1 <- 
+    ggplot(sig_df) +
+    geom_sf(data = ca) +
+    geom_sf(aes(col = dos)) +
+    scale_color_viridis_c() +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene_name) +
+    facet_wrap(~locus)
+
+  if (ncol(nona_dos) < 2) {
+    return(list(dos = plt1, pca = NULL, gene_df = gene_df))
+  }
+  
+  gene_pca <- prcomp(select(nona_dos, -SampleID))
+
+  gene_df2 <- 
+    mod_df %>% 
+    select(SampleID, geometry) %>%
+    left_join(gene_dos[, c("SampleID", cor_test$locus)], by = "SampleID") %>%
+    mutate(PC1 = gene_pca$x[, 1]) %>%
+    pivot_longer(-c(SampleID, geometry, PC1), names_to = "locus", values_to = "dos")
+
+  plt2 <-
+    ggplot(gene_df2) +
+    geom_sf(data = ca) +
+    geom_sf(aes(fill = PC1), pch = 21, cex = 2, col = rgb(0,0,0,0)) +
+    scale_fill_viridis_c(option = "turbo") +
+    theme_void() +
+    theme(legend.position = "bottom") +
+    labs(title = gene_name) 
+  
+  return(list(dos = plt1, pca = plt2, gene_df = gene_df))
+}
+
+genes <- get_goi_names()
+
+plt_list <- imap(genes, \(x, i) socal_dif_test(gene = x, gene_name = i, df, mod_df)) %>% compact()
+
+plt_dos <- map(plt_list, pluck, "dos")
+plt_pca <- map(plt_list, pluck, "pca") %>% compact()
+gene_df <- map(plt_list, pluck, "gene_df") %>% compact() %>% bind_rows(.id = "gene_name")
+
+top <-
+  gene_df %>% 
+  group_by(locus) %>% 
+  # WANT POSITIVE RELATIONSHIP
+  arrange(desc((r))) %>% 
+  slice(1:5) %>% 
+  ungroup()
+
+
+pdf(here(plotpath, "socal_tempdif_test.pdf"), width = 8, height = 8)
+plt_dos
+
+ggplot(top, aes(x = tempdif_from_socal, y = dos)) +
+  geom_point() +
+  geom_smooth(se  = FALSE) + 
+  facet_wrap(~gene_name + locus) 
+dev.off()
+
+```
+
+# IDEA: Identify loci that are found in non-adjacent populations (bonus if those pops have similar climates)
+
+```{r}
+library(sf)
+library(dplyr)
+library(tidyr)
+library(igraph)
+dat <- 
+  read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) %>%
+  left_join(get_pops()) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310) %>%
+  select(geometry, SampleID, cluster) %>%
+  left_join(gene_dos) %>%
+  pivot_longer(-c(SampleID, geometry, cluster), names_to = "locus", values_to = "dos") 
+
+# Assume `dat` is your sf object with columns: cluster, locus, dos, geometry
+
+# 1. Create Voronoi polygons based on point locations
+
+bbox_expanded <- st_bbox(dat) + c(-1, -1, 1, 1)  # pad bbox to ensure complete cells
+voronoi <- st_voronoi(st_union(dat), envelope = st_as_sfc(bbox_expanded))
+voronoi <- st_collection_extract(voronoi)
+voronoi_sf <- st_sf(geometry = st_cast(voronoi), cluster = dat$cluster)
+
+# 2. Dissolve Voronoi cells by cluster to get one polygon per population
+pop_polygons <- 
+  voronoi_sf %>%
+  group_by(cluster) %>%
+  summarize(geometry = st_union(geometry)) %>%
+  ungroup()
+
+# 3. Identify adjacency (touching polygons)
+adj_mat <- st_touches(pop_polygons, sparse = FALSE)
+rownames(adj_mat) <- colnames(adj_mat) <- pop_polygons$cluster
+
+# Create graph of adjacency
+adj_graph <- graph_from_adjacency_matrix(adj_mat, mode = "undirected")
+
+# STEP 3: Calculate frequencies
+freqs <- dat %>%
+  st_drop_geometry() %>%
+  group_by(cluster, locus) %>%
+  summarize(freq = mean(dos, na.rm = TRUE), .groups = "drop")
+
+# STEP 4: Identify non-adjacent pairs and apply logic
+threshold <- 0.1
+all_clusters <- unique(freqs$cluster)
+
+non_adj_pairs <- combn(all_clusters, 2, simplify = FALSE) %>%
+  keep(~ !are.connected(adj_graph, .x[1], .x[2]))
+
+# STEP 4: Define thresholds
+non_adj_threshold <- 0.4  # frequency must be > 0.4 in non-adjacent pops
+adj_threshold <- 0.05      # frequency must be < 0.1 in adjacent pops
+
+all_clusters <- unique(freqs$cluster)
+
+non_adj_pairs <- combn(all_clusters, 2, simplify = FALSE) %>%
+  keep(~ !are.connected(adj_graph, .x[1], .x[2]))
+
+# STEP 5: Filter loci
+result <- map_dfr(non_adj_pairs, function(pair) {
+  pop1 <- pair[1]
+  pop2 <- pair[2]
+
+  # High-freq loci in both non-adjacent clusters
+  f1 <- freqs %>% filter(cluster == pop1 & freq > non_adj_threshold)
+  f2 <- freqs %>% filter(cluster == pop2 & freq > non_adj_threshold)
+
+  common <- inner_join(f1, f2, by = "locus", suffix = c("_1", "_2"))
+
+  if (nrow(common) == 0) return(NULL)
+
+  # Get neighbors of both pops (excluding themselves)
+  neighbors1 <- names(which(adj_mat[pop1, ]))
+  neighbors2 <- names(which(adj_mat[pop2, ]))
+  neighbors <- setdiff(unique(c(neighbors1, neighbors2)), pair)
+
+  if (length(neighbors) == 0) return(common)  # skip if no neighbors to check
+
+  # Frequencies in neighbor clusters
+  neighbor_freqs <- freqs %>%
+    filter(cluster %in% neighbors & locus %in% common$locus)
+
+  # Disqualify loci with freq >= adj_threshold in any neighbor
+  disqual_loci <- neighbor_freqs %>%
+    filter(freq >= adj_threshold) %>%
+    pull(locus) %>%
+    unique()
+
+  # Keep only those loci not found in any neighbors above threshold
+  good_loci <- common %>%
+    filter(!locus %in% disqual_loci) %>%
+    mutate(non_adj_pair = paste(pop1, pop2, sep = "_"))
+
+  return(good_loci)
+})
+
+
+# Result: high_freq_non_adj gives loci with high freq in non-adjacent pops
+
+pdf(here(plotpath, "nonadjacency_test.pdf"))
+dat_filtered <- dat %>% filter(locus %in% result$locus)
+ggplot(dat_filtered) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = dos)) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  facet_wrap(~locus) +
+  labs(title = "High frequency loci in non-adjacent populations")
+dev.off()
+```
+
+```{r}
+# STEP 1: Compute both alternate and reference allele frequencies
+freqs_both <- dat %>%
+  st_drop_geometry() %>%
+  group_by(cluster, locus) %>%
+  summarize(
+    alt_freq = mean(dos, na.rm = TRUE),
+    ref_freq = 1 - alt_freq,
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols = c(alt_freq, ref_freq), names_to = "allele", values_to = "freq")
+# Thresholds
+non_adj_threshold <- 0.4
+adj_threshold <- 0.1
+
+all_clusters <- unique(freqs_both$cluster)
+
+non_adj_pairs <- combn(all_clusters, 2, simplify = FALSE) %>%
+  keep(~ !are.connected(adj_graph, .x[1], .x[2]))
+
+# Detect for both reference and alternate alleles
+result_both <- map_dfr(non_adj_pairs, function(pair) {
+  pop1 <- pair[1]
+  pop2 <- pair[2]
+
+  # Loop through both allele types
+  map_dfr(c("alt_freq", "ref_freq"), function(allele_type) {
+    f1 <- freqs_both %>% filter(cluster == pop1, allele == allele_type, freq > non_adj_threshold)
+    f2 <- freqs_both %>% filter(cluster == pop2, allele == allele_type, freq > non_adj_threshold)
+
+    common <- inner_join(f1, f2, by = "locus", suffix = c("_1", "_2"))
+
+    if (nrow(common) == 0) return(NULL)
+
+    # Neighbors of pop1 and pop2
+    neighbors1 <- names(which(adj_mat[pop1, ]))
+    neighbors2 <- names(which(adj_mat[pop2, ]))
+    neighbors <- setdiff(unique(c(neighbors1, neighbors2)), pair)
+
+    if (length(neighbors) == 0) return(common)
+
+    # Check allele freq in neighbors
+    neighbor_freqs <- freqs_both %>%
+      filter(cluster %in% neighbors, locus %in% common$locus, allele == allele_type)
+
+    disqual_loci <- neighbor_freqs %>%
+      filter(freq >= adj_threshold) %>%
+      pull(locus) %>%
+      unique()
+
+    good_loci <- common %>%
+      filter(!locus %in% disqual_loci) %>%
+      mutate(non_adj_pair = paste(pair, collapse = "_"),
+             allele = allele_type)
+
+    return(good_loci)
+  })
+})
+
+pdf(here(plotpath, "nonadjacency_test.pdf"))
+length(unique(result$locus))
+dat_filtered <- dat %>% filter(locus %in% result$locus)
+ggplot(dat_filtered) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = dos)) +
+  scale_fill_viridis_c() +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  facet_wrap(~locus) +
+  labs(title = "High frequency loci in non-adjacent populations")
+dev.off()
+
+```
+
+```{r}
+detect_high_freq_nonadj_loci <- function(freqs_both, adj_graph, min_separation = 1,
+                                         non_adj_threshold = 0.4,
+                                         adj_threshold = 0.1) {
+  all_clusters <- unique(freqs_both$cluster)
+
+  # Get all non-adjacent pairs
+  non_adj_pairs <- combn(all_clusters, 2, simplify = FALSE) %>%
+    keep(~ !are.connected(adj_graph, .x[1], .x[2]))
+
+  # Loop through non-adjacent pairs and test allele freq pattern
+  result <- map_dfr(non_adj_pairs, function(pair) {
+    pop1 <- pair[1]
+    pop2 <- pair[2]
+
+    map_dfr(c("alt_freq", "ref_freq"), function(allele_type) {
+      # High-freq in both non-adjacent pops
+      f1 <- freqs_both %>% filter(cluster == pop1, allele == allele_type, freq > non_adj_threshold)
+      f2 <- freqs_both %>% filter(cluster == pop2, allele == allele_type, freq > non_adj_threshold)
+
+      common <- inner_join(f1, f2, by = "locus", suffix = c("_1", "_2"))
+      if (nrow(common) == 0) return(NULL)
+
+      # Get all populations within min_separation hops from either pop
+      dists1 <- distances(adj_graph, v = pop1)[1, ]
+      dists2 <- distances(adj_graph, v = pop2)[1, ]
+
+      # Get all clusters within `min_separation` edges, excluding the pair
+      near_clusters <- names(which((dists1 <= min_separation | dists2 <= min_separation) &
+                                   !names(dists1) %in% pair &
+                                   is.finite(dists1)))  # skip disconnected nodes
+
+      if (length(near_clusters) == 0) return(common)
+
+      # Check allele freq in those nearby clusters
+      nearby_freqs <- freqs_both %>%
+        filter(cluster %in% near_clusters, locus %in% common$locus, allele == allele_type)
+
+      disqual_loci <- nearby_freqs %>%
+        filter(freq >= adj_threshold) %>%
+        pull(locus) %>%
+        unique()
+
+      good_loci <- common %>%
+        filter(!locus %in% disqual_loci) %>%
+        mutate(non_adj_pair = paste(pair, collapse = "_"),
+               allele = allele_type)
+
+      return(good_loci)
+    })
+  })
+
+  return(result)
+}
+
+# Prepare freqs_both first (as in previous messages)
+# Then run:
+
+result <- detect_high_freq_nonadj_loci(
+  freqs_both = freqs_both,
+  adj_graph = adj_graph,
+  min_separation = 3,        # At least 2 populations away
+  non_adj_threshold = 0.5,
+  adj_threshold = 0.05
+)
+
+voronoi_crop <- st_crop(pop_polygons, st_transform(ca, 3310))
+ca <- st_transform(ca, 3310)
+pdf(here(plotpath, "nonadjacency_test.pdf"))
+length(unique(result$locus))
+dat_filtered <- dat %>% filter(locus %in% result$locus)
+ggplot(dat_filtered) +
+  geom_sf(data = voronoi_crop, aes(fill = cluster), color = "black", alpha = 0.5) +
+  geom_sf(data = ca, fill = NA) +
+  #geom_sf(aes(col = factor(dos))) +
+  geom_sf(aes(col = cluster)) +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  facet_wrap(~locus) +
+  labs(title = "High frequency loci in non-adjacent populations")
+dev.off()
+
+```
+
+# DISTANCE BASED
+
+```{r}
+
+library(sf)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(units)
+
+#-----------------------------#
+# FUNCTION 1: Allele frequency
+#-----------------------------#
+compute_pop_frequencies <- function(sf_data) {
+  sf_data %>%
+    st_drop_geometry() %>%
+    group_by(cluster, locus) %>%
+    summarize(freq = mean(dos, na.rm = TRUE), .groups = "drop")
+}
+
+#---------------------------------------------#
+# FUNCTION 2: Get adjacent/nonadjacent clusters
+#---------------------------------------------#
+get_adjacent_clusters <- function(focal_cluster, dat_proj, dist_thresh) {
+  focal_inds <- dat_proj %>% filter(cluster == focal_cluster)
+
+  nearby_matrix <- st_is_within_distance(focal_inds, dat_proj, dist = dist_thresh)
+  nearby_inds <- unique(unlist(nearby_matrix))
+
+  neighbors <- dat_proj[nearby_inds, ] %>%
+    filter(cluster != focal_cluster)
+
+  adjacent_pops <- unique(neighbors$cluster)
+  all_pops <- unique(dat_proj$cluster)
+  non_adjacent_pops <- setdiff(all_pops, c(focal_cluster, adjacent_pops))
+
+  list(adjacent = adjacent_pops, non_adjacent = non_adjacent_pops)
+}
+
+#--------------------------------------------------------------#
+# FUNCTION 3: Find informative loci for a given focal cluster
+#--------------------------------------------------------------#
+find_private_loci <- function(focal_cluster, pop_freqs, adj_pops, nonadj_pops,
+                              adj_threshold = 0.1, nonadj_threshold = 0.4, min_nonadj = 2) {
+  focal_freqs <- pop_freqs %>% filter(cluster == focal_cluster)
+  adj_freqs   <- pop_freqs %>% filter(cluster %in% adj_pops)
+  nonadj_freqs <- pop_freqs %>% filter(cluster %in% nonadj_pops)
+
+  high_in_focal <- focal_freqs %>% filter(freq > nonadj_threshold)
+
+  good_loci <- high_in_focal$locus[!high_in_focal$locus %in% (
+    adj_freqs %>%
+      filter(locus %in% high_in_focal$locus, freq >= adj_threshold) %>%
+      pull(locus)
+  )]
+
+  if (length(good_loci) == 0) return(NULL)
+
+  matching_nonadj <- nonadj_freqs %>%
+    filter(locus %in% good_loci, freq > nonadj_threshold) %>%
+    group_by(locus) %>%
+    filter(n() >= min_nonadj) %>%
+    ungroup() %>%
+    mutate(focal_cluster = focal_cluster,
+           nonadj_cluster = cluster) %>%
+    select(focal_cluster, nonadj_cluster, locus, freq)
+
+  if (nrow(matching_nonadj) > 0) return(matching_nonadj) else return(NULL)
+}
+
+#---------------------------#
+# FUNCTION 4: Master wrapper
+#---------------------------#
+detect_private_loci <- function(dat, dist_thresh,
+                                adj_threshold = 0.1,
+                                nonadj_threshold = 0.4,
+                                min_nonadj = 2,
+                                crs_proj = 3310) {
+  dat_proj <- st_transform(dat, crs = crs_proj)
+  dist_thresh <- set_units(dist_thresh, "m")
+
+  pop_freqs <- compute_pop_frequencies(dat_proj)
+  all_clusters <- unique(dat_proj$cluster)
+
+  results <- map(all_clusters, function(pop) {
+    neighbor_info <- get_adjacent_clusters(pop, dat_proj, dist_thresh)
+
+    find_private_loci(
+      focal_cluster = pop,
+      pop_freqs = pop_freqs,
+      adj_pops = neighbor_info$adjacent,
+      nonadj_pops = neighbor_info$non_adjacent,
+      adj_threshold = adj_threshold,
+      nonadj_threshold = nonadj_threshold,
+      min_nonadj = min_nonadj
+    )
+  }) %>% compact()
+
+  bind_rows(results)
+}
+
+final_result <- detect_private_loci(
+  dat = dat,
+  dist_thresh = 10000,
+  adj_threshold = 0.1,
+  nonadj_threshold = 0.1,
+  min_nonadj = 2
+)
+
+pdf(here(plotpath, "nonadjacency_test.pdf"))
+length(unique(final_result$locus))
+dat_filtered <- dat %>% filter(locus %in% final_result$locus)
+ggplot(dat_filtered) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = (dos))) +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  facet_wrap(~locus) +
+  labs(title = "High frequency loci in non-adjacent populations")
+dev.off()
+
+```

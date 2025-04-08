@@ -5,7 +5,7 @@ ANNOTATION=../../data/annotated_genome/annotation/protein-coding.w_func_relabell
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 
 # Convert GFF to csq format (CHECK THIS)
-python convert_gff.py $ANNOTATION outputs/fixed_annotation.gff
+python script_convert_gff.py $ANNOTATION outputs/fixed_annotation.gff
 
 # Use csq to classify mutations
 bcftools csq -f "$GENOME" -g outputs/fixed_annotation.gff --local-csq "$VCF" -Ob -o outputs/csq.bcf

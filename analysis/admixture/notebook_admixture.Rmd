@@ -1,0 +1,231 @@
+---
+title: "Admixture analysis"
+output:
+  github_document:
+    toc: TRUE
+---
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(vcfR)
+library(hierfstat)
+library(tigris)
+source(here("analysis", "admixture", "functions_admixture.R"))
+source(here("general_functions.R"))
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+
+plotpath <- here("analysis", "admixture", "plots")
+outpath <- here("analysis", "admixture", "outputs")
+```
+
+```{r, echo = FALSE, message = FALSE, include=FALSE}
+# Load the U.S. state boundaries data
+ca <- get_ca()
+# make theme for plotting
+theme_custom <- 
+  theme(
+    strip.background = element_rect(color = "gray", fill = "gray"),
+    panel.background = element_rect(color = "gray", fill = NA),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    strip.text = element_text(size = 16, face = "italic")
+    )
+```
+
+```{r, include = FALSE}
+# get coordinates 
+coords <- get_coords()
+```
+
+# 2. ADMIXTURE
+```{r}
+cv <- get_cv(K = 2:15)
+
+png(here(plotpath, "cv_error.png"), width = 10, height = 5, units = "in", res = 300)
+ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+dev.off()
+```
+
+```{r admixture, fig.width = 13, fig.height = 6}
+# join with coords
+Kvals <- c(2:15)
+Q <-
+ map(Kvals, ~get_Q(K = .x) %>% 
+ mutate(K = .x)) %>%
+ bind_rows() %>%
+ arrange(across(starts_with("V"))) %>%
+ mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
+ pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q") %>%
+ filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
+ 
+df <-
+ left_join(Q, coords[,c("x", "y", "SampleID")], by = "SampleID") %>%
+ st_as_sf(coords = c("x", "y")) %>%
+ st_set_crs(st_crs(4326))
+
+pdf(here(plotpath, "admixture.pdf"), width =20, height = 10)
+ggplot(df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  facet_wrap(~K, nrow = 2) +
+  theme_void() +
+  scale_color_manual(values = viridis::turbo(max(Kvals))) 
+
+barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
+do.call(ggarrange, c(barplots, ncol = 1))
+dev.off()
+
+```
+```{r}
+qdf <- df %>% group_by(SampleID, K) %>% summarize(score = 1 - max(Q, na.rm = TRUE))
+
+pdf(here(plotpath, "admixture_scores.pdf"), width = 10, height = 10)
+ggplot(qdf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = score)) +
+  theme_void() +
+  scale_color_viridis_c(option = "plasma") +
+  facet_wrap(~K) +
+  labs(col = "Admixture score")
+dev.off()
+```
+
+```{r}
+grid <- coords_to_raster(coords_proj, res = 1000)
+qmat_samples <- get_Q(K = 6, qmat_only = FALSE)
+coords_proj <- 
+  get_coords(sf= TRUE) %>%
+  st_transform(3310) %>% 
+  filter(SampleID %in% qmat_samples$SampleID) %>% 
+  drop_na()
+qmat <- get_Q(K = 6, qmat_only = TRUE)
+# kriging
+krig_admix <- tess_krig(qmat, coords_proj, grid)
+
+pdf(here(plotpath, "kriging.pdf"), width = 5, height = 5)
+tess_plot(krig_admix)
+dev.off()
+```
+```{r}
+# FOR LINEAR MODELS: 
+# Write out Q files for K = 9
+# cluster = final cluster assignment for SampleID given max Q
+# PopGroup = Q values for each cluster
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 9) %>%
+  write_csv(here(outpath, "Q9.csv"))
+
+# write out Q values for the assigned population for Q = 9
+Q %>%
+  filter(K == 9) %>%
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup) %>%
+  mutate(pop = paste0("pop", cluster)) %>%
+  group_by(cluster) %>%
+  group_split() %>%
+  map(~as.character(pull(.x, SampleID))) %>%
+  iwalk(\(x, idx) write(x, here(outpath, paste0("pop", idx, ".txt"))))
+
+# Write out K=3 for models
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 3) %>%
+  write_csv(here(outpath, "Q3.csv"))
+Q %>% 
+  # only keep the pop group/Q values corresponding to the cluster
+  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
+  filter(cluster == PopGroup, K == 5) %>%
+  write_csv(here(outpath, "Q5.csv"))
+```
+
+```{r, fig.width = 13, fig.height = 6}
+# Check for consistency
+# simplified df with only cluster assignments and not Q values
+simplified_df <- 
+  df %>%
+  # doesn't matter which pop group is selected, cluster is repeated
+  filter(PopGroup == "V1") %>%
+  dplyr::select(SampleID, cluster, K)
+IDs <- unique(simplified_df$SampleID)
+
+same_all_df <-
+  map(IDs, ~{
+    pop <- 
+      simplified_df %>%
+      filter(SampleID == .x) %>%
+      st_drop_geometry() %>%
+      rename(reference_cluster = cluster, reference_id = SampleID)
+    same_df <-
+      simplified_df %>%
+      left_join(pop, by = "K") %>%
+      mutate(same = (cluster == reference_cluster)) %>%
+      group_by(SampleID, reference_id) %>%
+      summarize(same = mean(same), .groups = "drop")
+    return(same_df)
+  }) %>% 
+  bind_rows()
+same_summarize_df <-
+  same_all_df %>%
+  group_by(SampleID) %>%
+  summarize(same = mean(same), .groups = "drop")
+ggplot(same_summarize_df) +
+  geom_sf(aes(col = same)) +
+  scale_color_viridis_c(option = "plasma")
+```
+
+# Write out individuals for SMC++ and window calculations
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+source(here("analysis", "admixture", "admixture.R"))
+source(here("general_functions.R"))
+# FOR ROH/SMCPP:
+# Write out individual pop assignments for Q = 9
+get_Q(K = 9) %>% 
+  # Remove channel island sample
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
+  group_by(cluster) %>% 
+  group_split() %>%
+  iwalk(\(x, idx) write(x$SampleID, here(outpath, paste0("k9_pop", idx, ".txt"))))
+
+# Check population locations
+# Read in files and bind with coords 
+pop_files <- list.files(here(outpath), full.names = TRUE, pattern = "k9")
+coords <- get_coords()
+pop_df <- 
+  map(pop_files, ~{
+    pop <- read_lines(.x)
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .))
+    return(pop_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords, by = "SampleID") %>%
+  st_as_sf(coords = c("x", "y")) %>%
+  st_set_crs(st_crs(4326))
+
+pdf(here(plotpath, "pop_locations.pdf"), width = 10, height = 10)
+ggplot(pop_df) +
+  geom_sf(aes(col = pop))
+dev.off()
+```
