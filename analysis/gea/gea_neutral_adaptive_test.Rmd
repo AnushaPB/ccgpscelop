@@ -24,7 +24,7 @@ outpath <- here("analysis", "gea", "outputs")
 callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
 
 neutral <- 
-  format_het(here("analysis", "gea", "outputs", "nogea_thinned.het"), callable_sites = callable_sites) %>%
+  format_het(here("analysis", "gea", "outputs", "frqmatch.het"), callable_sites = callable_sites) %>%
   mutate(neutral_ho = 1 - `O(HOM)`/`N(NM)`) %>%
   dplyr::select(IID, neutral_ho)
 
@@ -48,20 +48,32 @@ syn <-
   mutate(syn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
   dplyr::select(IID, syn_ho)
 
-freqfilter <- 
-  format_het(here("analysis", "gea", "outputs", "nogea_frqfilter.het"), callable_sites = 1) %>%
-  mutate(filter_ho = 1 - `O(HOM)`/`N(NM)`) %>%
-  dplyr::select(IID, filter_ho)
+nonsynnotgea <- 
+  format_het(here("analysis", "gea", "outputs", "nonsynnotgea.het"), callable_sites = 1) %>%
+  mutate(nonsynnotgea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, nonsynnotgea_ho)
 
-pop_df <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv")) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
+allnonsyn <- 
+  format_het(here("analysis", "gea", "outputs", "allnonsyn.het"), callable_sites = 1) %>%
+  mutate(allnonsyn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, allnonsyn_ho)
+
+allnonsyn_frqmatch <- 
+  format_het(here("analysis", "gea", "outputs", "allnonsyn_frqmatch.het"), callable_sites = 1) %>%
+  mutate(allnonsynfrq_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, allnonsynfrq_ho)
+
+pop_df <- get_pops()
 
 df <- 
   left_join(neutral, gea, by = "IID") %>%
   left_join(genes, by = "IID")  %>%
   left_join(nonsyn, by = "IID") %>%
   left_join(syn, by = "IID") %>%
-  left_join(freqfilter, by = "IID") %>%
   left_join(pop_df, by = c("IID" = "SampleID")) %>%
+  left_join(nonsynnotgea, by = "IID") %>%
+  left_join(allnonsyn, by = "IID") %>%
+  left_join(allnonsyn_frqmatch, by = "IID") %>%
   # Remove channel island
   left_join(read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")), by = c("IID" = "SampleID")) %>%
   drop_na(Ho)
@@ -70,7 +82,7 @@ df <-
 ```{r}
 df$socal <- df$cluster == 9
 names(df)
-mod_vars <- c("neutral_ho", "NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "genes_ho", "gea_ho", "nonsyn_ho", "syn_ho", "filter_ho", "neutral_ho")
+mod_vars <- c("neutral_ho", "NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "genes_ho", "gea_ho", "nonsyn_ho", "syn_ho", "nonsynnotgea_ho", "allnonsyn_ho", "allnonsynfrq_ho")
 mod_df <- df %>% mutate(across(any_of(mod_vars), scale))
 mod <- lm(genes_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = mod_df)  
 broom::tidy(mod) %>% 
@@ -89,47 +101,68 @@ filter(p.value < 0.05)
 ```{r}
 gg_df <-
  df %>% 
- pivot_longer(c(ends_with("_ho"), -filter_ho, -neutral_ho)) %>%
+ pivot_longer(c(ends_with("_ho"), -neutral_ho)) %>%
  # Get socal cluster
- mutate(cluster = cluster == 9)
+ mutate(socal = cluster == 9)
 
 pdf(here(plotpath, "gea_test.pdf"), width = 7, height = 6)
+
+ggplot(gg_df, aes(x = neutral_ho, y = value)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "SoCal") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y")  
+
 ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm") +
+  #geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "") +
-  xlab("Genome-wide heterozygosity") +
+  labs(col = "Cluster") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~name, scales = "free_y") 
 
-ggplot(gg_df, aes(x = filter_ho, y = value, col = cluster)) +
+ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm") +
+  #geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "") +
-  xlab("Freq filtered heterozygosity") +
+  labs(col = "Cluster") +
+  xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free_y") 
-
-ggplot(gg_df, aes(x = filter_ho, y = value, col = name)) +
+  facet_wrap(~name, scales = "free_y")  
+  
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = socal)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "") +
-  xlab("Genome-wide heterozygosity") +
-  ylab("Adaptive heterozygosity") 
+  labs(col = "SoCal") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~name, scales = "free_y")  
 
-ggplot(gg_df, aes(x = neutral_ho, y = value, col = name)) +
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm") +
+  geom_smooth(method = "lm", aes(lty = name)) +
   theme_classic() +
-  labs(col = "") +
-  xlab("Genome-wide heterozygosity") +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(1, 16)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") 
 
+ggplot(filter(gg_df, name %in% c("allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", aes(lty = name)) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(1, 16)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Frequency-adjusted non-synonymous heterozygosity") 
 
-ggplot(df, aes(x = syn_ho, y = nonsyn_ho)) +
+
+ggplot(df, aes(x = syn_ho, y = nonsyn_ho, col = socal)) +
   geom_point() +
   geom_smooth(method = "lm") +
   theme_classic() +
@@ -138,95 +171,13 @@ ggplot(df, aes(x = syn_ho, y = nonsyn_ho)) +
   ylab("Non-synonymous adaptive heterozygosity")
 
 
-ggplot(df, aes(x = neutral_ho, y = filter_ho)) +
+ggplot(df, aes(x = Ho, y = neutral_ho, col = socal)) +
   geom_point() +
   geom_smooth(method = "lm") +
   theme_classic() +
   labs(col = "") +
-  xlab("Genome-wide heterozygosity") +
-  ylab("Freq filtered heterozygosity")
-dev.off()
-```
-
-```{r}
-
-coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transform(3310)
-coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho)
-
-gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
-genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
-coords$gea_resid <- residuals(gea_mod)
-coords$genes_resid <- residuals(genes_mod)
-
-gg_df <- 
-  coords %>% 
-  pivot_longer(cols = c("gea_resid", "genes_resid"), names_to = "type", values_to = "Residuals") %>%
-  mutate(type = case_when(
-    type == "gea_resid" ~ "GEA",
-    type == "genes_resid" ~ "GEA genes"
-  )) 
-
-ca <- get_ca()
-plt1 <- 
-  ggplot(coords) +
-  geom_point(aes(x = neutral_ho, y = gea_ho, color = "GEA", fill = gea_resid), pch = 21, cex = 2) +
-  geom_point(aes(x = neutral_ho, y = genes_ho, color = "GEA genes", fill = genes_resid), pch = 21, cex = 2) +
-  geom_smooth(aes(x = neutral_ho, y = gea_ho, color = "GEA"), method = "lm") +
-  geom_smooth(aes(x = neutral_ho, y = genes_ho, color = "GEA genes"), method = "lm") +
-  theme_classic() +
-  scale_color_manual(values = cols) +
-  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
-  # Remove fill legend
-  #guides(fill = FALSE) +
-  labs(col = "", fill = "Residuals") +
-  xlab("Non-GEA heterozygosity") +
-  ylab("GEA heterozygosity") 
-
-plt2 <- 
-  ggplot(gg_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = Residuals, col = type), pch = 21, col = "gray20", cex = 2) + 
-  # divergent color scale
-  scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
-  scale_color_manual(values = c("#00d5d1", "#e800a6")) +
-  facet_wrap(~type) +
-  theme_void()
-
-plt3a <- 
-  ggplot(coords) +
-    geom_sf(data = ca) +
-    geom_sf(aes(col = neutral_ho)) +
-    scale_color_viridis_c(option = "mako") +
-    labs(col = "Non-GEA Ho") +
-    theme_void()
-plt3b <- 
-  ggplot(coords) +
-    geom_sf(data = ca) +
-    geom_sf(aes(col = gea_ho)) +
-    scale_color_viridis_c(option = "mako") +
-    labs(col = "GEA Ho") +
-    theme_void()
-plt3c <- 
-  ggplot(coords) +
-    geom_sf(data = ca) +
-    geom_sf(aes(col = genes_ho)) +
-    scale_color_viridis_c(option = "mako") +
-    labs(col = "GEA genes Ho") +
-    theme_void()
-
-
-library(cowplot)
-# Arrange plt3a, plt3b, plt3c in a single row
-plt3 <- plot_grid(plt3a, plt3b, plt3c, nrow = 1)
-
-# Arrange plt1 and plt2 in a single row
-plt12 <- plot_grid(plt1, plt2, nrow = 1, rel_widths = c(2, 3), labels = c("B", "C"))
-
-# Arrange plt3 and plt12 in two rows
-final_plot <- plot_grid(plt3, plt12, nrow = 2, labels = c("A", "", ""))
-
-pdf(here("analysis", "gea", "plots", "gea_neutral_adaptive_resid.pdf"), width = 12, height = 7)
-final_plot
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Genome-wide heterozygosity")
 dev.off()
 ```
 
@@ -236,7 +187,7 @@ coords <- get_coords(sf = TRUE) %>% dplyr::rename(IID = SampleID) %>% st_transfo
 coords <- coords %>% left_join(df, by = "IID") %>% drop_na(neutral_ho) 
 
 gea_mod <- lm(gea_ho ~ neutral_ho, data = coords)
-genes_mod <- lm(genes_ho ~ neutral_ho, data = coords)
+genes_mod <- lm(nonsyn_ho ~ neutral_ho, data = coords)
 coords$gea_resid <- residuals(gea_mod)
 coords$genes_resid <- residuals(genes_mod)
 
@@ -252,8 +203,8 @@ gg_df <-
 ca <- get_ca()
 plt1 <- 
   ggplot(coords) +
-  geom_point(aes(x = neutral_ho, y = genes_ho, fill = genes_resid), pch = 21, cex = 2) +
-  geom_smooth(aes(x = neutral_ho, y = genes_ho), method = "lm") +
+  geom_point(aes(x = neutral_ho, y = nonsyn_ho, fill = genes_resid), pch = 21, cex = 2) +
+  geom_smooth(aes(x = neutral_ho, y = nonsyn_ho), method = "lm") +
   theme_classic() +
   scale_color_manual(values = cols) +
   scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
@@ -263,7 +214,7 @@ plt1 <-
 
 plt2 <- 
   ggplot(gg_df) +
-  geom_sf(data = ca) +
+  #geom_sf(data = ca) +
   geom_sf(aes(fill = Residuals), pch = 21, col = "gray20", cex = 2) + 
   # divergent color scale
   scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
@@ -272,7 +223,7 @@ plt2 <-
 
 plt3a <- 
   ggplot(coords) +
-    geom_sf(data = ca) +
+    #geom_sf(data = ca) +
     geom_sf(aes(col = neutral_ho)) +
     scale_color_viridis_c(option = "mako") +
     labs(col = "Genome-wide\ngenetic diversity") +
@@ -280,8 +231,8 @@ plt3a <-
 
 plt3c <- 
   ggplot(coords) +
-    geom_sf(data = ca) +
-    geom_sf(aes(col = genes_ho)) +
+    #geom_sf(data = ca) +
+    geom_sf(aes(col = nonsyn_ho)) +
     scale_color_viridis_c(option = "mako") +
     labs(col = "Adaptive\ngenetic diversity") +
     theme_void()
@@ -309,7 +260,7 @@ coords <- coords %>%
 nrow(coords)
 
 # Run OLS and get residuals
-f <- formula(genes_ho ~ neutral_ho)
+f <- formula(nonsyn_ho ~ neutral_ho)
 ols_model <- lm(f, data = coords)
 coords$ols_resids <- residuals(ols_model)
 
@@ -427,18 +378,18 @@ check_model(mod)
 dev.off()
 
 div_plt <- 
-  ggplot(coords, aes(x = neutral_ho, y = genes_ho)) +
+  ggplot(coords, aes(x = neutral_ho, y = nonsyn_ho)) +
   geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
   geom_smooth(method = "lm", col = "black") +
   scale_fill_gradient2(low = "#1434A4", mid = "#faf0e6", high = "#EC5800", midpoint = 0) +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
-  stat_cor(method = "pearson", label.y = min(coords$genes_ho) - 0.05) +
+  stat_cor(method = "pearson", label.y = min(coords$nonsyn_ho) - 0.05) +
   theme_classic() +
   theme(legend.position = "none")
 
 resid_plt1 <-
-  ggplot(coords, aes(y = ols_fitted, x = genes_ho)) +
+  ggplot(coords, aes(y = ols_fitted, x = nonsyn_ho)) +
   geom_point(aes(fill = ols_resids), pch = 21, cex = 2) +
   geom_smooth(method = "lm", col = "black") +
   ylab("Genome-wide diversity predicted adaptive heterozygosity") +
@@ -478,7 +429,7 @@ dev.off()
 
 ### Adaptive diversity model 2
 ```{r}
-f <- paste("genes_ho ~ neutral_ho +", paste(paste0(mod_vars), collapse = " + "))
+f <- paste("nonsyn_ho ~ neutral_ho +", paste(paste0(mod_vars), collapse = " + "))
 mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
 summary(mod)
 AIC(mod) 
@@ -520,9 +471,20 @@ sig_vars <-
   arrange(desc(abs(estimate))) %>%
   pull(term)
 
+var_combos <- 
+  expand.grid(sig_vars, sig_vars) %>% 
+  filter(Var1 != Var2) %>% 
+  mutate(across(everything(), as.character)) %>%
+  filter(Var1 != "neutral_ho", Var2 != "neutral_ho")
+
+pdf(here(plotpath, "corplots.pdf"), width = 28, height = 7)
+gglm_ls <- pmap(var_combos, ~gglm(x = ..1, y = ..2, df = mod_df))
+cowplot::plot_grid(plotlist = gglm_ls, nrow = 2)
+dev.off()
+
 resid_plt2 <-
-  ggplot(coords, aes(y = sem_fitted2, x = genes_ho)) +
-  geom_point(aes(col = genes_ho), cex = 2) +
+  ggplot(coords, aes(y = sem_fitted2, x = nonsyn_ho)) +
+  geom_point(aes(col = nonsyn_ho), cex = 2) +
   geom_smooth(method = "lm", col = "black") +
   ylab("Predicted adaptive diversity") +
   xlab("Observed adaptive diversity") +
@@ -533,7 +495,7 @@ resid_plt2 <-
 
 mod_vars2 <- c("neutral_ho", "NDVI", "gHM", "bio1", "lgm_lig", "glacier", "tmean_dif")
 pdf(here(plotpath, "sp_resids_sig2.pdf"), width = 16, height = 7)
-ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "genes_ho", f = mod_vars2, col = "genes_ho", df = mod_df, cex = 2))
+ggpartial_ls <- map(sig_vars, ~ggpartial(x = .x, y = "nonsyn_ho", f = mod_vars2, col = "nonsyn_ho", df = mod_df, cex = 2))
 plot_grid(resid_plt2, plot_grid(plotlist = ggpartial_ls, nrow = 2, align = "hv"), ncol = 2, rel_widths = c(3, 5))
 dev.off()
 ```
