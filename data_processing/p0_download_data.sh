@@ -37,9 +37,9 @@ rsync -avz hgdownload.soe.ucsc.edu::ccgp/58-Sceloporus_chr/QC/58-Sceloporus.imis
 
 # RDA outputs:
 mkdir -p ../analysis/gea/outputs
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_cortest_full.csv  ../analysis/gea/outputs
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers_full_Zscores.csv ../analysis/gea/outputs
-rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers_full_rdadapt.csv ../analysis/gea/outputs
+# rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_cortest_full.csv  ../analysis/gea/outputs
+# rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers_full_Zscores.csv ../analysis/gea/outputs
+# rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers_full_rdadapt.csv ../analysis/gea/outputs
 
-rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_cortest_full.csv 
-rsync --list-only hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA/58-Sceloporus_RDA_outliers*
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sceloporus_RDA_outliers_full_Zscores.csv ../analysis/gea/outputs
+rsync -avz hgdownload.soe.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sceloporus_RDA_cortest_full.csv  ../analysis/gea/outputs
