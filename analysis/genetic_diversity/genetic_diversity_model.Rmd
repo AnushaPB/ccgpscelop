@@ -338,7 +338,7 @@ dev.off()
 
 # Create model data
 ```{r}
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "cur_lgm", "lig_lgm", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "cur_lgm", "lgm_lig", "x", "y")
 
 mod_df <- 
   get_coords() %>% 
@@ -396,7 +396,7 @@ mod_sf <- st_as_sf(mod_df_imputed_scaled) %>% st_transform(3310)
 ```{r}
 export_df <- 
   st_drop_geometry(mod_df_imputed) %>% 
-  dplyr::select(SampleID, x, y, everything(), -geometry)
+  dplyr::select(SampleID, everything(), -geometry)
 write_csv(export_df, here(outpath, "model_df.csv"))
 ```
 
@@ -551,6 +551,31 @@ ll_null <- as.numeric(logLik(sem_null))
 pseudo_r2 <- 1 - (ll_model / ll_null)
 print(pseudo_r2) # -0.02 ... this is an understimate 
 ```
+
+
+```{r}
+# https://www.seas.upenn.edu/~tesmith/NOTEBOOK/Part_III/9_Goodness_of_Fit_Measures_for_Spatial_Regression.pdf
+library(spatialreg)
+# Extract residuals
+e_sem <- residuals(full_model)
+
+# Response variable
+y <- full_model$y
+
+# Construct the model matrix manually
+X <- model.matrix(f, data=mod_sf)
+
+# Compute D = I - X (X'X)^{-1} X'
+D <- diag(nrow(X)) - X %*% solve(t(X) %*% X) %*% t(X)
+
+# Compute denominator (y' D y)
+yDy <- t(y) %*% D %*% y
+
+# Compute R^2 for SEM
+R2_SEM <- 1 - (t(e_sem) %*% e_sem) / yDy
+R2_SEM
+```
+
 
 ## Variance partioning analysis
 ```{r}
