@@ -7,7 +7,6 @@ clean_gene_annotations <- function(gene_info) {
     extract_info <- function(entry) {
         # Extract Gene ID
         gene_id <- gsub(".*ID=(.*?);.*", "\\1", entry)
-        
         # Extract gene name and organism
         name_org <- gsub(".*Name=(.*?);.*", "\\1", entry)
         # Extract organism name from square brackets
@@ -16,7 +15,6 @@ clean_gene_annotations <- function(gene_info) {
         uniprot_id <- gsub("^(.*?):.*", "\\1", organism)
         # Clean up organism name to remove any UniProt IDs
         organism <- gsub("^.*?:", "", organism)
-        
         # Extract gene name (everything before the square bracket)
         gene_name <- gsub("\\s*\\[.*\\].*$", "", name_org)
         
@@ -48,7 +46,7 @@ intersect_genes <- function(prefix){
     genes %>% 
     dplyr::select(V1, V2, V3, V12) %>% 
     dplyr::rename(scaffold = V1, start = V2, end = V3, full_name = V12) %>%
-    # Remove duplicates (if you don't you will get an error later with the joins)
+    # Remove duplicates (if you don't you will get an error later with the joins) (only needed for GEA genes since multiple SNPs can fall in the same gene so genes will be duplicated)
     distinct()
 
   # Get RDA positions which have SNP names
@@ -96,27 +94,27 @@ intersect_genes <- function(prefix){
 
   # Save statistics to a file
   write_csv(summary_stats, here(outpath, paste0(prefix, "_summary_stats.csv")))
-}
 
+  return(genes_org)
+}
 
 # Get positions for GEA genes
 #intersect_genes("pca")
-intersect_genes("bio1ndvi")
+genes <- intersect_genes("bio1ndvi")
+
 # Summary Statistics:                                                           
 #  -------------------
-#  Number of RDA + Linked SNPs: 958850
-#  Number of SNPs in genes: 396217
-#  Number of unique genes: 28302
-#  Number of unique genes with UniProtID (GO genes): 12203
+#  Number of RDA + Linked SNPs: 1543125
+#  Number of SNPs in genes: 631921
+#  Number of unique genes: 30554
+#  Number of unique genes with UniProtID (GO genes): 12719
 
 # Get positions for all genes
 all_genes <- read.table(here("analysis", "gea", "outputs", "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
 all_gene_pos <- 
   all_genes %>% 
   dplyr::select(V1, V4, V5, V9) %>% 
-  dplyr::rename(scaffold = V1, start = V4, end = V5, full_name = V9) %>%
-  # Remove duplicates (if you don't you will get an error later with the joins)
-  distinct()
+  dplyr::rename(scaffold = V1, start = V4, end = V5, full_name = V9)
   
 # Clean gene names
 all_gene_info <- unique(all_gene_pos$full_name)
@@ -133,3 +131,7 @@ all_genes_org <-
   mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
 
 write_csv(all_genes_org, here("analysis", "gea", "outputs", "all_genes_list.csv"))
+
+# Get all genes not in GEA genes
+all_genes_not_in_gea <- all_gene_pos %>% filter(!full_name %in% genes$full_name)
+write_csv(all_genes_not_in_gea, here("analysis", "gea", "outputs", "all_genes_not_in_gea.csv"))
