@@ -8,11 +8,11 @@ plotchrom_all <- function(data){
   print(plotchrom_unique(filter(data, estimate < 0)) + ggtitle("Unique variable (negative)"))
 }
 
-plotchrom_c <- function(data, fill){
+plotchrom_c <- function(data, fill, ymin = 0, ymax = 1){
   scaff_rect <- get_scaff_rect(data)
   ggplot(data) +
-    geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = .data[[fill]])) +
-    geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+    geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]])) +
+    geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
     scaffold_theme() +
     scale_fill_viridis_c(option = "magma")
 }
@@ -35,21 +35,23 @@ plotchrom_div <- function(data, fill){
     scale_fill_gradient2(midpoint = 0, low = "cyan3", mid = "white", high = "orange2", limits = c(-0.55, 0.55))
 }
 
-plotchrom_cat <- function(summary_data, data, fill){
+plotchrom_cat <- function(summary_data, data, fill, ymin = 0, ymax = 1){
   scaff_rect <- get_scaff_rect(data)
   colors <- get_colors()
+  names(colors) <- make_pretty_names(names(colors))
 
   ggplot(summary_data) +
-    geom_rect(data = data, aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1), fill = "#e6e6e6") +
-    geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
-    geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+    geom_rect(data = data, aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+    geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+    geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
     scaffold_theme() +
     scale_fill_manual(values = colors)
 }
 
-plotchrom_top <- function(data){
-  top <-get_top(data)
-  return(plotchrom_cat(top, data, "top_r"))
+plotchrom_top <- function(data, ymin, ymax){
+  data <- data %>% mutate(var = make_pretty_names(var))
+  top <- get_top(data)
+  return(plotchrom_cat(top, data, "top_r", ymin, ymax))
 }
 
 get_top <- function(data){
@@ -65,9 +67,10 @@ get_top <- function(data){
   return(top)
 }
 
-plotchrom_unique <- function(data){
+plotchrom_unique <- function(data, ymin, ymax){
+  data <- data %>% mutate(var = make_pretty_names(var))
   unique <- get_unique(data)
-  return(plotchrom_cat(unique, data, "var"))
+  return(plotchrom_cat(unique, data, "var", ymin, ymax))
 }
 
 get_unique <- function(data){
