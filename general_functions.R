@@ -1,8 +1,9 @@
 get_ca <- function() {
   # Load the U.S. state boundaries data
-  states <- tigris::states(cb = TRUE)
+  #states <- tigris::states(cb = TRUE)
   # Extract the boundary of California (CA)
-  ca <- states[states$STUSPS == "CA", "STUSPS"]
+  #ca <- states[states$STUSPS == "CA", "STUSPS"]
+  ca <- st_read(here("data", "ca_state", "CA_State.shp"))
   ca <- sf::st_transform(ca, sf::st_crs(4326))
   return(ca)
 }
@@ -74,6 +75,12 @@ get_biokey <- function(){
     
     return(biokey)
   }
+
+get_pops <- function(){
+  path <- here("analysis", "admixture", "outputs", "Q9.csv")
+  message("Reading in ", path)
+  pop_df <- read_csv(path) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
+}
 
 get_range <- function(){
   sf::st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1")) %>% 
