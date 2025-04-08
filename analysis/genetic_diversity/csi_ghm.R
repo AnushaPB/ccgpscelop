@@ -10,3 +10,4 @@ csi_past_t2 <- resample(csi_past_t, ghm_global, method = "bilinear")
 
 # Calculate raster correlation
 ghm_csi_cor <- layerCor(c(ghm_global, csi_past_t), use = "pairwise.complete.obs")
+print(ghm_csi_cor)
