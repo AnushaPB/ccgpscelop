@@ -1,12 +1,6 @@
 library(here)
 library(tidyverse)
-r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
-rdasig <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_rdadapt.csv")) 
-rdaz <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_Zscores.csv"))
-#r %>% filter((SNP_A == "chr1_3757363_G_A" & SNP_B == "chr1_3757379_T_C") | (SNP_A == "chr1_3757379_T_C" & SNP_B == "chr1_3757363_G_A"))
-#rdasig %>% filter(locus == "chr1_3757363_G_A" | locus == "chr1_3757379_T_C")
-
-process_outputs <- function(input, outprefix){ 
+process_outputs <- function(input, outprefix, r){ 
   # Output dir
   outpath <- here("analysis", "gea", "outputs")
 
@@ -69,21 +63,24 @@ process_outputs <- function(input, outprefix){
   write.table(rda_bed, here(outpath, paste0(outprefix, "_gea.bed")), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
 }
 
+# Get SNP correlations
+r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
+
 #pca <-  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
 bio1_ndvi <-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_significant_snps.csv"))
 
 #process_outputs(input = pca, outprefix = "pca")
-process_outputs(input = bio1_ndvi, outprefix = "bio1ndvi")
+process_outputs(input = bio1_ndvi, outprefix = "bio1ndvi", r = r)
  
 # Check for pairs where both SNP_A and SNP_B are in rdasig$locus
 # Filter pairs where both SNP_A and SNP_B are in rdasig$locus
 # (e..g, pairs with R2 > 0.6 where both SNPs ended up in RDA)
 filtered_r <- 
   r %>%
-  filter(SNP_A %in% rdasig$locus & SNP_B %in% rdasig$locus)
+  filter(SNP_A %in% bio1_ndvi$locus & SNP_B %in% bio1_ndvi$locus)
 
 # Count number of pairs
-nrow(filtered_r)
+nrow(filtered_r) # 61
 
 # Count number of SNPs
 length(unique(c(filtered_r$SNP_A, filtered_r$SNP_B)))
@@ -92,11 +89,10 @@ length(unique(c(filtered_r$SNP_A, filtered_r$SNP_B)))
 mean(filtered_r$R2)
 range(filtered_r$R2)
 
-
 # Example:
-snpa <- filtered_r %>% filter(R2 == 1) %>% slice(1) %>% pull(SNP_A)
-snpb <- filtered_r %>% filter(R2 == 1) %>% slice(1) %>% pull(SNP_B)
-rdasig %>% filter(locus == snpa | locus == snpb)
+snpa <- filtered_r %>% filter(R2 > 0.6) %>% slice(1) %>% pull(SNP_A)
+snpb <- filtered_r %>% filter(R2 > 0.6) %>% slice(1) %>% pull(SNP_B)
+bio1_ndvi %>% filter(locus == snpa | locus == snpb)
 r %>% filter((SNP_A == snpa & SNP_B == snpb) | (SNP_A == snpa & SNP_B == snpb))
 print(snpa)
 print(snpb)
@@ -121,3 +117,4 @@ mean(snp_positions$distance)
 max(snp_positions$distance)
 min(snp_positions$distance)
 mean(snp_positions$distance < 10)
+
