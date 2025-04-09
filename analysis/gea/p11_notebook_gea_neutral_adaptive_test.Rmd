@@ -12,8 +12,8 @@ library(sp)
 library(spatialreg)
 library(spdep)
 library(cowplot)
-source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+source(here("general_functions.R"))
 
 plotpath <- here("analysis", "gea", "plots")
 outpath <- here("analysis", "gea", "outputs")
@@ -99,31 +99,74 @@ filter(p.value < 0.05)
 ```
 
 ```{r}
+voi <- c("nonsyn_ho", "syn_ho", "nonsynnotgea_ho", "allnonsyn_ho", "allnonsynfrq_ho")
+voi_pretty <- c(
+  "Non-synonymous GEA",
+  "Synonyomous GEA\n(not linked to nonsynonymous)",
+  "Non-synonymous not-GEA SNPs",
+  "All non-synonymous SNPs",
+  "All non-synonymous SNPs\n(frequency-matched to GEA)"
+)
+
 gg_df <-
- df %>% 
- pivot_longer(c(ends_with("_ho"), -neutral_ho)) %>%
- # Get socal cluster
- mutate(socal = cluster == 9)
+  df %>% 
+  pivot_longer(c(voi, -neutral_ho)) %>%
+  mutate(pretty_name = case_when(
+    name == "nonsyn_ho" ~ "Non-synonymous GEA",
+    name == "syn_ho" ~ "Synonyomous GEA\n(not linked to nonsynonymous)",
+    name == "nonsynnotgea_ho" ~ "Non-synonymous not-GEA SNPs",
+    name == "allnonsyn_ho" ~ "All non-synonymous SNPs",
+    name == "allnonsynfrq_ho" ~ "All non-synonymous SNPs\n(frequency-matched to GEA)"
+  )) %>%
+  mutate(pretty_name = factor(pretty_name, levels = voi_pretty)) %>%
+  # Get socal cluster
+  mutate(socal = cluster == 9)
 
-pdf(here(plotpath, "gea_test.pdf"), width = 7, height = 6)
+pdf(here(plotpath, "gea_test.pdf"), width = 8, height = 5)
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = pretty_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", aes(lty = pretty_name)) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") 
 
-ggplot(gg_df, aes(x = neutral_ho, y = value)) +
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = cluster, pch = pretty_name)) +
+  geom_point(alpha = 0.5) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = Ho, y = value, col = socal, pch = pretty_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", aes(lty = pretty_name)) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = Ho, y = value, col = cluster, pch = pretty_name)) +
+  geom_point(alpha = 0.5) +
+  theme_classic() +
+  labs(col = "SoCal") +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") 
+
+
+ggplot(gg_df, aes(x = Ho, y = value)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm") +
   theme_classic() +
   labs(col = "SoCal") +
-  xlab("Frequency-adjusted neutral heterozygosity") +
+  xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free_y")  
-
-ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
-  geom_point(alpha = 0.5) +
-  #geom_smooth(method = "lm") +
-  theme_classic() +
-  labs(col = "Cluster") +
-  xlab("Frequency-adjusted neutral heterozygosity") +
-  ylab("Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free_y") 
+  facet_wrap(~pretty_name, scales = "free_y")  
 
 ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
@@ -132,7 +175,34 @@ ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
   labs(col = "Cluster") +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free_y")  
+  facet_wrap(~pretty_name, scales = "free_y") 
+
+ggplot(gg_df, aes(x = neutral_ho, y = value)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "SoCal") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~pretty_name, scales = "free_y")  
+
+ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  #geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "Cluster") +
+  xlab("Frequency-adjusted neutral heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~pretty_name, scales = "free_y") 
+
+ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
+  geom_point(alpha = 0.5) +
+  #geom_smooth(method = "lm") +
+  theme_classic() +
+  labs(col = "Cluster") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Adaptive heterozygosity") +
+  facet_wrap(~pretty_name, scales = "free_y")  
   
 ggplot(gg_df, aes(x = neutral_ho, y = value, col = socal)) +
   geom_point(alpha = 0.5) +
@@ -141,25 +211,27 @@ ggplot(gg_df, aes(x = neutral_ho, y = value, col = socal)) +
   labs(col = "SoCal") +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") +
-  facet_wrap(~name, scales = "free_y")  
+  facet_wrap(~pretty_name, scales = "free_y")  
 
-ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
+ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho")), aes(x = neutral_ho, y = value, col = socal, pch = pretty_name)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", aes(lty = name)) +
+  geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
   labs(col = "SoCal") +
   scale_shape_manual(values = c(1, 16)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") 
 
-ggplot(filter(gg_df, name %in% c("allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = name)) +
+ggplot(filter(gg_df, name %in% c("allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = pretty_name)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", aes(lty = name)) +
+  geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
   labs(col = "SoCal") +
   scale_shape_manual(values = c(1, 16)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Frequency-adjusted non-synonymous heterozygosity") 
+
+
 
 
 ggplot(df, aes(x = syn_ho, y = nonsyn_ho, col = socal)) +

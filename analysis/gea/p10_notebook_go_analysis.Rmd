@@ -25,10 +25,10 @@ genes_org <-
   filter(original_entry %in% genes_nonsyn$full_name)
 
 # Check the number of unique genes
-print(paste("Number of genes:", nrow(genes_org)))
-print(paste("Number of unique genes:", nrow(genes_org %>% distinct(uniprot_id))))
-print(paste("Number of all genes:", nrow(all_genes)))
-print(paste("Number of unique all genes:", nrow(all_genes %>% distinct(uniprot_id))))
+print(paste("Number of genes with UniprotIDs:", nrow(genes_org)))
+print(paste("Number of unique genes with UniprotIDs:", nrow(genes_org %>% distinct(uniprot_id))))
+print(paste("Number of all genes with UniprotIDs:", nrow(all_genes)))
+print(paste("Number of all unique genes with UniprotIDs:", nrow(all_genes %>% distinct(uniprot_id))))
 
 #https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
 #install.packages("gprofiler2")
@@ -40,15 +40,15 @@ genes_org %>% count(organism) %>% arrange(desc(n)) %>% head(20)
 # Find gene orthologs
 Note: warnings are normal, they are just saying that some genes don't have orthologs in the other species
 ```{r}
-genes_hsapiens <- get_ortho(genes_org, target_organism = "hsapiens", file_prefix = "hsapiens")
-genes_ggallus <- get_ortho(genes_org, "ggallus", file_prefix = "ggallus")
-all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all")
-all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all")
+genes_hsapiens <- get_ortho(genes_org, target_organism = "hsapiens", file_prefix = "hsapiens", cache = TRUE)
+genes_ggallus <- get_ortho(genes_org, "ggallus", file_prefix = "ggallus", cache = TRUE)
+all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all", cache = TRUE)
+all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all", cache = TRUE)
 
-genes_hsapiens <- genes_org %>% mutate(query = uniprot_id)
-genes_ggallus <- genes_org%>% mutate(query = uniprot_id)
-all_genes_hsapiens <- all_genes%>% mutate(query = uniprot_id)
-all_genes_ggallus <- all_genes%>% mutate(query = uniprot_id)
+# genes_hsapiens <- genes_org %>% mutate(query = uniprot_id)
+# genes_ggallus <- genes_org %>% mutate(query = uniprot_id)
+# all_genes_hsapiens <- all_genes %>% mutate(query = uniprot_id)
+# all_genes_ggallus <- all_genes %>% mutate(query = uniprot_id)
 ```
 
 # Run GO 
@@ -153,6 +153,16 @@ go_topbp(sig_ndvi_hsapiens)
 go_topbp(sig_both_hsapiens)
 ```
 
+```{r}
+full_hsapiens <-
+  bind_rows(
+    data.frame(sig_bio1_hsapiens, run_group = "bio1"),
+    data.frame(sig_ndvi_hsapiens, run_group = "ndvi"),
+    data.frame(sig_both_hsapiens, run_group = "both")
+  )
+write_csv(here(outpath, "hsapiens_go.csv"))
+```
+
 ## ggallus
 
 ```{r}
@@ -215,6 +225,16 @@ sig_ndvi_ggallus <- go_correction(go_ndvi_ggallus, all_genes_go_ggallus)
 sig_both_ggallus <- go_correction(go_both_ggallus, all_genes_go_ggallus)
 ```
 
+```{r}
+full_ggallus <-
+  bind_rows(
+    data.frame(sig_bio1_ggallus, run_group = "bio1"),
+    data.frame(sig_ndvi_ggallus, run_group = "ndvi"),
+    data.frame(sig_both_ggallus, run_group = "both")
+  )
+write_csv(full_ggallus, here(outpath, "ggallus_go.csv"))
+```
+
 # Compare results
 ```{r}
 bp_bio1_hsapiens <- sig_bio1_hsapiens %>% filter(grepl("GO:BP", source))
@@ -255,17 +275,43 @@ gtsave(go_table(bp_bio1_ggallus), here(plotpath, "bp_bio1_ggallus.html"))
 
 # NEED TO TEST:
 ```{r}
-custom_bg <- 
+hsapiens_custom_bg <- 
   gost(
-      query = genes_hsapiens$query, 
+      query = unique(genes_hsapiens$query), 
       organism = "hsapiens", ordered_query = FALSE, 
       multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
       measure_underrepresentation = FALSE, evcodes = FALSE, 
-      user_threshold = 0.05, correction_method = "g_SCS",
+      user_threshold = 0.05, correction_method = "fdr",
       domain_scope = "custom_annotated", custom_bg = all_genes_hsapiens$query, 
-      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = TRUE
+      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE
   )
-custom_result <- custom_bg$result %>% filter(p_value < 0.05)
+custom_result <- hsapiens_custom_bg$result %>% filter(p_value < 0.05)
+custom_result
+bp <- custom_result %>% filter(source == "GO:BP")
+mf <- custom_result %>% filter(source == "GO:MF")
+```
+
+```{r}
+ggallus_custom_bg <- 
+  gost(
+      query = genes_ggallus$query, 
+      organism = "ggallus", 
+      ordered_query = FALSE, 
+      multi_query = FALSE, 
+      significant = FALSE, 
+      exclude_iea = FALSE, 
+      measure_underrepresentation = FALSE, 
+      evcodes = FALSE, 
+      user_threshold = 0.05, 
+      correction_method = "fdr",
+      domain_scope = "custom_annotated", 
+      custom_bg = all_genes_ggallus$query, 
+      numeric_ns = "", 
+      sources = NULL, 
+      as_short_link = FALSE, 
+      highlight = FALSE
+  )
+custom_result <- ggallus_custom_bg$result %>% filter(p_value < 0.05)
 custom_result
 bp <- custom_result %>% filter(source == "GO:BP")
 mf <- custom_result %>% filter(source == "GO:MF")
@@ -454,5 +500,100 @@ dev.off()
 ```
 
 ```{r}
+
+```
+
+# topGO
+
+```{r}
+library(gprofiler2)
+
+all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all", cache = TRUE)
+genes_hsapiens <- get_ortho(genes_org, target_organism = "hsapiens", file_prefix = "hsapiens", cache = TRUE)
+
+converted <- gconvert(
+  query = all_genes_hsapiens$query,           # your input gene list
+  organism = "hsapiens",           # or "ggallus", etc.
+  target = "GO",                
+  mthreshold = Inf
+)
+
+geneID2GO <- 
+  converted %>%
+  filter(str_detect(target, "^GO:")) %>%  # just in case there are other mappings
+  dplyr::select(gene = input, GO = target) %>%
+  distinct() %>%
+  group_by(gene) %>%
+  summarize(go_terms = list(unique(GO))) %>%
+  deframe()
+
+geneID2GO[1:2]
+
+genes_of_interest <- genes_hsapiens$query  
+
+all_genes <- names(geneID2GO)
+
+geneList <- factor(as.integer(all_genes %in% genes_of_interest))
+names(geneList) <- all_genes
+
+library(topGO)
+
+GOdata <- new("topGOdata",
+              ontology = "BP",  # or "MF" or "CC"
+              allGenes = geneList,
+              annot = annFUN.gene2GO,
+              gene2GO = geneID2GO,
+              nodeSize = 5)
+
+resultFisher <- runTest(GOdata, algorithm = "weight01", statistic = "fisher")
+
+GenTable(GOdata, Fisher = resultFisher, topNodes = 10)
+
+```
+
+
+```{r}
+library(gprofiler2)
+
+all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all", cache = TRUE)
+genes_ggallus <- get_ortho(genes_org, target_organism = "ggallus", file_prefix = "ggallus", cache = TRUE)
+
+converted <- gconvert(
+  query = genes_ggallus$query,           # your input gene list
+  organism = "ggallus",           # or "ggallus", etc.
+  target = "GO",                
+  mthreshold = Inf
+)
+
+geneID2GO <- 
+  converted %>%
+  filter(str_detect(target, "^GO:")) %>%  # just in case there are other mappings
+  dplyr::select(gene = input, GO = target) %>%
+  distinct() %>%
+  group_by(gene) %>%
+  summarize(go_terms = list(unique(GO))) %>%
+  deframe()
+
+geneID2GO[1:2]
+
+genes_of_interest <- genes_hsapiens$query  
+
+all_genes <- names(geneID2GO)
+
+geneList <- factor(as.integer(all_genes %in% genes_of_interest))
+names(geneList) <- all_genes
+
+library(topGO)
+
+GOdata2 <- new("topGOdata",
+              ontology = "BP",  # or "MF" or "CC"
+              allGenes = geneList,
+              annot = annFUN.gene2GO,
+              gene2GO = geneID2GO,
+              nodeSize = 5)
+
+resultFisher2 <- runTest(GOdata2, algorithm = "weight01", statistic = "fisher")
+
+GenTable(GOdata2, Fisher = resultFisher2, topNodes = 10)
 
 ```
