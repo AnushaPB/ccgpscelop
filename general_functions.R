@@ -1,10 +1,10 @@
 get_ca <- function() {
   # Load the U.S. state boundaries data
-  #states <- tigris::states(cb = TRUE)
+  states <- tigris::states(cb = TRUE)
   # Extract the boundary of California (CA)
-  #ca <- states[states$STUSPS == "CA", "STUSPS"]
-  ca <- st_read(here("data", "ca_state", "CA_State.shp"))
-  ca <- sf::st_transform(ca, sf::st_crs(4326))
+  ca <- states[states$STUSPS == "CA", "STUSPS"]
+  #ca <- st_read(here("data", "ca_state", "CA_State.shp"))
+  #ca <- sf::st_transform(ca, sf::st_crs(4326))
   return(ca)
 }
 

@@ -1,3 +1,5 @@
+# Run in analysis/adaptive
+
 # Outstanding things to discuss:
 #       - resamp vs just crop for future PCs?
 #       - NA values in env_pres PCA -- IMPUTE?
@@ -12,8 +14,9 @@ Rscript p0_env_data.R
 bash p1_process_snps.sh
 
 # Run new RDA using RDA outliers found within genes
-# Args are `gea_method` and `nPC`
-Rscript p2_rda_geagenes.R "bio1ndvi"
+# Args are `gea_method`, `nPC`, `path`, and `prefix`
+Rscript p2_rda_geagenes.R "bio1ndvi" "./outputs" "58-Sceloporus_bio1ndvi_gea"
+Rscript p2_rda_geagenes.R "bio1ndvi" "./outputs" "58-Sceloporus_bio1ndvi_gea_genes_nonsyn"
 
 # Render the R Markdown document to visualize present and future environmental layers
 Rscript -e "rmarkdown::render('env_viz.Rmd')"

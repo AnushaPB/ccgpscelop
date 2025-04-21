@@ -143,11 +143,12 @@ offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
 #' @param free_scales whether to have separate scales or not for RDA axes
 #' @param index_name name for legend
 #' @param viridis_option option for viridis coloring (defaults to "B")
+#' @param coords if `plot_type = "extractd_vals" or "extracted_rainbow"`, sampling coordinates
 #'
 #' @returns
 #' @export
 plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
-                        index_name = "Genomic offset", viridis_option = "B") {
+                        index_name = "Genomic offset", viridis_option = "B", coords = NULL) {
   if (inherits(env, "RasterStack")) env <- terra::rast(env)
   n_layers = nlyr(env)
 

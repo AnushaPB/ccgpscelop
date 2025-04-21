@@ -32,8 +32,6 @@ dat_mod_pc <- import_rda(output_path = here("analysis", "adaptive", "outputs"), 
 # Retrieve coords for samples on which RDA was run
 # coords <- read_tsv(here("analysis", "adaptive", "outputs", "RDA_genes_coords.txt"), col_names = TRUE)
 # ca <- get_ca()
-# env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
-# names(env_pres) <- paste("env_", names(env_pres), sep = "")
 ```
 
 ## 2. Detect outliers

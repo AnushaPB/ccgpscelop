@@ -21,14 +21,14 @@ library(cowplot)
 library(tidyterra)
 
 source(here("analysis", "adaptive", "adaptive_index.R"))
+source(here("analysis", "adaptive", "genomic_offset.R"))
 source(here("general_functions.R"))
 ```
 
-## Specify model to examine
+## Specify models to examine
 
 ```{r}
 gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
-prefix = "58-Sceloporus_bio1ndvi_gea"
 path = here("analysis", "adaptive", "outputs")
 ```
 
@@ -107,7 +107,7 @@ p_ai_pc <- plot_adaptive(Proj_data = ai_pc_rs, bkg = ca, to_mask = FALSE,
 
 # Export plot
 pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_pc.pdf"), width = 12, height = 8)
-p_ai_pc
+p_ai
 dev.off()
 ```
 

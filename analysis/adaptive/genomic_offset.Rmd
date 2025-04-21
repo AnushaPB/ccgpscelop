@@ -34,29 +34,30 @@ source(here("general_functions.R"))
 
 ```{r}
 gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
-
-if (gea_method == "bio1ndvi") output_path = here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi") # for BIO1 + NDVI
-if (gea_method == "pca") output_path = here("analysis", "adaptive", "outputs", "RDA_PCA") # for rasterPCA env layers
+path = here("analysis", "adaptive", "outputs")
+prefix = "58-Sceloporus_bio1ndvi_gea" # "58-Sceloporus_bio1ndvi_gea_genes_nonsyn"
 ```
 
 ## 1. Get input files
 
 ```{r}
-dat_mod <- import_rda(output_path = output_path, suffix = "mod", rds_obj = TRUE)
-dat_mod_pc <- import_rda(output_path = output_path, suffix = "modPCs", rds_obj = TRUE)
+dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
+dat_mod_pc <- import_rda(output_path = path, suffix = paste0(prefix, "_modPCs"), rds_obj = TRUE)
 
 # Retrieve coords for samples on which RDA was run
-coords <- read_tsv(here(output_path, "RDA_genes_coords.txt"), col_names = TRUE)
+coords <- read_tsv(here(path, "RDA_genes_coords.txt"), col_names = TRUE)
 ca <- get_ca()
 ```
 
 ## 2. Get environmental layers: present and future
 
 ```{r}
-if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = TRUE)
+if (gea_method == "pca") {
+  envlayers <- import_env_files(type = "rasterPCs", future = TRUE)
+  # Rename present env names to keep consistent with RDA results
+  names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
+}
 if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = TRUE)
-# Rename present env names to keep consistent with RDA results
-names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
 
 # Check that above worked
 all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
@@ -112,18 +113,18 @@ if (gea_method == "pca") {
 offset_26_g <- raster::stack(offset$Proj_offset_global_RCP26)
 offset_85_g <- raster::stack(offset$Proj_offset_global_RCP85)
 
-writeRaster(offset_26, here(output_path, "offset_load_RCP26.tif"), overwrite = TRUE)
-writeRaster(offset_26_g, here(output_path, "offset_load_global_RCP26.tif"), overwrite = TRUE)
-writeRaster(offset_85, here(output_path, "offset_load_RCP85.tif"), overwrite = TRUE)
-writeRaster(offset_85_g, here(output_path, "offset_load_global_RCP85.tif"), overwrite = TRUE)
+writeRaster(offset_26, paste0(path, "/", prefix, "_offset_load_RCP26.tif"), overwrite = TRUE)
+writeRaster(offset_26_g, paste0(path, "/", prefix, "_offset_load_global_RCP26.tif"), overwrite = TRUE)
+writeRaster(offset_85, paste0(path, "/", prefix, "_offset_load_RCP85.tif"), overwrite = TRUE)
+writeRaster(offset_85_g, paste0(path, "/", prefix, "_offset_load_global_RCP85.tif"), overwrite = TRUE)
 ```
 
 ## 4. Plot genomic offset
 
 ```{r}
 # If you're starting here, run the following lines:
-offset_26 <- terra::rast(here(output_path, "offset_load_RCP26.tif"))
-offset_85 <- terra::rast(here(output_path, "offset_load_RCP85.tif"))
+# offset_26 <- terra::rast(paste0(path, "/", prefix, "_offset_load_RCP26.tif"))
+# offset_85 <- terra::rast(paste0(path, "/", prefix, "_offset_load_RCP85.tif"))
 
 p_26 <- plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
                     plot_type = "basic", viridis_option = "B", free_scales = TRUE)
@@ -132,29 +133,33 @@ p_85 <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)"
                     plot_type = "basic", viridis_option = "B", free_scales = TRUE)
 
 p <- plot_grid(p_26, p_85, nrow = 2)
-# pdf(here("analysis", "adaptive", "plots", "offset_plots.pdf"), width = 12, height = 8)
-# p
-# dev.off()
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset.pdf"), width = 12, height = 8)
+p
+dev.off()
 ```
 
 Extract offset values using the `plot_type = "extracted_vals"` argument. Coordinates must be provided.
 
 ```{r}
-plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
-                    plot_type = "extracted_vals", viridis_option = "B")
-
-plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
-            plot_type = "extracted_vals", viridis_option = "B")
+p_ext <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
+            plot_type = "extracted_vals", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_extracted.pdf"), width = 12, height = 8)
+p_ext
+dev.off()
 ```
 
 ## 5. Make rainbow maps
 
 ```{r}
 # For rainbow plot, you need scaled loadings from RDA model
-loadings <- read_csv(here(output_path, "58-Sceloporus_RDA_scaledloadings_mod.csv"))
+loadings <- dat_mod$scaledload
+# loadings <- read_csv(here(output_path, "58-Sceloporus_RDA_scaledloadings_mod.csv"))
 
-plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
+p_rainbow <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
             plot_type = "rainbow", viridis_option = "B")
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow.pdf"), width = 12, height = 8)
+p_rainbow
+dev.off()
 ```
 
 Extract rainbow map values and only plot points using `plot_type = "extracted_rainbow"`.
@@ -169,15 +174,31 @@ Extract rainbow map values and only plot points using `plot_type = "extracted_ra
 fut_bio1_85 <- terra::rast(envlayers$env_fut$CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1)
 fut_bio1_85 <- terra::crop(fut_bio1_85, ca, mask = TRUE)
 
-ext <- terra::extract(offset_85, coords %>% dplyr:select(x, y), ID = FALSE, xy = TRUE)
+ext <- terra::extract(offset_85, coords %>% dplyr::select(x, y), ID = FALSE, xy = TRUE)
+tidy_ext <- ext %>% 
+  pivot_longer(cols = 1:2, names_to = "axis", values_to = "value")
+axis_names <- unique(tidy_ext$axis)
 
-ggplot() +
+p1 <- ggplot() +
+  geom_sf(data = ca, color = "lightgrey") +
   geom_spatraster(data = fut_bio1_85) +
   scale_fill_viridis_c(option = "D", na.value = "transparent", name = "BIO1 (°C), \nRCP 8.5") +
-  geom_point(data = ext %>% 
-               pivot_longer(cols = 1:2, names_to = "axis", values_to = "value") %>% 
-               filter(axis == "RDA1_offset"),
+  geom_point(data = tidy_ext %>% filter(axis == axis_names[[1]]),
              aes(x = x, y = y, color = value), size = 3) +
   scale_color_viridis_c(option = "B", name = "Genomic offset (RDA1), \nRCP 8.5") +
   theme_map()
+p2 <- ggplot() +
+  geom_sf(data = ca, color = "lightgrey") +
+  geom_spatraster(data = fut_bio1_85) +
+  scale_fill_viridis_c(option = "D", na.value = "transparent", name = "BIO1 (°C), \nRCP 8.5") +
+  geom_point(data = tidy_ext %>% filter(axis == axis_names[[2]]),
+             aes(x = x, y = y, color = value), size = 3) +
+  scale_color_viridis_c(option = "B", name = "Genomic offset (RDA2), \nRCP 8.5") +
+  theme_map()
+
+p_ext_bio1 <- plot_grid(p1, p2, nrow = 1)
+
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_extracted_bio1.pdf"), width = 12, height = 8)
+p_ext_bio1
+dev.off()
 ```

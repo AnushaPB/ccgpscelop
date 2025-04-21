@@ -95,7 +95,7 @@ import_rda <- function(output_path, suffix, rds_obj = FALSE) {
     eig <- read_tsv(paste0(output_path, "/58-Sceloporus_RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
   }
   if (rds_obj) {
-    mod <- readRDS(paste0(output_path, "/RDA_geagenes_", suffix, ".RDS"))
+    mod <- readRDS(paste0(output_path, "/", suffix, ".RDS"))
     biplot <- data.frame(mod$CCA$biplot)
     eig <- data.frame(mod$CCA$eig)
     # loadings <- as.data.frame(vegan::scores(mod, choices = 1:ncol(mod$CCA$v), display = "species")) %>% rownames_to_column(var = "locus")
