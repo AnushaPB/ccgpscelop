@@ -61,21 +61,21 @@ import_env_files <- function(type = "rasterPCs", future = FALSE) {
 #' @return
 #' @export
 export_rda_files <- function(mod, output_path, suffix) {
-  data.frame(mod$colsum) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_colsum_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$Ybar) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_ybar_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$v) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_v_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$u) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_u_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$wa) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_wa_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$QR$qr) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_qr_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$eig) %>% rownames_to_column(var = "RDA") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_eig_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$biplot) %>% rownames_to_column(var = "var") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_biplot_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$QR$qraux) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_qraux_", suffix, ".csv"), col_names = TRUE)
-  data.frame(mod$CCA$envcentre) %>% tibble::rownames_to_column(var = "axis") %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_envcentre_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$colsum) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/RDA_colsum_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$Ybar) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/RDA_ybar_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$v) %>% rownames_to_column(var = "locus") %>% write_csv(file = paste0(output_path, "/RDA_v_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$u) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/RDA_u_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$wa) %>% rownames_to_column(var = "INDV") %>% write_csv(file = paste0(output_path, "/RDA_wa_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$QR$qr) %>% write_csv(file = paste0(output_path, "/RDA_qr_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$eig) %>% rownames_to_column(var = "RDA") %>% write_csv(file = paste0(output_path, "/RDA_eig_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$biplot) %>% rownames_to_column(var = "var") %>% write_csv(file = paste0(output_path, "/RDA_biplot_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$QR$qraux) %>% write_csv(file = paste0(output_path, "/RDA_qraux_", suffix, ".csv"), col_names = TRUE)
+  data.frame(mod$CCA$envcentre) %>% tibble::rownames_to_column(var = "axis") %>% write_csv(file = paste0(output_path, "/RDA_envcentre_", suffix, ".csv"), col_names = TRUE)
   data.frame(mod_chi = mod$tot.chi,
-            mod_chi_cca = mod$CCA$tot.chi) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_chi_", suffix, ".csv"), col_names = TRUE)
+            mod_chi_cca = mod$CCA$tot.chi) %>% write_csv(file = paste0(output_path, "/RDA_chi_", suffix, ".csv"), col_names = TRUE)
   # Export scores (scaled and unscaled); labeled "species" corresponds to v, "sites" corresponds to wa, and "constraints" corresponds to u
-  scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
-  unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0) %>% write_csv(file = paste0(output_path, "/58-Sceloporus_RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
+  scaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE) %>% write_csv(file = paste0(output_path, "/RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
+  unscaled_loadings <- vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0) %>% write_csv(file = paste0(output_path, "/RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
 }
 
 #' Import RDA files relevant for adaptive index
@@ -89,10 +89,10 @@ export_rda_files <- function(mod, output_path, suffix) {
 import_rda <- function(output_path, suffix, rds_obj = FALSE) {
   if (!rds_obj) {
     mod <- NULL
-    biplot <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_biplot_", suffix, ".csv"), col_names = TRUE) %>% tibble::column_to_rownames(var = "var")
-    scaled_loadings <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
-    unscaled_loadings <- readr::read_csv(paste0(output_path, "/58-Sceloporus_RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
-    eig <- read_tsv(paste0(output_path, "/58-Sceloporus_RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
+    biplot <- readr::read_csv(paste0(output_path, "/RDA_biplot_", suffix, ".csv"), col_names = TRUE) %>% tibble::column_to_rownames(var = "var")
+    scaled_loadings <- readr::read_csv(paste0(output_path, "/RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
+    unscaled_loadings <- readr::read_csv(paste0(output_path, "/RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
+    eig <- read_tsv(paste0(output_path, "/RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
   }
   if (rds_obj) {
     mod <- readRDS(paste0(output_path, "/", suffix, ".RDS"))

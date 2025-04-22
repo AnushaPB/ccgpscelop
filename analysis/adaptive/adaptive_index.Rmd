@@ -35,8 +35,12 @@ path = here("analysis", "adaptive", "outputs")
 ## 1. Get input files
 
 ```{r}
-dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
-dat_mod_pc <- import_rda(output_path = path, suffix = paste0(prefix, "_modPCs"), rds_obj = TRUE)
+# dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
+# If `mod` is still in memory, can just run:
+dat_mod <- list(mod = mod, biplot = data.frame(mod$CCA$biplot), 
+                eig = data.frame(mod$CCA$eig), 
+                scaledload = vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE), 
+                unscaledload = vegan::scores(mod, choices = 1:ncol(mod$CCA$v), tidy = TRUE, scaling = 0))
 
 # Retrieve coords for samples on which RDA was run
 coords <- read_tsv(here(path, "/RDA_genes_coords.txt"), col_names = TRUE)
@@ -48,12 +52,12 @@ ca <- get_ca()
 We'll calculate adaptive index using both three env PCs and also just BIO1 + NDVI.
 
 ```{r}
-if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSEL)
+if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSE)
 if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = FALSE)
 # Rename env names to keep consistent with RDA results
 # names(envlayers$env_pres) <- paste("env_", names(envlayers$env_pres), sep = "")
 
-# Check that above worked
+# Check env var naming
 all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
 ```
 
@@ -68,9 +72,9 @@ ai <- adaptive_index(biplot = dat_mod$biplot, K = ncol(dat_mod$biplot), env_pres
                      method = "loadings")
 
 # Adaptive index for pRDA model
-ai_pc <- adaptive_index(dat_mod_pc$biplot, K = ncol(dat_mod_pc$biplot), env_pres = envlayers$env_pres, 
-                        coords = coords %>% dplyr::select(x, y), range = NULL, 
-                        method = "loadings")
+# ai_pc <- adaptive_index(dat_mod_pc$biplot, K = ncol(dat_mod_pc$biplot), env_pres = envlayers$env_pres, 
+#                         coords = coords %>% dplyr::select(x, y), range = NULL, 
+#                         method = "loadings")
 ```
 
 ## 3. Export rasters of adaptive index
@@ -78,15 +82,15 @@ ai_pc <- adaptive_index(dat_mod_pc$biplot, K = ncol(dat_mod_pc$biplot), env_pres
 ```{r}
 if (gea_method == "pca") {
   ai_rs <- c(terra::rast(ai[[1]]), terra::rast(ai[[2]]), terra::rast(ai[[3]]))
-  ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]), terra::rast(ai[[3]]))
+  # ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]), terra::rast(ai[[3]]))
 }
 if (gea_method == "bio1ndvi") {
   ai_rs <- c(terra::rast(ai[[1]]), terra::rast(ai[[2]]))
-  ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]))
+  # ai_pc_rs <- c(terra::rast(ai_pc[[1]]), terra::rast(ai_pc[[2]]))
 }
 
 writeRaster(ai_rs, paste0(path, "/", prefix, "_adapind_load.tif"), overwrite = TRUE)
-writeRaster(ai_pc_rs, paste0(path, "/", prefix, "_adapind_load_PCs.tif"), overwrite = TRUE)
+# writeRaster(ai_pc_rs, paste0(path, "/", prefix, "_adapind_load_PCs.tif"), overwrite = TRUE)
 ```
 
 ## 4. Build maps of adaptive index
@@ -102,13 +106,13 @@ pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai.pdf"), width
 p_ai
 dev.off()
 
-p_ai_pc <- plot_adaptive(Proj_data = ai_pc_rs, bkg = ca, to_mask = FALSE, 
-                      index_name = "Adaptive index", plot_type = "basic")
+# p_ai_pc <- plot_adaptive(Proj_data = ai_pc_rs, bkg = ca, to_mask = FALSE, 
+#                       index_name = "Adaptive index", plot_type = "basic")
 
-# Export plot
-pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_pc.pdf"), width = 12, height = 8)
-p_ai_pc
-dev.off()
+# # Export plot
+# pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_pc.pdf"), width = 12, height = 8)
+# p_ai_pc
+# dev.off()
 ```
 
 You can also have the function extract adaptive index values for your sampling coordinates by setting `plot_type = "extracted_vals"`.
@@ -138,7 +142,7 @@ To combine across RDA axes, we can build 'rainbow' maps which assign each axis t
 ```{r}
 # Import loadings in either of the following ways:
 loadings = dat_mod$scaledload
-# loadings = read_csv(paste0(path, "/58-Sceloporus_RDA_scaledloadings_", prefix, "_mod.csv"))
+# loadings = read_csv(paste0(path, "/RDA_scaledloadings_", prefix, "_mod.csv"))
 
 p_rainbow <- plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
                            index_name = "Adaptive index", plot_type = "rainbow",
@@ -157,4 +161,10 @@ plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE,
               index_name = "Adaptive index", plot_type = "extracted_rainbow",
               coords = coords %>% dplyr::select(x, y),
               loadings = loadings)
+```
+
+Build a rainbow map with legend provided as percentiles:
+
+```{r}
+
 ```
