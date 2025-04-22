@@ -334,16 +334,17 @@ rainbow_map <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords)
 
   # If n_layers = 2, you end up making a bivariate map
   if (n_layers == 2) {
-    aiRGB <- c(aiRGB, white_raster)
+    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], white_raster)
   }
 
   # If n_layers = 1, you end up making a univariate map
   if (n_layers == 1) {
     aiRGB <- c(aiRGB, white_raster, white_raster)
   }
-  p_rainbow <- ggplot() +
+  p_rainbow <-
+    ggplot() +
     geom_sf(data = bkg, fill = "lightgrey") +
-    geom_spatraster_rgb(data = aiRGB, r = 1, g = 2, b = 3) +
+    geom_spatraster_rgb(data = aiRGB, r = 2, g = 1, b = 3) +
     theme_map()
   p_var <- plot_var_loadings(Proj_data = Proj_data, loadings = loadings,
                              biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
@@ -455,6 +456,14 @@ raster_to_rgb <- function(r) {
   return(r)
 }
 
+#' Helper function to create rgb vector
+#'
+#' @export
+#' @noRd
+create_rgb_vec <- function(vec) {
+  if (any(is.na(vec))) x <- NA else x <- rgb(vec[2], vec[1], vec[3], maxColorValue = 255)
+  return(x)
+}
 
 # RDA biplot --------------------------------------------------------------
 

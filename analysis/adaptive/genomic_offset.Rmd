@@ -141,8 +141,15 @@ dev.off()
 Extract offset values using the `plot_type = "extracted_vals"` argument. Coordinates must be provided.
 
 ```{r}
-p_ext <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
-            plot_type = "extracted_vals", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
+p_ext_26 <- plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
+            plot_type = "extracted_vals", viridis_option = "B", 
+            coords = coords %>% dplyr::select(x, y))
+p_ext_85 <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
+            plot_type = "extracted_vals", viridis_option = "B", 
+            coords = coords %>% dplyr::select(x, y))
+
+p_ext <- plot_grid(p_ext_26, p_ext_85, nrow = 2)
+
 pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_extracted.pdf"), width = 12, height = 8)
 p_ext
 dev.off()
@@ -152,25 +159,30 @@ dev.off()
 
 ```{r}
 # For rainbow plot, you need scaled loadings from RDA model
-loadings <- dat_mod$scaledload
-# loadings <- read_csv(paste0(path, "/58-Sceloporus_RDA_scaledloadings_mod.csv"))
+# loadings <- dat_mod$scaledload
+loadings <- read_csv(paste0(path, "/RDA_scaledloadings_", prefix, "_mod.csv"))
 
 p_rainbow <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
             plot_type = "rainbow", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
-pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow.pdf"), width = 12, height = 8)
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow_RCP85.pdf"), width = 12, height = 8)
 p_rainbow
 dev.off()
 
-pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_test.pdf"), width = 12, height = 8)
-p_var$var_load_plot
+p_rainbow_26 <- plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
+            plot_type = "rainbow", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow_RCP26.pdf"), width = 12, height = 8)
+p_rainbow_26
 dev.off()
-
 ```
 
 Extract rainbow map values and only plot points using `plot_type = "extracted_rainbow"`.
 
 ```{r}
-
+p_rainbow_ext <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
+            plot_type = "extracted_rainbow", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow_extracted.pdf"), width = 12, height = 8)
+p_rainbow_ext
+dev.off()
 ```
 
 ## 6. Extracted offset vals on top of env raster layer

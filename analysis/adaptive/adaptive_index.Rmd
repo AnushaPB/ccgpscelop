@@ -141,15 +141,15 @@ To combine across RDA axes, we can build 'rainbow' maps which assign each axis t
 
 ```{r}
 # Import loadings in either of the following ways:
-loadings = dat_mod$scaledload
-# loadings = read_csv(paste0(path, "/RDA_scaledloadings_", prefix, "_mod.csv"))
+# loadings = dat_mod$scaledload
+loadings = read_csv(paste0(path, "/RDA_scaledloadings_", prefix, "_mod.csv"))
 
 p_rainbow <- plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE, 
                            index_name = "Adaptive index", plot_type = "rainbow",
                            coords = coords %>% dplyr::select(x, y),
                            loadings = loadings)
 
-if (gea_method == "bio1ndvi") pdf(paste0(here("analysis", "adaptive", "plots"), prefix, "_ai_rainbowmap.pdf")), width = 12, height = 8)
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_rainbowmap.pdf"), width = 12, height = 8)
 p_rainbow
 dev.off()
 ```
@@ -157,10 +157,14 @@ dev.off()
 Finally, you can extract values from your rainbow map for your sampling coordinates by setting `plot_type = "extracted_rainbow"`.
 
 ```{r}
-plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE,
-              index_name = "Adaptive index", plot_type = "extracted_rainbow",
-              coords = coords %>% dplyr::select(x, y),
-              loadings = loadings)
+p_rainbow_ext <- plot_adaptive(Proj_data = ai_rs, bkg = ca, to_mask = FALSE,
+                               index_name = "Adaptive index", plot_type = "extracted_rainbow",
+                               coords = coords %>% dplyr::select(x, y),
+                               loadings = loadings)
+
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_rainbowmap_extracted.pdf"), width = 12, height = 8)
+p_rainbow_ext
+dev.off()
 ```
 
 Build a rainbow map with legend provided as percentiles:

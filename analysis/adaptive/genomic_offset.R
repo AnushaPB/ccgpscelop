@@ -331,7 +331,8 @@ plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, co
 
   # FINAL PLOT ----------------------------------------
   # Plot points colored by RGB with variable vectors
-  ggplot() +
+  plot <-
+    ggplot() +
     # geom_hline(yintercept = 0, linewidth = 0.5, col = "gray") +
     # geom_vline(xintercept = 0, linewidth = 0.5, col = "gray") +
     geom_point(data = rastvals, aes(x = x, y = y), col = rastpcacols, size = 4, alpha = 0.02) +
