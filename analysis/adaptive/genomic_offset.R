@@ -54,32 +54,6 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
     }
   }
 
-  # # Predicting pixels genetic component based on predict.RDA
-  # if (method == "predict") {
-  #   # Prediction with the RDA model and both set of environments
-  #   pred_pres <- predict(mod, var_env_proj_pres[,-c(1,2)], type = "lc")
-  #   pred_fut <- predict(mod, var_env_proj_fut[,-c(1,2)], type = "lc")
-  #   # List format
-  #   Proj_offset <- list()
-  #   Proj_pres <- list()
-  #   Proj_fut <- list()
-  #   for(i in 1:K) {
-  #     # Current climates
-  #     ras_pres <- rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(pred_pres[,i])), crs = crs(env_pres))
-  #     names(ras_pres) <- paste0("RDA_pres_", as.character(i))
-  #     Proj_pres[[i]] <- ras_pres
-  #     names(Proj_pres)[i] <- paste0("RDA", as.character(i))
-  #     # Future climates
-  #     ras_fut <- rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(pred_fut[,i])), crs = crs(env_pres))
-  #     names(ras_fut) <- paste0("RDA_fut_", as.character(i))
-  #     Proj_fut[[i]] <- ras_fut
-  #     names(Proj_fut)[i] <- paste0("RDA", as.character(i))
-  #     # Single axis genetic offset
-  #     Proj_offset[[i]] <- abs(Proj_pres[[i]] - Proj_fut[[i]])
-  #     names(Proj_offset)[i] <- paste0("RDA", as.character(i))
-  #   }
-  # }
-
   # Weights based on axis eigenvalues
   weights <- eig %>% dplyr::mutate(weights = mod.CCA.eig / sum(eig$mod.CCA.eig)) %>% pull(weights)
 
@@ -148,7 +122,8 @@ offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
 #' @returns
 #' @export
 plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
-                        index_name = "Genomic offset", viridis_option = "B", coords = NULL) {
+                        index_name = "Genomic offset", viridis_option = "B", coords = NULL,
+                        biplot_axes = c(1, 2)) {
   if (inherits(env, "RasterStack")) env <- terra::rast(env)
   n_layers = nlyr(env)
 
@@ -238,7 +213,7 @@ plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
   }
 
   if (plot_type == "rainbow" | plot_type == "extracted_rainbow") {
-    rainbow <- rainbow_map_offset(Proj_data = Proj_data, bkg = bkg, n_layers = n_layers,
+    rainbow <- rainbow_map_offset(Proj_data = env, bkg = bkg, n_layers = n_layers,
                                   loadings = loadings, biplot_axes = biplot_axes, coords = coords)
     if (plot_type == "rainbow") p <- plot_grid(rainbow$map, rainbow$vector_load, rel_widths = c(2, 1))
     if (plot_type == "extracted_rainbow") {
@@ -282,7 +257,7 @@ rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, 
 
   # If n_layers = 2, you end up making a bivariate map
   if (n_layers == 2) {
-    aiRGB <- c(aiRGB, white_raster)
+    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], white_raster)
   }
 
   # If n_layers = 1, you end up making a univariate map
@@ -291,7 +266,7 @@ rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, 
   }
   p_rainbow <- ggplot() +
     geom_sf(data = bkg, fill = "lightgrey") +
-    geom_spatraster_rgb(data = aiRGB, r = 1, g = 2, b = 3) +
+    geom_spatraster_rgb(data = aiRGB, r = 3, g = 1, b = 2) +
     theme_map()
   p_var <- plot_var_loadings_offset(Proj_data = Proj_data, loadings = loadings,
                              biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
@@ -321,11 +296,10 @@ plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, co
   if (n_layers == 3) ext <- ext %>% rename("RDA1_offset" = 1, "RDA2_offset" = 2, "RDA3_offset" = 3)
   ext_sub <- ext %>% dplyr::select(any_of(c(xax, yax)))
   colnames(ext_sub) <- c("x", "y")
-  TAB_var_sub <- TAB_var %>% column_to_rownames(var = "label") %>% dplyr::select(c(xax, yax))
+  TAB_var_sub <- TAB_var %>% dplyr::select(c("RDA1", "RDA2"))
   colnames(TAB_var_sub) <- c("x", "y")
 
   # Scale the variable loadings for the arrows
-  # TODO can't do below with the offset values
   TAB_var_sub$x <- TAB_var_sub$x * max(ext_sub$x) / stats::quantile(TAB_var_sub$x)[4]
   TAB_var_sub$y <- TAB_var_sub$y * max(ext_sub$y) / stats::quantile(TAB_var_sub$y)[4]
 
@@ -357,8 +331,7 @@ plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, co
 
   # FINAL PLOT ----------------------------------------
   # Plot points colored by RGB with variable vectors
-  # plot <-
-    ggplot() +
+  ggplot() +
     # geom_hline(yintercept = 0, linewidth = 0.5, col = "gray") +
     # geom_vline(xintercept = 0, linewidth = 0.5, col = "gray") +
     geom_point(data = rastvals, aes(x = x, y = y), col = rastpcacols, size = 4, alpha = 0.02) +
@@ -378,4 +351,13 @@ plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, co
       aspect.ratio = 1
     )
   return(list(var_load_plot = plot, pcacols = pcacols))
+}
+
+#' Helper function to create rgb vector
+#'
+#' @export
+#' @noRd
+create_rgb_vec <- function(vec) {
+  if (any(is.na(vec))) x <- NA else x <- rgb(vec[3], vec[1], vec[2], maxColorValue = 255)
+  return(x)
 }

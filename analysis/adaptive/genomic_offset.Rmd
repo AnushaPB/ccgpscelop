@@ -42,7 +42,7 @@ prefix = "58-Sceloporus_bio1ndvi_gea" # "58-Sceloporus_bio1ndvi_gea_genes_nonsyn
 
 ```{r}
 dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
-dat_mod_pc <- import_rda(output_path = path, suffix = paste0(prefix, "_modPCs"), rds_obj = TRUE)
+# dat_mod_pc <- import_rda(output_path = path, suffix = paste0(prefix, "_modPCs"), rds_obj = TRUE)
 
 # Retrieve coords for samples on which RDA was run
 coords <- read_tsv(here(path, "RDA_genes_coords.txt"), col_names = TRUE)
@@ -153,13 +153,18 @@ dev.off()
 ```{r}
 # For rainbow plot, you need scaled loadings from RDA model
 loadings <- dat_mod$scaledload
-# loadings <- read_csv(here(output_path, "58-Sceloporus_RDA_scaledloadings_mod.csv"))
+# loadings <- read_csv(paste0(path, "/58-Sceloporus_RDA_scaledloadings_mod.csv"))
 
-p_rainbow <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
-            plot_type = "rainbow", viridis_option = "B")
+p_rainbow <- plot_offset(offset_85, bkg = ca, index_name = "Genomic offset (RCP 8.5)",
+            plot_type = "rainbow", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
 pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow.pdf"), width = 12, height = 8)
 p_rainbow
 dev.off()
+
+pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_test.pdf"), width = 12, height = 8)
+p_var$var_load_plot
+dev.off()
+
 ```
 
 Extract rainbow map values and only plot points using `plot_type = "extracted_rainbow"`.
