@@ -1,14 +1,14 @@
 # Run in analysis/gea
 source activate ccgpscelop
-
+# TODO : RENAME AND REDUCE NUMBER OF FILES (MORE DESCRIPTIVE FILE NAMES OR MORE INTUITIVE)
 # Get plink 
 PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 RDASNPS=outputs/bio1ndvi_rda_ids.txt
-GENESNPS=outputs/bio1ndvi_gea_gene_ids.txt
-#SYNGENESNPS=outputs/bio1ndvi_gea_gene_syn_ids.txt
-SYNGENESNPS=outputs/bio1ndvi_gea_gene_unlinked_syn_ids.txt
-NONSYNGENESNPS=outputs/bio1ndvi_gea_gene_nonsyn_ids.txt
+GENESNPS=outputs/bio1ndvi_gea_genes_ids.txt
+#SYNGENESNPS=outputs/bio1ndvi_gea_genes_syn_ids.txt
+SYNGENESNPS=outputs/bio1ndvi_gea_genes_unlinked_syn_ids.txt
+NONSYNGENESNPS=outputs/bio1ndvi_gea_genes_nonsyn_ids.txt
 NONSYNNOTGEAGENESNPS=outputs/notgeagenes_nonsyn.bed
 ALLGENES=outputs/all_genes.bed
 ALLNONSYN=outputs/all_nonsynonymous.bed
@@ -145,8 +145,10 @@ vcftools --gzvcf $VCF --weir-fst-pop ../admixture/outputs/k9_pop9.txt --weir-fst
 
 # MAPPING FILES -------------------------------------------------------------------------
 # Create dosage files for wingen and for gene maps
-plink --bfile outputs/nonsyn --recode A --allow-extra-chr --out outputs/genes # creates genes.raw
-plink --bfile outputs/nogea_thinned --recode A --allow-extra-chr --out outputs/nogea_thinned # creates nogea_thinned.raw
+plink --bfile outputs/nonsyn --recode A --allow-extra-chr --out outputs/nonsyn # creates nonsyn.raw
+plink --bfile outputs/syn --recode A --allow-extra-chr --out outputs/syn # creates syn.raw
+plink --bfile outputs/frqmatch --recode A --allow-extra-chr --out outputs/frqmatch 
+plink --bfile outputs/allnonsyn_frqmatch --recode A --allow-extra-chr --out outputs/allnonsyn_frqmatch 
 
 # PCA ----------------------------------------------------------------------------------
 plink --bfile outputs/gea --allow-extra-chr --autosome-num 95 --pca 3 --out outputs/gea

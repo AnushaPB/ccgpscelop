@@ -1,7 +1,7 @@
 library(tidyverse)
 library(here)
 outpath <- here("analysis", "gea", "outputs")
-genes <- read_csv(here(outpath, "bio1ndvi_gea_gene_snp.csv"))
+genes <- read_csv(here(outpath, "bio1ndvi_gea_genes_snp.csv"))
 
 cortest <- 
   read_csv(here(outpath, "58-Sceloporus_RDA_cortest_full.csv")) %>% 

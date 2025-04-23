@@ -204,11 +204,11 @@ go_table <- function(df, n = 5) {
   return(gt_table)
 }
 
-go_topbp <- function(x, head = 5){
+go_topbp <- function(x, head = 5, arrange_by = "intersection_size", descending = TRUE){
   x %>% 
   filter(grepl("GO:BP", source)) %>%
   dplyr::select(term_name, intersection_size, precision, fish_p) %>%
-  arrange(desc(intersection_size)) %>%
+  arrange(if (descending) desc(!!sym(arrange_by)) else !!sym(arrange_by)) %>%
   head(head)
 }
 
@@ -216,7 +216,7 @@ go_topmf <- function(x, head = 5){
   x %>% 
   filter(grepl("GO:MF", source)) %>%
   dplyr::select(term_name, intersection_size, precision, fish_p) %>%
-  arrange(desc(intersection_size)) %>%
+  arrange(if (descending) desc(!!sym(arrange_by)) else !!sym(arrange_by)) %>%
   head(head)
 }
 

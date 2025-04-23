@@ -21,7 +21,7 @@ get_pi <- function(){
   return(df)
 }
 
-get_tajimad <- function(windowkb = 100){
+get_tajimad <- function(windowkb = 10){
   pattern <- paste0(windowkb, "kb_tajimad.*\\.Tajima\\.D$")
   tjd_files <- list.files(here("analysis", "gea", "outputs"), pattern = pattern, full.names = TRUE)
   tjd_pops <- str_extract(tjd_files, "pop[0-9]+") %>% unique()
@@ -31,7 +31,7 @@ get_tajimad <- function(windowkb = 100){
     map(tjd_files, read_table) %>% 
     bind_rows(.id = "pop") %>%
     mutate(TajimaD = as.numeric(TajimaD)) %>%
-    rename(scaffold = CHROM) %>%
+    dplyr::rename(scaffold = CHROM) %>%
     filter(grepl("chr", scaffold)) %>%
     mutate(scaffold = factor(scaffold, levels = paste0("chr", 1:11))) %>%
     group_by(pop) %>%
@@ -69,7 +69,7 @@ get_genes <- function(){
 }
 
 get_gea_genes <- function(nonsyn = FALSE){
-  path <- here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_snp.csv")
+  path <- here("analysis", "gea", "outputs", "bio1ndvi_gea_genes_snp.csv")
   message("Reading in ", path)
   gea <- read_csv(path)
 
@@ -84,7 +84,7 @@ get_gea_genes <- function(nonsyn = FALSE){
   message("Number of GEA genes: ", nrow(gea))
 
   if (nonsyn){
-    path2 <- here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_nonsyn_ids.txt")
+    path2 <- here("analysis", "gea", "outputs", "bio1ndvi_gea_genes_nonsyn_ids.txt")
     message("Getting nonsynonymous genes from: ", path2)
     nonsyn_genes <- readLines(path2)
     nonsyn_gea <- gea %>% filter(locus %in% nonsyn_genes)
@@ -121,9 +121,9 @@ get_goi <- function(type = "genes"){
   # Get GEA SNPs that fall within GOI
   goi <- 
     gea %>% 
-    filter(reduce(map(goi_names, ~str_detect(full_name, .x)), `|`)) %>%
+    filter(purrr::reduce(map(goi_names, ~str_detect(full_name, .x)), `|`)) %>%
     filter(grepl("chr", scaffold)) %>%
-    rename(CHROM = scaffold)
+    dplyr::rename(CHROM = scaffold)
 
   if (type == "snps") {message("Returning SNPs, to return genes set type to genes"); return(goi)}
 

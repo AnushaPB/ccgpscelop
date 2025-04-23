@@ -10,34 +10,19 @@ rda_results <-
   dplyr::rename(scaffold = scaff, locus = rda_snps) %>%
   mutate(
     # Pull out the digit in ...[digit]_[bp]_[bp] pattern
-    start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
-    end = start
-  ) %>%
-  # IMPORTANT: remove duplicate SNPs (e.g., SNPs associated with more than one axis)
-  distinct(locus, axis, loading)
+    position = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
+  ) 
 
-print(paste("Number of significant loci:", nrow(rda_results)))
-#  "Number of significant loci: 1602968"
+# IMPORTANT: remove duplicate SNPs (e.g., SNPs associated with more than one axis)
+rda_snps <-
+  rda_results %>%
+  distinct(scaffold, locus, position)
 
-# Write out csv file
-write_csv(rda_results, here("analysis", "gea", "outputs", "bio1ndvi_significant_snps.csv"))
+print(paste("Number of significant loci:", nrow(rda_snps)))
+# "Number of significant loci: 1602968"
 
-# # Load rdadapt results
-# rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_rdadapt.csv"))
+# Write out csv file of SNPs
+write_csv(rda_snps, here("analysis", "gea", "outputs", "bio1ndvi_significant_snps_unlinked.csv"))
 
-# rda_adj <- 
-#   rda_results %>% 
-#   dplyr::rename(scaffold = scaff) %>%
-#   # Used a holm correction for multiple testing because it is more conservative
-#   mutate(p.adj = p.adjust(p.values, method = "holm")) %>%
-#   mutate(
-#     # Pull out the digit in ...[digit]_[bp]_[bp] pattern
-#     start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
-#     end = start
-#   )
-
-# rda_sig <- rda_adj %>% filter(p.adj < 0.01)
-# print(paste("Number of significant loci:", nrow(rda_sig)))
-
-# # Write out csv file
-# write_csv(rda_sig, here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
+# Write out csv file of Z-scores
+write_csv(rda_results, here("analysis", "gea", "outputs", "bio1ndvi_zscores.csv"))

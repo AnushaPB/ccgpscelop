@@ -49,10 +49,18 @@ make_het <- function(path, coords){
 nonsyn_het <- make_het(here("analysis", "gea", "outputs", "nonsyn.raw"), coords)
 syn_het <- make_het(here("analysis", "gea", "outputs", "syn.raw"), coords)
 neutral_het <- make_het(here("analysis", "gea", "outputs", "frqmatch.raw"), coords)
+allnonsyn_het <- make_het(here("analysis", "gea", "outputs", "allnonsyn_frqmatch.raw"), coords)
 
-# Make test dataset with calculate heterozygosity
-test_df <- data.frame(ho_nonsyn = rowMeans(nonsyn_het, na.rm = TRUE), ho_syn = rowMeans(syn_het, na.rm = TRUE), coords)
-```
+# Make test dataset for later extractions
+test_df <- 
+  data.frame(
+    ho_nonsyn = rowMeans(nonsyn_het, na.rm = TRUE), 
+    ho_syn = rowMeans(syn_het, na.rm = TRUE), 
+    ho_neutral = rowMeans(neutral_het, na.rm = TRUE),
+    ho_allnonsyn = rowMeans(allnonsyn_het, na.rm = TRUE),
+    coords
+  )
+``` 
 
 ```{r}
 # Create raster with 10km resolution
@@ -71,60 +79,86 @@ names(env_list) <- gsub(".tif", "", env_paths)
 # Resample all rasters to lyr
 env_list <- map(env_list, ~resample(.x, lyr))
 
-run_wingen <- function(wdim, min_n = 1, cache = TRUE, overwrite = TRUE) {
-  # Path to save output
-  path = here("analysis", "gea", "outputs", paste0("windowed_ho_gea_wdim_", wdim, "_min_n_", min_n, ".tif"))
+```
 
-  # If file exists and cache is TRUE, return the raster
+```{r}
+# Run wingen for different wdim
+run_wingen <- function(wdim, min_n = 1, cache = TRUE, overwrite = TRUE) {
+  path <- here("analysis", "gea", "outputs", paste0("windowed_ho_gea_wdim_", wdim, "_min_n_", min_n, ".tif"))
+
+  # Load existing raster if available
   if (file.exists(path) && cache) {
-    stack <- rast(path)
-    return(stack)
+    message("Loading cached raster stack from: ", path)
+    cached_stack <- rast(path)
+    cached_layers <- names(cached_stack)
+  } else {
+    cached_stack <- NULL
+    cached_layers <- character()
   }
 
-  # Set up parallel processing
   future::plan("multisession", workers = 10)
 
-  # Custom function to run wingen on environmental data
-  run_wingen_env <- function(x){
-    custom <- function(x) mean(x, na.rm = TRUE)
-    w <- window_general(mod_df[[x]], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
-    return(w[[1]]) 
-  } 
+  # Define heterozygosity types
+  het_types <- list(
+    nonsyn = nonsyn_het,
+    syn = syn_het,
+    neutral = neutral_het,
+    allnonsyn = allnonsyn_het
+  )
 
-  # run_wingen_env <- function(x){
-  #   custom <- function(x) mean(x, na.rm = TRUE)
-  #   env_df <- as.data.frame(env_list[[x]], xy = TRUE)
-  #   w <- window_general(env_df[[x]], env_df[, c("x", "y")], lyr, stat = custom, wdim = wdim, min_n = min_n)
-  #   return(w[[1]]) 
-  # } 
-  
-  # Check that order is the same
-  stopifnot(mod_df$SampleID == coords$SampleID)
+  # Load or generate heterozygosity layers
+  het_results_ls <- imap(het_types, function(data, name) {
+    if (name %in% cached_layers) {
+      message("Using cached heterozygosity layer: ", name)
+      cached_stack[[name]]
+    } else {
+      message("Generating heterozygosity layer: ", name)
+      window_general(data, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)[["Ho"]]
+    }
+  })
 
-  # Run wingen on var columns in mod_df
-  mod_vars <- names(env_list)
-  names(mod_vars) <- mod_vars
+  # Convert list to raster stack
+  het_results <- rast(het_results_ls)
 
-  # Check that all variables are in the model df
-  stopifnot(all(mod_vars %in% names(mod_df)))
-  
-  # Run wingen on environmental data
-  wenv <- purrr::map(mod_vars, run_wingen_env, .progress = TRUE)  
-  wenv <- rast(wenv)
+  # Validate input data
+  stopifnot(all(names(env_list) %in% names(mod_df)))
+  stopifnot(identical(mod_df$SampleID, coords$SampleID))
 
-  # Run wingen on heterozygosity data
-  nonsyn_wg <- window_general(nonsyn_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
-  syn_wg <- window_general(syn_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
-  neutral_wg <- window_general(neutral_het, coords, lyr, stat = "Ho", wdim = wdim, min_n = min_n)
+  # Define environmental variables
+  env_vars <- names(env_list)
+  names(env_vars) <- env_vars
+  cached_env <- env_vars[env_vars %in% cached_layers]
+  missing_env <- env_vars[!env_vars %in% cached_layers]
 
-  # End parallel process
+  # Load or generate environmental layers
+  env_results_ls <- imap(env_vars, function(var, name) {
+    if (name %in% cached_env) {
+      message("Using cached environmental layer: ", name)
+      cached_stack[[name]]
+    } else {
+      message("Generating env layer: ", name)
+      custom_mean <- function(x) mean(x, na.rm = TRUE)
+      window_general(mod_df[[var]], coords, lyr, stat = custom_mean, wdim = wdim, min_n = min_n)[[1]]
+    }
+  })
+
+  # Convert list to raster stack
+  env_results <- rast(env_results_ls)
+
+  # Combine heterozygosity and environmental layers
+  final_stack <- c(het_results, env_results)
+
+  # Write only if new layers or overwrite is requested
+  if (overwrite) {
+    message("Writing updated raster stack to: ", path)
+    final_stack <- final_stack + 0 # Load in memory before overwriting old file, workaround to get around terra's file locking
+    writeRaster(final_stack, filename = path, overwrite = TRUE)
+  } else {
+    message("No new layers generated; using existing cache.")
+  }
+
   future::plan("sequential")
-  
-  stack <- c(nonsyn_wg[["Ho"]], syn_wg[["Ho"]], neutral_wg[["Ho"]], wenv)
-  names(stack) <- c("nonsyn", "syn", "neutral", names(wenv))
-  writeRaster(stack, filename = path, overwrite = overwrite)
-
-  return(stack)
+  return(final_stack)
 }
 
 ca <- get_ca() %>% st_transform(st_crs(3310))
@@ -132,7 +166,8 @@ ca <- get_ca() %>% st_transform(st_crs(3310))
 # Run wingen
 # Mask to california so ocean values don't mess things up 
 options(future.globals.maxSize = 1e9)
-stack <- map(c(3, 5, 7, 9), ~mask(run_wingen(wdim = .x, min_n = 1, cache = TRUE), ca))
+raw_stack <- map(c(3, 5, 7, 9), ~run_wingen(wdim = .x, min_n = 1, cache = TRUE))
+stack <- map(raw_stack, ~mask(.x, ca, filename = "", overwrite = TRUE))
 names(stack) <- c("wdim3", "wdim5", "wdim7", "wdim9")
 
 pdf(here(plotpath, "wingen.pdf"), width = (5 * nlyr(stack[[1]]))/2, height = 10)
@@ -141,6 +176,7 @@ dev.off()
 ```
 
 ```{r}
+env_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 # Make wingen df
 wingen_df <- 
   map(stack, ~{
@@ -153,7 +189,10 @@ wingen_df <-
   mutate(wsize = gsub("wdim", "", wdim)) %>%
   mutate(wsize = as.numeric(wsize)) %>%
   mutate(wsize = wsize * res(stack[[1]])[1]/1000) %>%
-  mutate(wsize = paste0(round(wsize, 2), " km window")) 
+  mutate(wsize = paste0(round(wsize, 2), " km window")) %>%
+  left_join(env_df, by = "SampleID") 
+
+names(wingen_df) <- gsub("\\.y", "", names(wingen_df))  
 
 wingen_stack_df <- 
   map(stack, ~as.data.frame(.x, xy = TRUE)) %>%
@@ -165,9 +204,9 @@ wingen_stack_df <-
   
 ```
 ```{r}
-gg_df <- wingen_df %>% pivot_longer(c("syn", "nonsyn"))
-gg_df2 <- wingen_df %>% pivot_longer(c("syn", "nonsyn", "neutral")) %>% st_as_sf()
-gg_stack_df <- wingen_stack_df %>% pivot_longer(c("syn", "nonsyn", "neutral"))
+gg_df <- wingen_df %>% pivot_longer(c("syn", "nonsyn", "allnonsyn"))
+gg_df2 <- wingen_df %>% pivot_longer(c("syn", "nonsyn", "allnonsyn", "neutral")) %>% st_as_sf()
+gg_stack_df <- wingen_stack_df %>% pivot_longer(c("syn", "nonsyn", "allnonsyn", "neutral"))
 
 pdf(here(plotpath, "wingen_map.pdf"), width = 9, height = 9)
 ggplot(gg_stack_df) +
@@ -183,6 +222,7 @@ pdf(here(plotpath, "wingen_prelim.pdf"), width = 10, height = 3)
 ggplot(gg_df, aes(x = neutral, y = value)) +
   geom_smooth(aes(lty = name), method = "lm", se = FALSE, lwd = 0.8, col = "black") +
   geom_point(aes(col = cluster, pch = name), alpha = 0.5, cex = 1) +
+  scale_linetype_manual(values = c("dotted", "solid", "dashed")) +
   theme_classic() +
   facet_wrap(~wsize, nrow = 1) +
   theme(
@@ -194,7 +234,8 @@ ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty = name)) 
   geom_point(alpha = 0.3, cex = 1) +
   geom_smooth(method = "lm", se = FALSE, lwd = 0.8) +
   theme_classic() +
-  scale_shape_manual(values = c(16, 1)) +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  scale_linetype_manual(values = c("dotted", "solid", "dashed")) +
   xlab("Neutral diversity") +
   ylab("Adaptive diversity") +
   facet_wrap(~wsize, nrow = 1) +
@@ -208,40 +249,142 @@ dev.off()
 ```{r}
 gg_df <- 
   wingen_df %>% 
+  drop_na(nonsyn, syn, neutral, csi_past, tmean_dif) %>%
+  mutate(resid_tmean_dif_y = residuals(lm(nonsyn ~ neutral + csi_past + bio1, data = .))) %>%
+  mutate(resid_tmean_dif_x = residuals(lm(tmean_dif ~ neutral + csi_past + bio1, data = .))) %>%
+  mutate(resid_csi_past_x = residuals(lm(csi_past ~ neutral + tmean_dif + bio1, data = .))) %>%
+  mutate(resid_csi_past_y = residuals(lm(nonsyn ~ neutral + tmean_dif + bio1, data = .))) %>%
+  mutate(resid_neutral_x = residuals(lm(neutral ~ csi_past + tmean_dif + bio1, data = .))) %>%
+  mutate(resid_neutral_y = residuals(lm(nonsyn ~ csi_past + tmean_dif + bio1, data = .))) %>%
+  mutate(resid_bio1_x = residuals(lm(bio1 ~ neutral + csi_past + tmean_dif, data = .))) %>%
+  mutate(resid_bio1_y = residuals(lm(nonsyn ~ neutral + csi_past + tmean_dif, data = .))) %>%
   pivot_longer(c("syn", "nonsyn")) %>% 
   filter(wdim == "wdim7") %>%
   mutate(name = case_when(
-    name == "nonsyn" ~ "Non-synonymous",
-    name == "syn" ~ "Synonymous"
+    name == "nonsyn" ~ "GEA non-synonymous",
+    name == "syn" ~ "GEA synonymous"
+  )) %>%
+  filter(!grepl("CHI138_DAW5-46-21", SampleID), !grepl("CCGPMC_MW01-3-14", SampleID)) 
+
+cs1 <- viridis::mako(4, begin = 0.3, end = 0.8)
+names(cs1) <- c("7", "5", "4", "1")
+cs2 <- viridis::rocket(9-4, begin = 0.3, end = 0.9)
+names(cs2) <- c("9", "8", "6", "2", "3")
+cs <- c(cs1, cs2)
+
+plt1 <-
+  ggplot(gg_df, aes(x = neutral)) +
+  geom_point(aes(y = value, col = cluster, pch = name), alpha = 0.8, cex = 3) +
+  geom_smooth(aes(y = value, lty = name), method = "lm", se = TRUE, col = "black", lwd = 1) +
+  scale_shape_manual(values = c(16, 3)) +
+  scale_linetype_manual(values = c("solid", "dotted")) +
+  scale_color_manual(values = cs) +
+  theme_classic() +
+  xlab("Neutral diversity") + 
+  ylab("Adaptive diversity") +
+  labs(col = "Population", pch = "Mutation type", lty = "Mutation type") +
+  theme(axis.title = element_text(size = 14))
+
+plt2 <- 
+  ggplot(gg_df, aes(x = resid_tmean_dif_x, y = resid_tmean_dif_y)) +
+  geom_point(aes(col = cluster), alpha = 0.6, cex = 2) +
+  geom_smooth(method = "lm", se = TRUE, lwd = 0.8, col = "black") +
+  scale_color_manual(values = cs) +
+  theme_classic() +
+  xlab("Partial climate change") +
+  ylab("Partial adaptive diversity") +
+  ggpubr::stat_cor() +
+  labs(col = "Population") +
+  theme(legend.position = "none")
+
+plt3 <-
+  ggplot(gg_df, aes(x = resid_csi_past_x, y = resid_csi_past_y)) +
+  geom_point(aes(col = cluster), alpha = 0.6, cex = 2) +
+  geom_smooth(method = "lm", se = TRUE, lwd = 0.8, col = "black") +
+  scale_color_manual(values = cs) +
+  theme_classic() +
+  xlab("Partial climate stability") +
+  ylab("Partial adaptive diversity") +
+  ggpubr::stat_cor() + 
+  labs(col = "Population") +
+  theme(legend.position = "none")
+
+plt4 <-
+  ggplot(gg_df, aes(x = resid_neutral_x, y = resid_neutral_y)) +
+  geom_point(aes(col = cluster), alpha = 0.6, cex = 2) +
+  geom_smooth(method = "lm", se = TRUE, lwd = 0.8, col = "black") +
+  scale_color_manual(values = cs) +
+  theme_classic() +
+  xlab("Partial neutral diversity") +
+  ylab("Partial adaptive diversity") +
+  ggpubr::stat_cor() + 
+  labs(col = "Population") +
+  theme(legend.position = "none")
+
+plt5 <-
+  ggplot(gg_df, aes(x = resid_bio1_x, y = resid_bio1_y)) +
+  geom_point(aes(col = cluster), alpha = 0.6, cex = 2) +
+  geom_smooth(method = "lm", se = TRUE, lwd = 0.8, col = "black") +
+  scale_color_manual(values = cs) +
+  theme_classic() +
+  xlab("Partial contemporary temperature") +
+  ylab("Partial adaptive diversity") +
+  ggpubr::stat_cor() + 
+  labs(col = "Population") +
+  theme(legend.position = "none")
+
+pdf(here(plotpath, "committee_meeting.pdf"), width = 14, height = 6)
+pltgrp1 <- cowplot::plot_grid(plt4, plt3, plt2, plt5, ncol = 2, labels = c("A", "B", "C", "D"), align = "hv")
+pltgrp2 <- cowplot::plot_grid(plt1, nrow = 1, labels = c("D"))
+
+cowplot::plot_grid(pltgrp2, pltgrp1, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+
+```
+
+```{r}
+gg_df <- 
+  wingen_df %>% 
+  pivot_longer(c("syn", "nonsyn", "allnonsyn")) %>% 
+  filter(wdim == "wdim7") %>%
+  mutate(name = case_when(
+    name == "nonsyn" ~ "GEA non-synonymous",
+    name == "syn" ~ "GEA synonymous"
+    name == "allnonsyn" ~ "All non-synonymous",
   ))
 
 gg_df2 <- 
   wingen_df %>% 
-  pivot_longer(c("syn", "nonsyn", "neutral")) %>%
+  pivot_longer(c("syn", "nonsyn", "allnonsyn", "neutral")) %>%
   mutate(name = case_when(
-    name == "nonsyn" ~ "C. Non-synonymous",
-    name == "syn" ~ "B. Synonymous",
-    name == "neutral" ~ "A. Neutral"
+    name == "nonsyn" ~ "GEA non-synonymous",
+    name == "syn" ~ "GEA synonymous",
+    name == "allnonsyn" ~ "All non-synonymous",
+    name == "neutral" ~ "Neutral"
   )) %>%
+  mutate(name = factor(name, levels = c("Neutral", "GEA synonymous", "GEA non-synonymous", "All non-synonymous"))) %>%
   st_as_sf() 
+
 gg_stack_df <- 
   wingen_stack_df %>% 
-  pivot_longer(c("syn", "nonsyn", "neutral")) %>% 
+  pivot_longer(c("syn", "nonsyn", "neutral", "allnonsyn")) %>% 
   filter(wdim == "wdim7") %>%
   mutate(name = case_when(
-    name == "nonsyn" ~ "C. Non-synonymous",
-    name == "syn" ~ "B. Synonymous",
-    name == "neutral" ~ "A. Neutral"
-  ))
+    name == "nonsyn" ~ "GEA non-synonymous",
+    name == "syn" ~ "GEA synonymous",
+    name == "allnonsyn" ~ "All non-synonymous",
+    name == "neutral" ~ "Neutral"
+  )) %>%
+  mutate(name = factor(name, levels = c("Neutral", "GEA synonymous", "GEA non-synonymous", "All non-synonymous"))) 
 
 plt1 <-
   ggplot(gg_stack_df) +
   geom_sf(data = ca) +
   geom_raster(aes(x = x, y = y, fill = value)) +
-  geom_sf(data = gg_df2, pch = 21, cex =2, aes(col = socal, fill = value))  + 
+  geom_sf(data = gg_df2, pch = 21, cex = 1, aes(col = socal, fill = value))  + 
   facet_grid(~name) +
   theme_void() + 
-  theme(strip.text = element_text(hjust = 0)) +
+  scale_linetype_manual(values = c("dotted", "solid", "dashed")) +
   scale_color_manual(values = c("black", "red")) +
   scale_fill_viridis_c(option = "turbo") +
   labs(fill = "Ho", col = "Population")
@@ -250,7 +393,8 @@ plt2 <- ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty =
   geom_point(alpha = 0.3, cex = 1) +
   geom_smooth(method = "lm", se = FALSE, lwd = 0.8) +
   theme_classic() +
-  scale_shape_manual(values = c(16, 1)) +
+  scale_shape_manual(values = c(16, 1, 3)) +
+  scale_linetype_manual(values = c("dotted", "solid", "dashed")) +
   scale_color_manual(values = c("black", "red")) +
   xlab("Neutral diversity") +
   ylab("Adaptive diversity") +
@@ -261,11 +405,12 @@ plt2 <- ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty =
   labs(fill = "Ho", col = "Population", pch = "Mutation type", lty = "Mutation type")
 
 plt2 <- ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty = name)) +
-  geom_point(alpha = 0.3, cex = 1) +
+  geom_point(alpha = 0.3, cex = 2) +
   geom_smooth(method = "lm", se = FALSE, lwd = 0.8) +
   theme_classic() +
-  scale_shape_manual(values = c(16, 1)) +
+  scale_shape_manual(values = c(16, 1, 3)) +
   scale_color_manual(values = c("black", "red")) +
+  scale_linetype_manual(values = c("dotted", "solid", "dashed")) +
   xlab("Neutral diversity") +
   ylab("Adaptive diversity") +
   theme(
@@ -275,11 +420,11 @@ plt2 <- ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty =
   labs(fill = "Ho", col = "Population", pch = "Type", lty = "Type")
 
 
-pdf(here(plotpath, "wingen_wdim7_map.pdf"), width = 14, height = 4)
-cowplot::plot_grid(plt1, plt2, nrow = 1, rel_widths = c(1.6, 1))
+pdf(here(plotpath, "wingen_wdim7_map.pdf"), width = 16, height = 4)
+cowplot::plot_grid(plt1, plt2, nrow = 1, rel_widths = c(2, 1))
 dev.off()
 
-pdf(here(plotpath, "wingen_prelim.pdf"), width = 10, height = 3)
+pdf(here(plotpath, "wingen_prelim.pdf"), width = 5, height = 4)
 ggplot(gg_df, aes(x = neutral, y = value)) +
   geom_smooth(aes(lty = name), method = "lm", se = FALSE, lwd = 0.8, col = "black") +
   geom_point(aes(col = cluster, pch = name), alpha = 0.5, cex = 1) +
@@ -294,7 +439,7 @@ ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty = name)) 
   geom_point(alpha = 0.3, cex = 1) +
   geom_smooth(method = "lm", se = FALSE, lwd = 0.8) +
   theme_classic() +
-  scale_shape_manual(values = c(16, 1)) +
+  scale_shape_manual(values = c(16, 1, 3)) +
   xlab("Neutral diversity") +
   ylab("Adaptive diversity") +
   facet_wrap(~wsize, nrow = 1) +
@@ -302,18 +447,6 @@ ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty = name)) 
     strip.background = element_blank(),
     strip.text = element_text(color = "gray")
   )
-dev.off()
-```
-
-```{r}
-final_stack <- stack[["wdim7"]]
-
-grd <- disagg(lyr, 2)
-tk <- krig_gd(final_stack[[1]], grd = grd)
-tk_mask <- crop(mask(tk, ca), ca)
-
-pdf(here(plotpath, "wingen_kriged.pdf"), width = 5, height = 5)
-ggplot_gd(tk_mask, bkg = ca)
 dev.off()
 ```
 
@@ -336,7 +469,7 @@ high_cor_pairs
 run_models <- function(stack, wdim){
   # Model variables
   # Note: Correlated variables were removed based on correlation matrix from previous step
-  mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "tmean_dif")
+  mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "tmean_dif")
 
   # Create dataframe from stack
   df <- as.data.frame(stack, xy = TRUE) %>% drop_na(nonsyn, syn, neutral, all_of(mod_vars))
@@ -374,12 +507,12 @@ run_models <- function(stack, wdim){
   sem_gendiv <- errorsarlm("nonsyn ~ neutral", data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
   # Adaptive diversity ~ neutral diversity model + climate
-  sem_gendiv2 <- errorsarlm("nonsyn ~ neutral + NDVI + gHM + bio1 + cur_lgm + tmean_dif", data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
+  sem_gendiv2 <- errorsarlm("nonsyn ~ neutral + NDVI + gHM + bio1 + csi_past + tmean_dif", data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
   # Get adaptive residuals and run residual model
   df$resids <- residuals(sem_gendiv)
   scale_df$resids <- df$resids
-  resid_f <- "resids ~ NDVI + gHM + bio1 + cur_lgm + tmean_dif"
+  resid_f <- "resids ~ NDVI + gHM + bio1 + csi_past + tmean_dif"
   sem_resid <- errorsarlm(resid_f, data = scale_df, listw = listw, na.action = "na.omit", zero.policy = TRUE)
 
   # Plots
@@ -403,13 +536,16 @@ run_models <- function(stack, wdim){
 run_models_adaptive <- function(x, wdim, coords){
   # Model variables
   # Note: Correlated variables were removed based on correlation matrix from previous step
-  mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "tmean_dif", "neutral")
+  mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "neutral")
 
   # Create dataframe from stack
   df <- 
-    data.frame(extract(x, coords)) %>% 
-    drop_na(nonsyn, syn, neutral, all_of(mod_vars))
-  scale_df <- df %>% mutate_all(scale) %>% mutate(geometry = coords$geometry)
+    x %>%
+    filter(wdim == paste0("wdim", !!wdim))
+  scale_df <- 
+    df %>% 
+    mutate(across(c(nonsyn, syn, neutral, all_of(mod_vars)), scale)) %>% 
+    left_join(coords, by = "SampleID")
     
   # Convert to sf and sp objects (sp needed for semivariograms)
   df_sf <- st_as_sf(scale_df, crs = 3310)
@@ -459,9 +595,12 @@ create_plots <- function(df, wdim){
   dev.off()
 }
 
-create_plots_adaptive <- function(df, wdim, mod_vars = c("NDVI", "gHM", "bio1", "cur_lgm", "tmean_dif", "neutral")){
-  plts2a <- do.call(plot_grid, c(map(mod_vars, ~ gglm(.x, "nonsyn", drop_na(df))), nrow = 1))
-  plts2b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "nonsyn", mod_vars, drop_na(df))), nrow = 1))
+create_plots_adaptive <- function(df, wdim, mod_vars = c("NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "neutral"), partial_only = FALSE){
+  plts2a <- do.call(plot_grid, c(map(mod_vars, ~ gglm(.x, "nonsyn", drop_na(df))), nrow = 1, align = "hv"))
+  plts2b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "nonsyn", mod_vars, drop_na(df))), nrow = 1, align = "hv"))
+
+  if (partial_only) return(plts2b)
+
   combined_plot <- plot_grid(plts2a, plts2b, nrow = 2)
   
   title <- 
@@ -472,7 +611,7 @@ create_plots_adaptive <- function(df, wdim, mod_vars = c("NDVI", "gHM", "bio1", 
                hjust = 0.5)
   
   final_plot <- plot_grid(title, combined_plot, ncol = 1, rel_heights = c(0.15, 1))
-  print(final_plot)
+  final_plot
 }
 ```
 
@@ -480,9 +619,10 @@ create_plots_adaptive <- function(df, wdim, mod_vars = c("NDVI", "gHM", "bio1", 
 ```{r}
 # Run models
 wdim <- c(3, 5, 7, 9)
+names(wdim) <- paste0("wdim", wdim)
 
 # Note: can't use parallel processing here because of the terra rast objects
-results <- map2(stack, wdim, ~run_models_adaptive(x = .x, wdim = .y, coords = coords), .progress = TRUE)
+results <- map(wdim, ~run_models_adaptive(x = wingen_df, wdim = .x, coords = coords), .progress = TRUE)
 
 results_df <-
   map(results, "model") %>%
@@ -504,11 +644,11 @@ sig <-
     sd = var(estimate),
     sig = mean(p.value < 0.05)
   ) %>%
-  filter(sig > 0.5) %>%
+  filter(sig > 0) %>%
   arrange(desc(abs(mean)))
 sig
 
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "tmean_dif", "neutral")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "neutral")
 model_dfs <- map(results, "df") 
 pdf(here(plotpath, "adaptive_model_results.pdf"), width = 18, height = 7)
 walk2(model_dfs, wdim, ~create_plots_adaptive(.x, .y, mod_vars = mod_vars), .progress = TRUE)
@@ -518,6 +658,25 @@ pdf(here(plotpath, "adaptive_model_results_sig.pdf"), width = 13, height = 7)
 walk2(model_dfs, wdim, ~create_plots_adaptive(.x, .y, mod_vars = sig$term), .progress = TRUE)
 dev.off()
 
+plt4 <- cowplot::plot_grid(plt1, plt2, nrow = 1, rel_widths = c(1.6, 1), labels = c("A", "B"))
+plt3 <- create_plots_adaptive(model_dfs[[3]], wdim = 7, mod_vars = sig$term, partial_only = TRUE)
+
+
+pdf(here(plotpath, "adaptive_model_results_sig_wdim7.pdf"), width = 14, height = 7)
+plot_grid(plt4, plt3, nrow = 2, rel_heights = c(1, 0.9), labels = c("", "C"))
+dev.off()
+
+```
+
+```{r}
+final_df <- model_dfs[[3]] %>% left_join()
+plt4 <- cowplot::plot_grid(plt1, plt2, nrow = 1, rel_widths = c(1.6, 1), labels = c("A", "B"))
+mod_vars = c("NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "neutral")
+plts2b <- do.call(plot_grid, c(map(mod_vars, ~ ggpartial(.x, "nonsyn", mod_vars, drop_na(model_dfs[[3]]), col = )), nrow = 1, align = "hv"))
+
+pdf(here(plotpath, "adaptive_model_results_sig_wdim7.pdf"), width = 14, height = 7)
+plot_grid(plt4, plt3, nrow = 2, rel_heights = c(1, 0.9), labels = c("", "C"))
+dev.off()
 ```
 
 # OLD:
@@ -665,7 +824,7 @@ dev.off()
 library(MuMIn)
 df <- as.data.frame(stack2, xy = TRUE)
 scale_df <- df %>% mutate_all(scale)
-mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
 f_Ho <- paste("Ho ~", paste(mod_vars, collapse = " + "))
 dredge <- dredge(lm(f_Ho, data = scale_df, na.action = na.fail))
 best_model_f <- MuMIn::get.models(dredge, subset = 1)[[1]]$call
@@ -770,7 +929,7 @@ data.frame(slm = AIC(slm_model), sem = AIC(sem_model), radius = radius)
 
 library(furrr)
 plan(multisession, workers = 10)
-f <- formula("Ho ~ NDVI + gHM + bio1 + cur_lgm + lgm_lig + csi_past + glacier + tmean_dif + Q")
+f <- formula("Ho ~ NDVI + gHM + bio1 + csi_past + lgm_lig + csi_past + glacier + tmean_dif + Q")
 dredge_result <- sem_dredge(f, data = mod_sf, listw = listw)
 plan(sequential)
 

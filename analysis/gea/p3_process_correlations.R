@@ -32,16 +32,15 @@ process_outputs <- function(input, outprefix, r){
   all_snps <- unique(c(input$locus, snps_r))
 
   # Calculate number of added SNPs
-  print(paste("Original number of SNPs:", nrow(input)))
-  print(paste("Number of added SNPs:", length(all_snps) - nrow(input)))
+  print(paste("Original number of SNPs (unique):", length(unique(input$locus))))
+  print(paste("Number of added SNPs (unique):", length(all_snps) - length(unique(input$locus))))
 
   # Make into df
   snp_df <- 
     tibble(locus = all_snps) %>% 
     mutate(
       # Pull out the digit in ...[digit]_[bp]_[bp] pattern
-      start = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
-      end = start,
+      position = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
       scaffold = str_extract(locus, "^(Scaffold_[0-9]+__[0-9]+_contigs__length_[0-9]+|chr[0-9]+)")
     )
 
@@ -57,6 +56,11 @@ process_outputs <- function(input, outprefix, r){
   # Create bed file
   rda_bed <- 
     snp_df %>%
+    # IMPORTANT: BED file must be 0-based so subtract 1 from start
+    mutate(
+      start = position - 1,
+      end = position
+    ) %>%
     select(scaffold, start, end) 
 
   # Write to table with no header
@@ -67,7 +71,7 @@ process_outputs <- function(input, outprefix, r){
 r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))
 
 #pca <-  read_csv(here("analysis", "gea", "outputs", "rda_sig_p01.csv"))
-bio1_ndvi <-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_significant_snps.csv"))
+bio1_ndvi <-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_significant_snps_unlinked.csv"))
 
 #process_outputs(input = pca, outprefix = "pca")
 process_outputs(input = bio1_ndvi, outprefix = "bio1ndvi", r = r)
