@@ -23,14 +23,6 @@ format_het <- function(path, callable_sites){
   return(het_data) 
 }
 
-get_pops <- function(){
-  map(paste0("pop", 1:5), ~{
-    read.table(here("analysis", "admixture", "outputs", paste0("k5_", .x, ".txt")), header = FALSE) %>%
-    mutate(pop = .x) %>%
-    rename(SampleID = V1)
-  }) %>% bind_rows()
-}
-
 get_roh <- function(){
   coords <- get_coords(sf = TRUE)
   pops <- get_pops()

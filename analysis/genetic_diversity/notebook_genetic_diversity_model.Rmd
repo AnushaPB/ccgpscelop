@@ -70,7 +70,9 @@ names(csi_stack)
 
 # Calculate the variance of the four raster stacks
 csi_custom <- app(csi_stack, var, na.rm = FALSE)
-names(csi_custom) <- "csi_custom"
+
+# Scale CSI raster from 0 to 1 and subtract from 1 to get higher values = more stable
+csi_custom[] <- 1 - scales::rescale(csi_custom[], to = c(0, 1), na.rm = TRUE)
 
 # Make a data frame with the climate change values
 paleoclim_mod_df <- 
@@ -138,6 +140,9 @@ df_future <-
 coords <- get_coords(sf = TRUE)
 # Do 1 - to make the values more intuitive
 csi_mod_df <- data.frame(csi = extract(csi_past, coords, ID = FALSE), coords)
+
+test <- csi_mod_df %>% left_join(het)
+cor(test$csi_past, test$Ho, use = "pairwise.complete.obs") > 0 # Confirm value is positive as expected
 ```
 
 # Hypothesis 3: Genetic diversity explained by admixture
@@ -173,10 +178,11 @@ lgm_glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "LGM_max
 lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_glaciers)))
 lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
 # Add a new column to coords indicating whether each point is inside the lgm shapefile
-coords <- get_coords(sf = TRUE)
+coords <- get_coords(sf = TRUE) %>% st_transform(crs = st_crs(lgm_glaciers))
 glacier_mod_df <- 
   coords %>%
-  mutate(glacier = as.numeric((lengths(st_within(coords, lgm_glaciers)) > 0))) 
+  mutate(glacier = as.numeric((lengths(st_within(coords, lgm_glaciers)) > 0))) %>%
+  st_drop_geometry()
 ```
 
 # Hypothesis 6: Genetic diversity explained by recent climate change
@@ -238,7 +244,8 @@ env_list <-
     gHM = ghm,
     tmean_dif = tmean_dif,
     cur_lgm = cur_lgm,
-    lgm_lig = lgm_lig
+    lgm_lig = lgm_lig,
+    csi_past = csi_past
   )
 
 env_list <- imap(env_list, ~{
@@ -357,6 +364,7 @@ mod_df <-
   # REMOVE CHANNEL ISLAND SAMPLE
   filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
   filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
+
 
 nrow(mod_df) # 160
 
