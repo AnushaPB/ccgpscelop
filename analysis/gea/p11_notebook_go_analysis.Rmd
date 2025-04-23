@@ -13,7 +13,7 @@ outpath <- here("analysis", "gea", "outputs")
 
 ```{r}
 # Get all GEA variants in genes 
-genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_gene_nonsyn.csv"))
+genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 
 # Get all annotated genes
 all_genes <-read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv"))
@@ -40,11 +40,10 @@ genes_org %>% count(organism) %>% arrange(desc(n)) %>% head(20)
 # Find gene orthologs
 Note: warnings are normal, they are just saying that some genes don't have orthologs in the other species
 ```{r}
-genes_hsapiens <- get_ortho(genes_org, target_organism = "hsapiens", file_prefix = "hsapiens", cache = TRUE)
-genes_ggallus <- get_ortho(genes_org, "ggallus", file_prefix = "ggallus", cache = TRUE)
 all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all", cache = TRUE)
 all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all", cache = TRUE)
-
+genes_hsapiens <- all_genes_hsapiens %>% filter(uniprot_id %in% genes_org$uniprot_id)
+genes_ggallus <- all_genes_ggallus %>% filter(uniprot_id %in% genes_org$uniprot_id)
 # genes_hsapiens <- genes_org %>% mutate(query = uniprot_id)
 # genes_ggallus <- genes_org %>% mutate(query = uniprot_id)
 # all_genes_hsapiens <- all_genes %>% mutate(query = uniprot_id)
@@ -195,7 +194,7 @@ names(all_genes_go_ggallus)[-1] <- paste0(names(all_genes_go_ggallus), "_all")[-
 # Link genes and snps
 rda_ggallus_genes <-
   # file from intersect_genes.R
-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_snp.csv")) %>%
+  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_gea_genes_snp.csv")) %>%
   dplyr::select(locus, original_entry = full_name) %>%
   # Join with genes
   left_join(dplyr::select(genes_org, original_entry, uniprot_id)) %>%
@@ -273,35 +272,90 @@ gtsave(go_table(bp_bio1_ggallus), here(plotpath, "bp_bio1_ggallus.html"))
 
 ```
 
-# NEED TO TEST:
+# CUSTOM BG
+
+
+query: The name or identifier of the query. This indicates which query the results are associated with.
+significant: A logical value (TRUE or FALSE) indicating whether the term is significantly enriched.
+p_value: The p-value for the enrichment of the term. It indicates the statistical significance of the enrichment.
+term_size: The total number of genes associated with the GO term in the background set.
+query_size: The total number of genes in the query set.
+intersection_size: The number of genes in the query set that are also associated with the GO term.
+*precision:* The precision of the enrichment, calculated as the ratio of intersection_size to query_size. Precision measures the proportion of relevant genes (i.e., genes associated with the GO term) in the query set.
+*recall:* The recall of the enrichment, calculated as the ratio of intersection_size to term_size. Recall measures the proportion of genes associated with the GO term that are present in the reference set.
+term_id: The identifier of the GO term or other ontology term.
+source: The source of the term, such as "GO:BP" for Gene Ontology Biological Process, "GO:MF" for Gene Ontology Molecular Function, or "GO:CC" for Gene Ontology Cellular Component.
+term_name: The name of the GO term or other ontology term.
+effective_domain_size: The effective domain size, which represents the number of genes in the background set that are considered for the enrichment analysis.
+source_order: The order of the source in the results, which can be used for sorting or prioritizing results.
+parents: The parent terms of the GO term or other ontology term. This provides hierarchical context for the term.
+highlighted: A logical value (TRUE or FALSE) indicating whether the term is highlighted in the results. This can be used for visualization or emphasis in the output.
+Run GO analysis for hsapiens genes
+
 ```{r}
+length(unique(genes_hsapiens$query)) # 4,721
+length(unique(all_genes_hsapiens$query)) # 12,428
+
 hsapiens_custom_bg <- 
   gost(
-      query = unique(genes_hsapiens$query), 
-      organism = "hsapiens", ordered_query = FALSE, 
-      multi_query = FALSE, significant = FALSE, exclude_iea = FALSE, 
-      measure_underrepresentation = FALSE, evcodes = FALSE, 
-      user_threshold = 0.05, correction_method = "fdr",
-      domain_scope = "custom_annotated", custom_bg = all_genes_hsapiens$query, 
-      numeric_ns = "", sources = NULL, as_short_link = FALSE, highlight = FALSE
+    query = unique(genes_hsapiens$query), 
+    organism = "hsapiens", 
+    ordered_query = FALSE, 
+    multi_query = FALSE, 
+    significant = FALSE, 
+    exclude_iea = FALSE, 
+    measure_underrepresentation = FALSE, 
+    evcodes = TRUE, 
+    user_threshold = 0.05, 
+    correction_method = "fdr",
+    domain_scope = "custom_annotated",
+    custom_bg = unique(all_genes_hsapiens$query), 
+    numeric_ns = "", 
+    sources = NULL, 
+    as_short_link = FALSE, 
+    highlight = FALSE
   )
 custom_result <- hsapiens_custom_bg$result %>% filter(p_value < 0.05)
-custom_result
-bp <- custom_result %>% filter(source == "GO:BP")
-mf <- custom_result %>% filter(source == "GO:MF")
+custom_result %>% head()
+
+write_csv(hsapiens_custom_bg$result, here(outpath, "hsapiens_custom_go.csv"))
+
+custom_result %>% filter(source == "GO:BP")
+custom_result %>% filter(source == "GO:MF")
+
+genes <- custom_result %>% pull(intersection) %>% strsplit(",") %>% unlist()
+uniprotid <- genes_hsapiens %>% filter(query %in% genes) %>% pull(uniprot_id)
+go_gea_genes <- genes_org %>% filter(uniprot_id %in% uniprotid)
+goi <- get_goi_names()
+go_goi <- go_gea_genes %>% filter(grepl(paste(goi, collapse = "|"), full_name)) %>% distinct(gene_name)
+go_goi
+
+genes_org %>% 
+  group_by(full_name) %>% 
+  count() %>% 
+  arrange(desc(n)) 
+
+genes_org %>% 
+  filter(grepl(paste(goi, collapse = "|"), full_name)) %>% 
+  group_by(gene_name) %>% 
+  count() %>% 
+  arrange(desc(n)) 
 ```
 
 ```{r}
+length(unique(genes_ggallus$query)) # 4,419
+length(unique(all_genes_ggallus$query)) # 10,496
+
 ggallus_custom_bg <- 
   gost(
-      query = genes_ggallus$query, 
+      query = unique(genes_ggallus$query), 
       organism = "ggallus", 
       ordered_query = FALSE, 
       multi_query = FALSE, 
       significant = FALSE, 
       exclude_iea = FALSE, 
       measure_underrepresentation = FALSE, 
-      evcodes = FALSE, 
+      evcodes = TRUE, 
       user_threshold = 0.05, 
       correction_method = "fdr",
       domain_scope = "custom_annotated", 
@@ -313,8 +367,22 @@ ggallus_custom_bg <-
   )
 custom_result <- ggallus_custom_bg$result %>% filter(p_value < 0.05)
 custom_result
-bp <- custom_result %>% filter(source == "GO:BP")
-mf <- custom_result %>% filter(source == "GO:MF")
+custom_result %>% filter(source == "GO:BP")
+custom_result %>% filter(source == "GO:MF")
+
+
+write_csv(ggallus_custom_bg$result, here(outpath, "ggallus_custom_go.csv"))
+
+ggallus_custom_bg$result %>% 
+  filter(source == "GO:BP") %>% 
+  arrange(p_value) %>% 
+  head() 
+
+ggallus_custom_bg$result %>% 
+  filter(source == "GO:BP") %>% 
+  arrange(desc(precision)) %>% 
+  head() %>%
+  dplyr::select(term_name, term_size, query_size, intersection_size, precision, recall, p_value)
 ```
 
 # Check for genes of interest
@@ -596,4 +664,7 @@ resultFisher2 <- runTest(GOdata2, algorithm = "weight01", statistic = "fisher")
 
 GenTable(GOdata2, Fisher = resultFisher2, topNodes = 10)
 
+
+tb <- GenTable(GOdata2, Fisher = resultFisher2) %>% mutate(p_adj = p.adjust(Fisher))
+tb %>% filter(p_adj < 0.05)
 ```

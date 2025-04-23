@@ -58,7 +58,7 @@ match_frq <- future_map_chr(nonsyn_vec, ~{
 plan(sequential)
 
 unique_match <- unique(match_frq)
-length(match_frq) - length(unique_match)
+length(match_frq) - length(unique_match) # Check non-matches
 length(unique_match)
 writeLines(unique_match, here(outputs, "neutral_snp_frqmatch.txt"))
 
@@ -71,7 +71,7 @@ match_frq2 <- future_map_chr(nonsyn_vec, ~{
 plan(sequential)
 
 unique_match2 <- unique(match_frq2)
-length(match_frq2) - length(unique_match2)
+length(match_frq2) - length(unique_match2) # Check non-matches
 length(unique_match2)
 writeLines(unique_match2, here(outputs, "allnonsyn_snp_frqmatch.txt"))
 

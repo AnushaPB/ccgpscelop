@@ -121,13 +121,15 @@ gg_df <-
   mutate(pretty_name = factor(pretty_name, levels = voi_pretty)) %>%
   # Get socal cluster
   mutate(socal = cluster == 9)
+```
 
+```{r}
 pdf(here(plotpath, "gea_test.pdf"), width = 8, height = 5)
 ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = socal, pch = pretty_name)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   scale_shape_manual(values = c(16, 1, 3)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") 
@@ -135,7 +137,7 @@ ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes
 ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = neutral_ho, y = value, col = cluster, pch = pretty_name)) +
   geom_point(alpha = 0.5) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "Cluster", pch = "Type") +
   scale_shape_manual(values = c(16, 1, 3)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") 
@@ -144,7 +146,7 @@ ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   scale_shape_manual(values = c(16, 1, 3)) +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") 
@@ -153,7 +155,7 @@ ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes
 ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho", "allnonsynfrq_ho")), aes(x = Ho, y = value, col = cluster, pch = pretty_name)) +
   geom_point(alpha = 0.5) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type") +
   scale_shape_manual(values = c(16, 1, 3)) +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") 
@@ -163,7 +165,7 @@ ggplot(gg_df, aes(x = Ho, y = value)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y")  
@@ -172,7 +174,7 @@ ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
   #geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "Cluster") +
+  labs(col = "Cluster", pch = "Type") +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y") 
@@ -181,7 +183,7 @@ ggplot(gg_df, aes(x = neutral_ho, y = value)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y")  
@@ -190,7 +192,7 @@ ggplot(gg_df, aes(x = neutral_ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
   #geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "Cluster") +
+  labs(col = "Cluster", pch = "Type") +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y") 
@@ -199,7 +201,7 @@ ggplot(gg_df, aes(x = Ho, y = value, col = cluster)) +
   geom_point(alpha = 0.5) +
   #geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "Cluster") +
+  labs(col = "Cluster", pch = "Type") +
   xlab("Genome-wide heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y")  
@@ -208,7 +210,7 @@ ggplot(gg_df, aes(x = neutral_ho, y = value, col = socal)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") +
   facet_wrap(~pretty_name, scales = "free_y")  
@@ -217,7 +219,7 @@ ggplot(filter(gg_df, name %in% c("nonsyn_ho", "syn_ho")), aes(x = neutral_ho, y 
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   scale_shape_manual(values = c(1, 16)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Adaptive heterozygosity") 
@@ -226,19 +228,17 @@ ggplot(filter(gg_df, name %in% c("allnonsynfrq_ho")), aes(x = neutral_ho, y = va
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", aes(lty = pretty_name)) +
   theme_classic() +
-  labs(col = "SoCal") +
+  labs(col = "SoCal", pch = "Type", lty = "Type") +
   scale_shape_manual(values = c(1, 16)) +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Frequency-adjusted non-synonymous heterozygosity") 
-
-
 
 
 ggplot(df, aes(x = syn_ho, y = nonsyn_ho, col = socal)) +
   geom_point() +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "") +
+  labs(col = "SoCal", pch = "Type") +
   xlab("Synonymous adaptive heterozygosity") +
   ylab("Non-synonymous adaptive heterozygosity")
 
@@ -247,7 +247,7 @@ ggplot(df, aes(x = Ho, y = neutral_ho, col = socal)) +
   geom_point() +
   geom_smooth(method = "lm") +
   theme_classic() +
-  labs(col = "") +
+  labs(col = "SoCal") +
   xlab("Frequency-adjusted neutral heterozygosity") +
   ylab("Genome-wide heterozygosity")
 dev.off()
@@ -536,7 +536,7 @@ moran.test(coords$ols_resids2, listw)$estimate # 0.45
 moran.test(coords$sem_resids2, listw)$estimate # 0.02
 
 # TEMPROARY USE LM BECAUSE CERTAIN VARS ARE SIGNIFICANT FOR SEM THAT DONT MAKE SENSE (NEED TO FIGURE OUT PARTIAL REGRESSIONs)
-mod <- lm(f, data = mod_df_scaled, na.action = "na.fail")
+mod <- lm(f, data = mod_df, na.action = "na.fail")
 sig_vars <-
   broom::tidy(mod) %>% 
   filter(p.value < 0.05, term != "(Intercept)", term != "lambda") %>% 
