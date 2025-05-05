@@ -171,7 +171,7 @@ dev.off()
 p_rainbow_26 <- plot_offset(offset_26, bkg = ca, index_name = "Genomic offset (RCP 2.6)",
             plot_type = "rainbow", viridis_option = "B", coords = coords %>% dplyr::select(x, y))
 pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_rainbow_RCP26.pdf"), width = 12, height = 8)
-p_rainbow_26
+p_rainbow_26 
 dev.off()
 ```
 
@@ -218,4 +218,67 @@ p_ext_bio1 <- plot_grid(p1, p2, nrow = 1)
 pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_offset_extracted_bio1.pdf"), width = 12, height = 8)
 p_ext_bio1
 dev.off()
+```
+
+## 7. Correlation between offset and bio1ndvi
+
+For values extracted based on sampling coordinates:
+
+```{r}
+# If you're starting here, run the following lines:
+offset_26 <- terra::rast(paste0(path, "/", prefix, "_offset_load_RCP26.tif"))
+offset_85 <- terra::rast(paste0(path, "/", prefix, "_offset_load_RCP85.tif"))
+
+bio1_pres <- terra::rast(envlayers$env_pres$BIO1)
+bio1_fut_26 <- terra::rast(envlayers$env_fut$"CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1")
+bio1_fut_85 <- terra::rast(envlayers$env_fut$"CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1")
+resamp_26 <- terra::resample(bio1_fut_26, bio1_pres)
+resamp_85 <- terra::resample(bio1_fut_85, bio1_pres)
+crop_26 <- terra::crop(resamp_26, bio1_pres, mask = TRUE)
+crop_85 <- terra::crop(resamp_85, bio1_pres, mask = TRUE)
+# Calculate change present -> future for BIO1
+change_26 <- resamp_26 - bio1_pres
+change_85 <- resamp_85 - bio1_pres
+
+# Extract values for sampling coordinates
+change_26_vals <- terra::extract(change_26, coords %>% dplyr::select(x, y)) %>% 
+  rename(BIO1change_RCP26 = `CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1`) %>% 
+  dplyr::select(-ID)
+change_85_vals <- terra::extract(change_85, coords %>% dplyr::select(x, y)) %>% 
+  rename(BIO1change_RCP85 = `CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1`) %>% 
+  dplyr::select(-ID)
+
+sum_offset_26_vals <- terra::extract(offset_26, coords %>% dplyr::select(x, y)) %>% 
+  rename(offset_RCP26_RDA1 = `58-Sceloporus_bio1ndvi_gea_offset_load_RCP26_1`, offset_RCP26_RDA2 = `58-Sceloporus_bio1ndvi_gea_offset_load_RCP26_2`) %>% 
+  mutate(sum_offset_RCP26 = offset_RCP26_RDA1+offset_RCP26_RDA2) %>% 
+  dplyr::select(sum_offset_RCP26, -ID)
+sum_offset_85_vals <- terra::extract(offset_85, coords %>% dplyr::select(x, y)) %>% 
+  rename(offset_RCP85_RDA1 = `58-Sceloporus_bio1ndvi_gea_offset_load_RCP85_1`, offset_RCP85_RDA2 = `58-Sceloporus_bio1ndvi_gea_offset_load_RCP85_2`) %>% 
+  mutate(sum_offset_RCP85 = offset_RCP85_RDA1+offset_RCP85_RDA2) %>% 
+  dplyr::select(sum_offset_RCP85, -ID)
+
+rcp26_sum_vals <- bind_cols(change_26_vals, sum_offset_26_vals)
+cors_sum_26 <- cor(rcp26_sum_vals, use = "na.or.complete", method = "pearson")
+rcp85_sum_vals <- bind_cols(change_85_vals, sum_offset_85_vals)
+cors_sum_85 <- cor(rcp85_sum_vals, use = "na.or.complete", method = "pearson")
+
+cors_sum_26 # 0.9885295
+cors_sum_85 # 0.9874386
+```
+
+Calculating the correlation across the entire raster:
+
+```{r}
+sum_offset_26 <- offset_26[[1]] + offset_26[[2]]
+rcp26_layers <- raster::stack(c(change_26, sum_offset_26))
+cors_lyr_26 <- raster::layerStats(rcp26_layers, stat = "pearson", na.rm = TRUE)
+cors_lyr_26 <- cors_lyr_26$`pearson correlation coefficient`
+
+sum_offset_85 <- offset_85[[1]] + offset_85[[2]]
+rcp85_layers <- raster::stack(c(change_85, sum_offset_85))
+cors_lyr_85 <- raster::layerStats(rcp85_layers, stat = "pearson", na.rm = TRUE)
+cors_lyr_85 <- cors_lyr_85$`pearson correlation coefficient`
+
+cors_lyr_26 # 0.9955793
+cors_lyr_85 # 0.9954994
 ```
