@@ -5,21 +5,82 @@ library(sf)
 library(tidyverse)
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
 
+coords <- get_coords(sf = TRUE)
 plotpath <- here("analysis", "gea", "plots")
-adaptive_path <- here("analysis", "adaptive", "outputs", "RDA_bio1_ndvi")
+adaptive_path <- here("analysis", "adaptive", "outputs")
 
-adapind_load <- rast(here(adaptive_path, "adapind_load.tif"))
-offset <- rast(here(adaptive_path, "offset_load_RCP85.tif"))
+adapind_load <- rast(here(adaptive_path, "58-Sceloporus_bio1ndvi_gea_adapind_load.tif"))
+offset <- rast(here(adaptive_path, "58-Sceloporus_bio1ndvi_gea_offset_load_RCP85.tif"))
 offset_total <- sum(offset)
+adapind_rgb <- map(1:nlyr(adapind_load), function(i) {
+  layer <- adapind_load[[i]]
+  stats <- global(layer, fun = range, na.rm = TRUE)
+  vmin <- stats[1, 1]
+  vmax <- stats[1, 2]
+  ((layer - vmin) / (vmax - vmin)) * 255
+}) %>% rast()
 
-pdf(here(plotpath, "adaptive_index.pdf"), width = 10, height = 10)
-plot(adapind_load, main = "Adaptive index loadings", axes = FALSE)
+adapind_rgb <- c(adapind_rgb, null_lyr = adapind_rgb[[1]] * 0)
+names(adapind_rgb) <- c("RDA1", "RDA2", "NULL")
+
+rgb_vals <- drop_na(terra::extract(adapind_rgb, coords, ID = FALSE))
+adapind_vals <- terra::extract(adapind_load, coords, ID = FALSE)
+names(adapind_vals) <- c("RDA1", "RDA2")
+rgb_df <- bind_cols(coords, adapind_vals) %>% drop_na()
+rgb_df$rgb <- rgb(red = rgb_vals[,1], green = rgb_vals[,3], blue = rgb_vals[,2], maxColorValue = 255)
+
+rda_varloadings <- read_csv(here("analysis", "adaptive", "outputs", "RDA_biplot_58-Sceloporus_bio1ndvi_gea_mod.csv"))
+
+plot_rgb <- function(df) {
+  ggplot(df, aes(x = RDA1, y = RDA2)) +
+    annotate("text", x = max(df$RDA1) + 0.5, y = 0, label = "RDA1", hjust = 1.2, vjust = -0.5, size = 3, col = "darkgray") +
+    annotate("text", x = 0, y = max(df$RDA2) + 0.5, label = "RDA2", hjust = -0.2, vjust = 1.2, size = 3, col = "darkgray") +
+    geom_hline(yintercept = 0, linewidth = 0.2, col = "gray") +
+    geom_vline(xintercept = 0, linewidth = 0.2, col = "gray") +
+    geom_point(aes(col = rgb)) +
+    geom_text(data = rda_varloadings, aes(x = RDA1 * 2.5, y = RDA2 * 2.5, label = var), size = 4, vjust = 1) +
+    geom_segment(data = rda_varloadings, aes(x = 0, y = 0, xend = RDA1 * 2.5, yend = RDA2 * 2.5),
+                 arrow = arrow(length = unit(0.2, "cm"))) +
+    scale_color_identity() +
+    scale_x_continuous(expand = expansion(mult = 0.1)) +  # 5% margin
+    scale_y_continuous(expand = expansion(mult = 0.1)) +
+    coord_equal() +
+    theme_void()
+
+
+pdf(here(plotpath, "adaptive_index.pdf"), width = 5, height = 5)
+plot_rgb(rgb_df) 
+plotRGB(adapind_rgb, r = 1, g = 3, b = 2, axes = FALSE)
+plotRGB(adapind_rgb, r = 1, g = 3, b = 2, axes = FALSE)
+plotRGB(adapind_rgb, r = 1, g = 3, b = 2, axes = FALSE)
+points(coords, pch = 1)
+plotRGB(adapind_rgb, r = 1, g = 3, b = 3, axes = FALSE) # RDA1
+plotRGB(adapind_rgb, r = 3, g = 3, b = 2, axes = FALSE) # RDA2
 plot(offset, main = "Adaptive index offset", axes = FALSE)
 plot(offset_total, main = "Adaptive index offset (total)", axes = FALSE, col = viridis::inferno(100))
+
+plot(adapind_rgb[[1]], col = colorRampPalette(c("black", "red"))(4))
+plot(adapind_rgb[[2]], col = colorRampPalette(c("black", "blue"))(4))
 dev.off()
+
+pdf(here(plotpath, "adaptive_index_test.pdf"), width = 5, height = 5)
+plotRGB(adapind_rgb, r = 1, g = 2, b = 3, main = "Adaptive index loadings", axes = FALSE)
+plotRGB(adapind_rgb, r = 1, g = 3, b = 2, main = "Adaptive index loadings", axes = FALSE)
+plotRGB(adapind_rgb, r = 3, g = 1, b = 2, main = "Adaptive index loadings", axes = FALSE)
+plotRGB(adapind_rgb, r = 2, g = 1, b = 3, main = "Adaptive index loadings", axes = FALSE)
+plotRGB(adapind_rgb, r = 2, g = 3, b = 1, main = "Adaptive index loadings", axes = FALSE)
+plotRGB(adapind_rgb, r = 2, g = 1, b = 1, main = "Adaptive index loadings", axes = FALSE)
+plot(adapind_load, main = "Adaptive index loadings", axes = FALSE)
+plot(offset, main = "Adaptive index offset", axes = FALSE)
+plot(offset_total, main = "Adaptive index offset (total)", axes = FALSE, col = viridis::rocket(100))
+dev.off()
+
 ```
 
+
+```{}
 ```{r}
 coords <- get_coords(sf = TRUE)
 
@@ -30,6 +91,10 @@ genes <-
   dplyr::select(SampleID, Ho_genes) %>%
   left_join(get_het())
 
+pop_df <- get_pops() %>% mutate(pop = gsub("pop", "", cluster))
+
+pop_cols <- get_pop_cols()
+
 offset_df <- 
   terra::extract(offset_total, coords, ID = FALSE) %>%
   mutate(SampleID = coords$SampleID) %>%
@@ -37,21 +102,52 @@ offset_df <-
   dplyr::rename(offset = sum) %>%
   left_join(genes) %>%
   drop_na(Ho, Ho_genes) %>%
-  mutate(resids = residuals(lm(Ho_genes ~ Ho, data = .)))
+  mutate(resids = residuals(lm(Ho_genes ~ Ho, data = .))) %>%
+  left_join(pop_df) %>%
+  drop_na(pop)
+
 
 #devtools::source_url("https://raw.githubusercontent.com/austinwpearce/SoilTestCocaCola/main/quad_plateau.R")
 
+offset_mean <- 
+  offset_df %>% 
+  group_by(pop) %>% 
+  summarise(
+    Ho_sd = sd(Ho, na.rm = TRUE),
+    offset_sd = sd(offset, na.rm = TRUE),
+    offset = mean(offset, na.rm = TRUE), 
+    Ho = mean(Ho, na.rm = TRUE)
+  ) %>%
+  drop_na(pop) %>%
+  mutate(
+    Ho_min = Ho - Ho_sd,
+    Ho_max = Ho + Ho_sd,
+    offset_min = offset - offset_sd,
+    offset_max = offset + offset_sd
+  )
 
 pdf(here(plotpath, "offset_vs_ho.pdf"), width = 4, height = 4)
-ggplot(offset_df, aes(y = (offset), x = Ho, col = offset)) +
-  geom_point() +
+ggplot(offset_df, aes(y = (offset), x = (Ho))) +
+  geom_point(aes(col = pop), shape = 16, size = 1) +
+  geom_point(data = offset_mean, aes(col = pop), size = 3, shape = 8) +
   geom_smooth(method = "lm", col = "black") +
   xlab("Genome-wide heterozygosity") +
   ylab("Future genomic offset") +
-  scale_color_viridis_c(option = "inferno") +
+  scale_color_manual(values = pop_cols) +
   ggpubr::stat_cor() +
   theme_classic() +
   theme(legend.position = "none")
+ggplot(offset_mean, aes(y = (offset), x = (Ho))) +
+  #geom_errorbar(aes(ymin = offset_min, ymax = offset_max, xmin = Ho_min, xmax = Ho_max), width = 0.1) +
+  geom_point(aes(col = pop)) +
+  geom_smooth(method = "lm", col = "black") +
+  xlab("Genome-wide heterozygosity") +
+  ylab("Future genomic offset") +
+  scale_color_manual(values = pop_cols) +
+  ggpubr::stat_cor() +
+  theme_classic() +
+  theme(legend.position = "none")
+dev.off()
 
 ggplot(offset_df, aes(y = (offset), x = Ho_genes, col = offset)) +
   geom_point() +
@@ -75,6 +171,45 @@ ggplot(offset_df, aes(y = (offset), x = resids, col = offset)) +
 dev.off()
 ```
 
+```{r}
+library(biscale)
+library(cowplot)
+# Step 1: Classify into bivariate groups
+offset_df_bi <- 
+  bi_class(offset_df, x = Ho, y = offset, style = "quantile", dim = 3) %>%
+  left_join(get_coords(sf = TRUE)) %>%
+  st_as_sf()
+
+ca <- get_ca()
+# Step 2: Create the scatterplot with bi_class fill
+map <- 
+  ggplot(offset_df_bi) +
+  geom_sf(data = ca, fill = "lightgray") +
+  geom_sf(aes(col = bi_class), size = 3, alpha = 1) +  # use color for points
+  bi_scale_color(pal = "GrPink", dim = 3) +  # use color instead of fill for points
+  theme_void()+ # clean theme from biscale +
+  theme(legend.position = "none")
+
+# Step 3: Create the legend
+legend <- bi_legend(
+  pal = "GrPink",
+  dim = 3,
+  xlab = "Higher Heterozygosity →",
+  ylab = "↑ Higher Genomic Offset",
+  size = 8
+)
+
+# Step 4: Combine plot and legend
+final_plot <- 
+  ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, x = 0.6, y = 0.6, width = 0.35, height = 0.34)
+
+# Show the result
+pdf(here(plotpath, "offset_bivariate.pdf"), width = 8, height = 6)
+print(final_plot)
+dev.off()
+```
 ```{r}
 source(here("analysis", "adaptive", "adaptive_index.R"))
 bio1ndvi_envlayers <- import_env_files(type = "ind_layers", future = TRUE)
