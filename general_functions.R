@@ -82,6 +82,15 @@ get_pops <- function(){
   pop_df <- read_csv(path) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
 }
 
+get_pop_cols <- function(){
+  cs1 <- viridis::mako(4, begin = 0.3, end = 0.8)
+  names(cs1) <- c("7", "5", "4", "1")
+  cs2 <- viridis::rocket(9-4, begin = 0.3, end = 0.9)
+  names(cs2) <- c("9", "8", "6", "2", "3")
+  cs <- c(cs1, cs2)
+  return(cs)
+}
+
 get_range <- function(){
   sf::st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1")) %>% 
     st_transform(3310)
@@ -116,16 +125,20 @@ ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
     df$color <- 0
   }
 
-  pretty_name <- make_pretty_names(y)
-  pretty_name_lower <- paste0(tolower(substr(pretty_name, 1, 1)), substr(pretty_name, 2, nchar(pretty_name)))
-  if (pretty_name == "NDVI") pretty_name_lower <- "NDVI"
+  pretty_name_x <- make_pretty_names(x)
+  pretty_name_x_lower <- paste0(tolower(substr(pretty_name_x, 1, 1)), substr(pretty_name_x, 2, nchar(pretty_name_x)))
+  if (pretty_name_x == "NDVI") pretty_name_x_lower <- "NDVI"
+
+  pretty_name_y <- make_pretty_names(y)
+  pretty_name_y_lower <- paste0(tolower(substr(pretty_name_y, 1, 1)), substr(pretty_name_y, 2, nchar(pretty_name_y)))
+
 
   plt <- 
     ggplot(df, aes(x = predictor_resid, y = response_resid)) +
     #geom_point(aes(fill = color), pch = 21, alpha = alpha, cex = cex, col = NA) +
     geom_point(aes(col = color), alpha = alpha, cex = cex) +
     geom_smooth(method = "lm", col = "black") +
-    labs(x = paste("Partial", make_pretty_names(x)), y = paste("Partial", make_pretty_names(y))) +
+    labs(x = paste("Partial", pretty_name_x_lower), y = paste("Partial", pretty_name_y_lower)) +
     ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
     theme_classic() +
     theme(legend.position = "none")
