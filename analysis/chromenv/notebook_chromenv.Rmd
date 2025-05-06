@@ -23,6 +23,7 @@ plotpath <- here("analysis", "chromenv", "plots")
 library(gstat)
 library(spatialreg)
 library(spdep)
+
 # SPATIAL
 fit_vgm <- function(data, mod_vars){
   f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
@@ -33,7 +34,7 @@ fit_vgm <- function(data, mod_vars){
   range <- ols_vgm %>% filter(model == "Exp") %>% pull(range)
 }
 
-fit_sem <- function(data, mod_vars, moran_test = TRUE){
+fit_spmod <- function(data, mod_vars, moran_test = TRUE){
   f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
   # Fit variogram
@@ -53,15 +54,16 @@ fit_sem <- function(data, mod_vars, moran_test = TRUE){
     m <- data.frame(estimate = m$estimate[1], p.value = m$p.value)
     
     if(m$p.value < 0.05){
-      sem_model <- errorsarlm(f, data = data, listw = listw, zero.policy = TRUE)
-      return(list(mod = sem_model, range = vgm_range, moran = m))
+      #sem_model <- errorsarlm(f, data = data, listw = listw, zero.policy = TRUE)
+      sp_model <- lagsarlm(f, data = data, listw = listw, zero.policy = TRUE)
+      return(list(mod = sp_model, range = vgm_range, moran = m))
     } else {
       return(list(mod = lm_model, range = NA, moran = m))
     }
   }
 
-  sem_model <- errorsarlm(f, data = data, listw = listw, zero.policy = TRUE)
-  return(list(mod = sem_model, range = vgm_range))
+  sp_model <- lagsarlm(f, data = data, listw = listw, zero.policy = TRUE)
+  return(list(mod = sp_model, range = vgm_range))
 }
 
 # Get all annotated genes
@@ -136,6 +138,7 @@ bin_stats <-
 ```
 
 ```{r}
+vars <- c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past")
 scaled_sf <- 
   df %>%
   group_by(scaffold, BIN_START, BIN_END) %>%
@@ -152,7 +155,7 @@ sem_df <-
   group_split() %>%
   future_map(~{
     if (all(is.na(.x$csi_past))) return(NULL)
-    result <- fit_sem(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past"))
+    result <- fit_spmod(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past"))
     mod <- result$mod
     psuedo_rsq <- cor.test(mod$fitted, .x$Ho, use = "pairwise.complete.obs")$estimate^2
     result <- 
@@ -172,12 +175,12 @@ sem_df <-
   mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
   mutate(sig = ifelse(p_adj < 0.05, estimate, NA)) %>%
   mutate(BIN_START = as.numeric(BIN_START)) %>%
-  filter(term != "(Intercept)", term != "lambda") %>%
+  filter(term != "(Intercept)", term != "lambda", term != "rho") %>%
   rename(var = term) %>% 
   mutate(BIN_END = BIN_START + 500000)
 plan(sequential)
 
-write_csv(sem_df, here(outpath, "chromenv_sem.csv"))
+write_csv(sem_df, here(outpath, "chromenv_spmod.csv"))
 
 summary_tb <-
   sem_df %>%
@@ -192,7 +195,7 @@ summary_tb <-
 colors <- get_colors()
 names(colors) <- make_pretty_names(names(colors))
 scaff_rect <- get_scaff_rect(sem_df)
-pdf(here(plotpath, "sem_summary.pdf"), width = 4, height = 2.5)
+pdf(here(plotpath, "spmod_summary.pdf"), width = 4, height = 2.5)
 ggplot(summary_tb, aes(x = name, y = Variable)) +
   geom_tile(aes(fill = Variable), color = "white", lwd = 1) +
   geom_text(aes(label = value)) +
@@ -207,7 +210,7 @@ ggplot(summary_tb, aes(x = name, y = Variable)) +
 dev.off()
 
 
-pdf(here(plotpath, "sem.pdf"), width = 12, height = 9)
+pdf(here(plotpath, "spmod.pdf"), width = 12, height = 9)
 ggplot(avg_het_by_pop) +
   geom_line(aes(x = BIN_START, y = Ho, col = pop), lwd = 0.5) +
   scaffold_theme() + 
@@ -249,7 +252,9 @@ plotchrom_top(sem_df, ymin = 0, ymax = max(bin_stats$`O(HOM)`, na.rm = TRUE)) +
   ggtitle("O(HOM)") 
 dev.off()
 
-pdf(here(plotpath, "sem.pdf"), width = 12, height = 9)
+pdf(here(plotpath, "spmod.pdf"), width = 12, height = 9)
+plotchrom_top(sem_df) + theme(strip.text = element_text(size = 12), legend.position = "right") + labs(fill = "Variable")
+
 ggplot(sem_df) +
   geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = log(range))) +
   geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
@@ -279,7 +284,6 @@ stopifnot(nrow(top_tmean_dif_df) == 160)
 
 sem_df %>% filter(p_adj < 0.05) %>% filter(var == "csi_past" | var == "tmean_dif")
 
-
 sem_df %>% filter(p_adj < 0.05) %>% filter(BIN_START == 500000, scaffold == "chr1")
 top_pdf <- scaled_sf %>% filter(BIN_START == 500000, scaffold == "chr1")
 # sem_df %>% filter(p_adj < 0.05) %>% filter(BIN_START == 3000000, scaffold == "chr5")
@@ -305,7 +309,7 @@ sem_dfQ <-
   sem_lsQ %>%
   future_map(~{
     if (all(is.na(.x$csi_past))) return(NULL)
-    result <- fit_sem(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past", "Q"))
+    result <- fit_spmod(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past", "Q"))
     mod <- result$mod
     psuedo_rsq <- cor.test(mod$fitted, .x$Ho, use = "pairwise.complete.obs")$estimate^2
     result <- 
