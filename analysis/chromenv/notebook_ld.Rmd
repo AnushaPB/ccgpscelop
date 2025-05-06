@@ -1,0 +1,47 @@
+```{r}
+library(tidyverse)
+library(here)
+outpath <- here("analysis", "chromenv", "outputs")
+plotpath <- here("analysis", "chromenv", "plots")
+```
+
+```{r}
+ld <- 
+  read_table(here(outpath, "ld_chr5_summary.txt"), col_names = FALSE) %>%
+  rename(scaffold = X1, start = X2, end = X3, r2 = X4)
+
+pdf(here(plotpath, "ld_chr5.pdf"), width = 10, height = 3)
+ggplot(ld) +
+  geom_line(aes(x = start, y = r2)) +
+  facet_wrap(~ scaffold) +
+  theme_void() +
+  labs(fill = "r2") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colorbar(title.position = "top", title.hjust = 0.5)) +
+  coord_cartesian(expand = FALSE) +
+  scale_x_continuous(breaks = seq(0, 1000000, by = 200000), labels = scales::comma) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 8)
+  )
+
+ggplot(ld) +
+  geom_rect(aes(xmin = start, xmax = end, ymin = 0, ymax = 1, fill = log(r2))) +
+  scale_fill_viridis_c(option = "magma") +
+  facet_wrap(~ scaffold) +
+  theme_void() +
+  labs(fill = "r2") +
+  theme(legend.position = "bottom") +
+  guides(fill = guide_colorbar(title.position = "top", title.hjust = 0.5)) +
+  coord_cartesian(expand = FALSE) +
+  scale_x_continuous(breaks = seq(0, 1000000, by = 200000), labels = scales::comma) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 8)
+  )
+dev.off()
+```
