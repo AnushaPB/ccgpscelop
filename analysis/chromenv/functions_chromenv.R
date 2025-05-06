@@ -48,7 +48,7 @@ plotchrom_cat <- function(summary_data, data, fill, ymin = 0, ymax = 1){
     scale_fill_manual(values = colors)
 }
 
-plotchrom_top <- function(data, ymin, ymax){
+plotchrom_top <- function(data, ymin = 0, ymax = 1){
   data <- data %>% mutate(var = make_pretty_names(var))
   top <- get_top(data)
   return(plotchrom_cat(top, data, "top_r", ymin, ymax))
