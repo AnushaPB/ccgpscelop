@@ -1,3 +1,5 @@
+# Calculating offset functions --------------------------------------------
+
 #' Predict genomic offset from an RDA model
 #' Code adapted from Capblancq & Forester (2021) https://doi.org/10.1111/2041-210X.13722
 #' GitHub repo available here: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/src/genomic_offset.R
@@ -10,14 +12,10 @@
 #' @param env_fut future env layers
 #' @param scale_env attr for scaled env vars
 #' @param center_env attr for centered env vars
-#' @param mod RDA model; only if `method = "predict"`
 #'
 #' @return list with five elements: projected present, future, offset, global offset, and weights
 #' @export
-genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, scale_env, center_env, mod = NULL) {
-  # if (inherits(env_pres, "SpatRaster")) env_pres <- raster::stack(env_pres)
-  # if (inherits(env_fut, "SpatRaster")) env_fut <- raster::stack(env_fut)
-  
+genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut) {
   # Extract values from our environmental rasters
   env <- terra::extract(env_pres, coords)
   # Standardize environmental variables and make into dataframe
@@ -33,85 +31,63 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, scal
   names(env_fut_85) <- names(env_pres)
 
   var_env_proj_pres <- offset_scaling_helper(env_layer = env_pres, center_env, scale_env, biplot)
-
-
-
-  env_vals_26 <- terra::values(env_fut_26[[row.names(biplot)]], mat = TRUE)
-  # Manually scale the matrix using precomputed center and scale
-  scaled_vals <- sweep(env_vals, 2, center_env[row.names(biplot)], "-")
-  scaled_vals <- sweep(scaled_vals, 2, scale_env[row.names(biplot)], "/")
-  # Convert to df
-  var_env_proj_pres <- as.data.frame(scaled_vals)
-
-
+  var_env_proj_fut_26 <- offset_scaling_helper(env_layer = env_fut_26, center_env, scale_env, biplot)
+  var_env_proj_fut_85 <- offset_scaling_helper(env_layer = env_fut_85, center_env, scale_env, biplot)
 
   Proj_pres <- offset_proj_helper(biplot, var_env_proj = var_env_proj_pres, K, type = "present")
+  Proj_fut_26 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_26, K, type = "future")
+  Proj_fut_85 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_85, K, type = "future")
 
+pdf(paste0(here("analysis", "adaptive", "plots"), "/test.pdf"), width = 12, height = 8)
+plot(Proj_offset_pres[[1]])
+dev.off()
 
 
   
-  # ======= OLD OFFSET BELOW ===========
-  
-  if (inherits(env_pres, "SpatRaster")) env_pres <- raster::stack(env_pres)
-  if (inherits(env_fut, "SpatRaster")) env_fut <- raster::stack(env_fut)
-
-  # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
-  env_fut_1 <- raster::subset(env_fut, c(1,3)) # BIO1 ssp125 & NDVI
-  names(env_fut_1) <- names(env_pres)
-  env_fut_2 <- raster::subset(env_fut, 2:3) # BIO ssp585 & NDVI
-  names(env_fut_2) <- names(env_pres)
-
-  # Formatting and scaling environmental rasters for projection
-  var_env_proj_pres <- as.data.frame(scale(raster::rasterToPoints(env_pres[[row.names(biplot)]])[,-c(1,2)], center_env[row.names(biplot)], scale_env[row.names(biplot)]))
-  var_env_proj_fut_1 <- as.data.frame(scale(raster::rasterToPoints(env_fut_1[[row.names(biplot)]])[,-c(1,2)], center_env[row.names(biplot)], scale_env[row.names(biplot)]))
-  var_env_proj_fut_2 <- as.data.frame(scale(raster::rasterToPoints(env_fut_2[[row.names(biplot)]])[,-c(1,2)], center_env[row.names(biplot)], scale_env[row.names(biplot)]))
-
-  # Predicting pixels genetic component based on the loadings of the variables for each RDA axis
-  # TODO warnings 'number of items to replace is not a multiple of replacement length'
-  Proj_pres <- offset_proj_helper(env = env_pres, biplot = biplot, var_env_proj = var_env_proj_pres, K = K, type = "present")
-  Proj_fut_1 <- offset_proj_helper(env = env_fut_1, biplot = biplot, var_env_proj = var_env_proj_fut_1, K = K, type = "future")
-  Proj_fut_2 <- offset_proj_helper(env = env_fut_2, biplot = biplot, var_env_proj = var_env_proj_fut_2, K = K, type = "future")
-
   # Single axis genetic offset
-  Proj_offset_1 <- list()
+  Proj_offset_26 <- list()
   for(i in 1:K) {
-    Proj_offset_1[[i]] <- abs(Proj_pres[[i]] - Proj_fut_1[[i]])
-    names(Proj_offset_1)[i] <- paste0("RDA", as.character(i))
+    Proj_offset_26[[i]] <- abs(Proj_pres[[i]] - Proj_fut_26[[i]])
+    names(Proj_offset_26)[i] <- paste0("RDA", as.character(i))
   }
-  Proj_offset_2 <- list()
+  Proj_offset_85 <- list()
   for(i in 1:K) {
-    Proj_offset_2[[i]] <- abs(Proj_pres[[i]] - Proj_fut_2[[i]])
-    names(Proj_offset_2)[i] <- paste0("RDA", as.character(i))
+    Proj_offset_85[[i]] <- abs(Proj_pres[[i]] - Proj_fut_85[[i]])
+    names(Proj_offset_85)[i] <- paste0("RDA", as.character(i))
   }
 
   # Weights based on axis eigenvalues
   weights <- eig %>% dplyr::mutate(weights = mod.CCA.eig / sum(eig$mod.CCA.eig)) %>% pull(weights)
 
   # Weighing the current and future adaptive indices based on the eigenvalues of the associated axes
-  Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
+  # Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
+  Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_pres[[x]], mat = TRUE)}))
   Proj_offset_pres <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_pres[,x] * weights[x])))
 
-  Proj_offset_fut_1 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_1[[x]])[,-c(1,2)]))
-  Proj_offset_fut_1 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_1[,x] * weights[x])))
+  # Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_26[[x]])[,-c(1,2)]))
+  Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_26[[x]], mat = TRUE)}))
+  Proj_offset_fut_26 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_26[,x] * weights[x])))
 
-  Proj_offset_fut_2 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_2[[x]])[,-c(1,2)]))
-  Proj_offset_fut_2 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_2[,x] * weights[x])))
+  # Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_2[[x]])[,-c(1,2)]))
+  Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_85[[x]], mat = TRUE)}))
+  Proj_offset_fut_85 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_85[,x] * weights[x])))
 
   # Predict a global genetic offset, incorporating the first K axes weighted by their eigenvalues
-  ras_1 <- Proj_offset_1[[1]]
-  ras_1[!is.na(ras_1)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_1[x,]), method = "euclidean")))
-  names(ras_1) <- "Global_offset_1"
-  Proj_offset_global_1 <- ras_1
+  # TODO in development
+  # ras_26 <- Proj_offset_26[[1]]
+  # ras_26[!is.na(ras_26)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_26[x,]), method = "euclidean")))
+  # names(ras_26) <- "Global_offset_26"
+  # Proj_offset_global_26 <- ras_26
 
-  ras_2 <- Proj_offset_2[[1]]
-  ras_2[!is.na(ras_2)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_2[x,]), method = "euclidean")))
-  names(ras_2) <- "Global_offset_2"
-  Proj_offset_global_2 <- ras_2
+  # ras_85 <- Proj_offset_85[[1]]
+  # ras_85[!is.na(ras_85)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_85[x,]), method = "euclidean")))
+  # names(ras_85) <- "Global_offset_85"
+  # Proj_offset_global_85 <- ras_85
 
   # Return projections for current and future climates for each RDA axis, prediction of genetic offset for each RDA axis and a global genetic offset
-  return(list(Proj_pres = Proj_pres, Proj_fut_RCP26 = Proj_fut_1, Proj_fut_RCP85 = Proj_fut_2,
-              Proj_offset_RCP26 = Proj_offset_1, Proj_offset_RCP85 = Proj_offset_2,
-              Proj_offset_global_RCP26 = Proj_offset_global_1, Proj_offset_global_RCP85 = Proj_offset_global_2,
+  return(list(Proj_pres = Proj_pres, Proj_fut_RCP26 = Proj_fut_26, Proj_fut_RCP85 = Proj_fut_85,
+              Proj_offset_RCP26 = Proj_offset_26, Proj_offset_RCP85 = Proj_offset_85,
+              Proj_offset_global_RCP26 = NULL, Proj_offset_global_RCP85 = NULL,
               weights = weights[1:K]))
 }
 
@@ -163,6 +139,8 @@ offset_proj_helper <- function(biplot, var_env_proj, K, type) {
   return(Proj_list)
 }
 
+# Plotting offset functions -----------------------------------------------
+
 #' Plot genomic offset maps
 #'
 #' @param env offset rasters
@@ -171,13 +149,14 @@ offset_proj_helper <- function(biplot, var_env_proj, K, type) {
 #' @param free_scales whether to have separate scales or not for RDA axes
 #' @param index_name name for legend
 #' @param viridis_option option for viridis coloring (defaults to "B")
-#' @param coords if `plot_type = "extractd_vals" or "extracted_rainbow"`, sampling coordinates
+#' @param coords if `plot_type = "extracted_vals" or "extracted_rainbow"`, sampling coordinates
+#' @param bkg_col if `plot_type = "rainbow"`, background color for blank raster if fewer than 3 layers
 #'
 #' @returns
 #' @export
 plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
                         index_name = "Genomic offset", viridis_option = "B", coords = NULL,
-                        biplot_axes = c(1, 2)) {
+                        biplot_axes = c(1, 2), bkg_col = "white") {
   if (inherits(env, "RasterStack")) env <- terra::rast(env)
   n_layers = nlyr(env)
 
@@ -268,7 +247,7 @@ plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
 
   if (plot_type == "rainbow" | plot_type == "extracted_rainbow") {
     rainbow <- rainbow_map_offset(Proj_data = env, bkg = bkg, n_layers = n_layers,
-                                  loadings = loadings, biplot_axes = biplot_axes, coords = coords)
+                                  loadings = loadings, biplot_axes = biplot_axes, coords = coords, bkg_col = bkg_col)
     if (plot_type == "rainbow") p <- plot_grid(rainbow$map, rainbow$vector_load, rel_widths = c(2, 1))
     if (plot_type == "extracted_rainbow") {
       p1 <- ggplot() +
@@ -292,7 +271,7 @@ plot_offset <- function(env, bkg, plot_type = "basic", free_scales = FALSE,
 #'
 #' @returns
 #' @export
-rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords) {
+rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords, bkg_col) {
   if (inherits(Proj_data, "RasterStack")) Proj_data <- terra::rast(Proj_data)
   # Max number of layers to plot is 3, so adjust n_layers accordingly
   if (n_layers > 3) {
@@ -305,18 +284,18 @@ rainbow_map_offset <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, 
   # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
   if (n_layers < 3) {
     warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
-    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
-    white_raster <- aiRGB[[1]] * 0 + 255
+    if (bkg_col == "white") bkg_raster <- aiRGB[[1]] * 0 + 255
+    if (bkg_col == "black") bkg_raster <- aiRGB[[1]] * 0
   }
 
   # If n_layers = 2, you end up making a bivariate map
   if (n_layers == 2) {
-    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], white_raster)
+    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], bkg_raster)
   }
 
   # If n_layers = 1, you end up making a univariate map
   if (n_layers == 1) {
-    aiRGB <- c(aiRGB, white_raster, white_raster)
+    aiRGB <- c(aiRGB, bkg_raster, bkg_raster)
   }
   p_rainbow <- ggplot() +
     geom_sf(data = bkg, fill = "lightgrey") +

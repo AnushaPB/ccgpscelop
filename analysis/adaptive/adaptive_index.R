@@ -13,21 +13,11 @@ import_env_files <- function(type = "rasterPCs", future = FALSE) {
     names(env_pres) <- paste("env_", names(env_pres), sep = "")
   }
   if (type == "ind_layers") {
-    all_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
-    bio1 <- terra::subset(all_pres, "CHELSA_bio1_1981-2010_V.2.1")
-    ndvi <- terra::rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
-    # Stack layers together and rename
-    resamp_ndvi <- terra::resample(ndvi, bio1)
-    env_pres <- c(bio1, resamp_ndvi)
+    env_pres <- terra::rast(here("data", "env", "env_pres.tif"))
     names(env_pres) <- c("BIO1", "NDVI")
   }
 
   if (future) {
-    cap_model <- "GFDL-ESM4" # "IPSL-CM6A-LR"
-    lowerc_model <- "gfdl-esm4"
-    RCP = c(2.6, 8.5)
-    ssp = c("ssp126", "ssp585")
-
     if (type == "rasterPCs") {
       env_fut_1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
       env_fut_2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
@@ -35,20 +25,11 @@ import_env_files <- function(type = "rasterPCs", future = FALSE) {
     }
 
     if (type == "ind_layers") {
-      bio1_fut_1 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
-      cropped_1 <- terra::crop(bio1_fut_1, env_pres[[1]], mask = TRUE) # is this necessary?
-      resamp_1 <- terra::resample(cropped_1, env_pres[[1]])
-
-      bio1_fut_2 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
-      cropped_2 <- terra::crop(bio1_fut_2, env_pres[[1]], mask = TRUE) # is this necessary?
-      resamp_2 <- terra::resample(cropped_2, env_pres[[1]])
-
-      env_fut <- c(resamp_1, resamp_2, resamp_ndvi)
+      env_fut <- terra::rast(here("data", "env", "future", "env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))
+      names(env_fut) <- c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1", "NDVI")
     }
   }
-
   if (!future) env_fut <- NULL
-
   return(list(env_pres = env_pres, env_fut = env_fut))
 }
 
@@ -92,7 +73,7 @@ import_rda <- function(output_path, suffix, rds_obj = FALSE) {
     biplot <- readr::read_csv(paste0(output_path, "/RDA_biplot_", suffix, ".csv"), col_names = TRUE) %>% tibble::column_to_rownames(var = "var")
     scaled_loadings <- readr::read_csv(paste0(output_path, "/RDA_scaledloadings_", suffix, ".csv"), col_names = TRUE)
     unscaled_loadings <- readr::read_csv(paste0(output_path, "/RDA_unscaledloadings_", suffix, ".csv"), col_names = TRUE)
-    eig <- read_tsv(paste0(output_path, "/RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
+    eig <- read_csv(paste0(output_path, "/RDA_eig_", suffix, ".csv")) %>% column_to_rownames(var = "RDA")
   }
   if (rds_obj) {
     mod <- readRDS(paste0(output_path, "/", suffix, ".RDS"))

@@ -6,10 +6,36 @@ library(terra)
 
 RCP = 2.6 # options are 8.5, 7, or 2.6 from CHELSA V2
 model = "gfdl-esm4" # options are "gfdl-esm4" (highest priority) or "ipsl-cm6a-lr"
+cap_model <- "GFDL-ESM4" # "IPSL-CM6A-LR"
 years = "2071-2100" # options are "2041-2070" or "2071-2100"
-if (RCP == 8.5) ssp <- "ssp585"
-if (RCP == 7) ssp <- "ssp370"
-if (RCP == 2.6) ssp <- "ssp126"
+RCP = c(2.6, 8.5) # 7
+ssp = c("ssp126", "ssp585") # ssp370
+
+
+# Create BIO1 + NDVI layers for present and future ------------------------
+
+# Present layers
+all_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+bio1 <- terra::subset(all_pres, "CHELSA_bio1_1981-2010_V.2.1")
+ndvi <- terra::rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
+# Stack layers together and rename
+resamp_ndvi <- terra::resample(ndvi, bio1)
+env_pres <- c(bio1, resamp_ndvi)
+names(env_pres) <- c("BIO1", "NDVI")
+terra::writeRaster(env_pres, here("data", "env", "env_pres.tif"))
+
+# Future layers
+bio1_fut_1 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", model, "_", ssp[1], "_V.2.1.tif"))
+cropped_1 <- terra::crop(bio1_fut_1, env_pres[[1]], mask = TRUE) # is this necessary?
+resamp_1 <- terra::resample(cropped_1, env_pres[[1]])
+
+bio1_fut_2 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", model, "_", ssp[2], "_V.2.1.tif"))
+cropped_2 <- terra::crop(bio1_fut_2, env_pres[[1]], mask = TRUE) # is this necessary?
+resamp_2 <- terra::resample(cropped_2, env_pres[[1]])
+
+env_fut <- c(resamp_1, resamp_2, resamp_ndvi)
+terra::writeRaster(env_fut, paste0(here("data", "env", "future"), "/env_fut_2071-2100_", cap_model, "_", ssp[1], "_", ssp[2], ".tif"), overwrite = TRUE)
+
 
 # RasterPCA on present env layers to get model ----------------------------
 
@@ -52,4 +78,3 @@ raster::writeRaster(raster::stack(future_pcs[[1:3]]), paste0(here("data", "env",
 future_pcs_resamp <- terra::predict(resamp, model = env_pc_mod$model)
 names(future_pcs_resamp[[1:3]]) <- c("PC1", "PC2", "PC3")
 raster::writeRaster(raster::stack(future_pcs_resamp[[1:3]]), paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp, "_V.2.1_pca_resamp.tif"), overwrite = TRUE)
-
