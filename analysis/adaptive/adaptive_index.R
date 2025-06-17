@@ -143,7 +143,7 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, mod = NULL) {
   # Predicting pixels' genetic component based on RDA axes
   Proj_pres <- list()
   for (i in 1:K) {
-    ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[i])))), crs = raster::crs(env_pres))
+    ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[,i])))), crs = raster::crs(env_pres))
     # terra::rast(data.frame(var_env_proj_pres[,c(1,2)], type = "xyz")
     names(ras_pres) <- paste0("RDA_pres_", as.character(i))
     Proj_pres[[i]] <- ras_pres
@@ -351,7 +351,7 @@ plot_var_loadings <- function(Proj_data, loadings, biplot_axes, aiRGB, coords) {
   yax <- paste0("RDA", biplot_axes[2])
   TAB_inds_sub <- TAB_inds %>% dplyr::select(any_of(c(xax, yax)))
   colnames(TAB_inds_sub) <- c("x", "y")
-  TAB_var_sub <- TAB_var %>% column_to_rownames(var = "label") %>% dplyr::select(c(xax, yax))
+  TAB_var_sub <- TAB_var %>% dplyr::select(c(xax, yax))
   colnames(TAB_var_sub) <- c("x", "y")
 
   # Scale the variable loadings for the arrows

@@ -41,8 +41,8 @@ prefix = "58-Sceloporus_bio1ndvi_gea" # "58-Sceloporus_bio1ndvi_gea_genes_nonsyn
 ## 1. Get input files
 
 ```{r}
+# If `dat_mod` is not in memory, run:
 dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
-# dat_mod_pc <- import_rda(output_path = path, suffix = paste0(prefix, "_modPCs"), rds_obj = TRUE)
 
 # Retrieve coords for samples on which RDA was run
 coords <- read_tsv(here(path, "RDA_genes_coords.txt"), col_names = TRUE)
@@ -64,32 +64,26 @@ all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
 names(envlayers$env_fut)
 # Check resolution
 all(res(envlayers$env_pres) == res(envlayers$env_fut))
-
-# Get scaled and centered info
-env <- terra::extract(envlayers$env_pres, coords %>% dplyr::select(x, y))
-env <- scale(env, center = TRUE, scale = TRUE)
-# Recover scaling coefficients
-scale_env <- attr(env, 'scaled:scale')
-center_env <- attr(env, 'scaled:center')
 ```
 
 ## 3. Calculate genomic offset
 
 The `genomic_offset()` function outputs a list of five 
 objects: (1) Proj_pres, which is the present projection (equivalent to the adaptive index); (2) Proj_fut, which projects the adaptive index values on to future
-environmental layers, (3) Proj_offset, which is the genonic offset (i.e., difference between Proj_pres and Proj_fut), (4) Proj_offset_global, which is the global
+environmental layers, (3) Proj_offset, which is the genomic offset (i.e., difference between Proj_pres and Proj_fut), (4) Proj_offset_global, which is the global
 offset if multiple future environmental time points were provided, and (5) weights, which are the eigenvalues from the RDA model and are how the RDA axes values 
 were weighted.
 
 ```{r}
-offset <- genomic_offset(loadings = dat_mod$scaledload, biplot = dat_mod$biplot, 
-                         eig = dat_mod$eig, K = ncol(dat_mod$biplot), 
-                         env_pres = envlayers$env_pres, env_fut = envlayers$env_fut, 
-                         range = NULL, method = "loadings", scale_env, center_env, 
+offset <- genomic_offset(loadings = dat_mod$scaledload,
+                         biplot = dat_mod$biplot, 
+                         eig = dat_mod$eig, 
+                         K = ncol(dat_mod$biplot), 
+                         env_pres = envlayers$env_pres,
+                         env_fut = envlayers$env_fut,
+                         scale_env,
+                         center_env,
                          mod = NULL)
-
-# offset_pc <- genomic_offset(loadings = dat_mod_pc$scaledload, biplot = dat_mod_pc$biplot, eig = dat_mod_pc$eig, K = ncol(dat_mod_pc$biplot), env_pres, env_fut, range = NULL, 
-#                          method = "loadings", scale_env, center_env, mod = NULL)
 ```
 
 ## 3. Save genomic offset maps

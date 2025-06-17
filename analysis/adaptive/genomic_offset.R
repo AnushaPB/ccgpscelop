@@ -8,20 +8,52 @@
 #' @param K number of RDA axes to retain (defaults to 2)
 #' @param env_pres present env layers
 #' @param env_fut future env layers
-#' @param range species range; if provided offset predictions will be masked to range
-#' @param method
-#' @param scale_env whether to scale env vars
-#' @param center_env whether to center env vars
+#' @param scale_env attr for scaled env vars
+#' @param center_env attr for centered env vars
 #' @param mod RDA model; only if `method = "predict"`
 #'
 #' @return list with five elements: projected present, future, offset, global offset, and weights
 #' @export
-genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, range = NULL, method = "loadings", scale_env, center_env, mod = NULL) {
-  # Mask with the range if supplied
-  if(!is.null(range)){
-    env_pres <- raster::mask(env_pres, range)
-    env_fut <- raster::mask(env_fut, range)
-  }
+genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, scale_env, center_env, mod = NULL) {
+  # if (inherits(env_pres, "SpatRaster")) env_pres <- raster::stack(env_pres)
+  # if (inherits(env_fut, "SpatRaster")) env_fut <- raster::stack(env_fut)
+  
+  # Extract values from our environmental rasters
+  env <- terra::extract(env_pres, coords)
+  # Standardize environmental variables and make into dataframe
+  env <- scale(env, center = TRUE, scale = TRUE)
+  # Recovering scaling coefficients for extracted env values
+  scale_env <- attr(env, 'scaled:scale')
+  center_env <- attr(env, 'scaled:center')
+
+  # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
+  env_fut_26 <- terra::subset(env_fut, c(1,3)) # BIO1 ssp126 & NDVI
+  names(env_fut_26) <- names(env_pres)
+  env_fut_85 <- terra::subset(env_fut, 2:3) # BIO ssp585 & NDVI
+  names(env_fut_85) <- names(env_pres)
+
+  var_env_proj_pres <- offset_scaling_helper(env_layer = env_pres, center_env, scale_env, biplot)
+
+
+
+  env_vals_26 <- terra::values(env_fut_26[[row.names(biplot)]], mat = TRUE)
+  # Manually scale the matrix using precomputed center and scale
+  scaled_vals <- sweep(env_vals, 2, center_env[row.names(biplot)], "-")
+  scaled_vals <- sweep(scaled_vals, 2, scale_env[row.names(biplot)], "/")
+  # Convert to df
+  var_env_proj_pres <- as.data.frame(scaled_vals)
+
+
+
+  Proj_pres <- offset_proj_helper(biplot, var_env_proj = var_env_proj_pres, K, type = "present")
+
+
+
+  
+  # ======= OLD OFFSET BELOW ===========
+  
+  if (inherits(env_pres, "SpatRaster")) env_pres <- raster::stack(env_pres)
+  if (inherits(env_fut, "SpatRaster")) env_fut <- raster::stack(env_fut)
 
   # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
   env_fut_1 <- raster::subset(env_fut, c(1,3)) # BIO1 ssp125 & NDVI
@@ -34,24 +66,22 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
   var_env_proj_fut_1 <- as.data.frame(scale(raster::rasterToPoints(env_fut_1[[row.names(biplot)]])[,-c(1,2)], center_env[row.names(biplot)], scale_env[row.names(biplot)]))
   var_env_proj_fut_2 <- as.data.frame(scale(raster::rasterToPoints(env_fut_2[[row.names(biplot)]])[,-c(1,2)], center_env[row.names(biplot)], scale_env[row.names(biplot)]))
 
-  # Predicting pixels genetic component based on the loadings of the variables
-  if(method == "loadings"){
-    # Projection for each RDA axis; TODO warnings generated?
-    Proj_pres <- offset_proj_helper(env = env_pres, biplot = biplot, var_env_proj = var_env_proj_pres, K = K, type = "present")
-    Proj_fut_1 <- offset_proj_helper(env = env_fut_1, biplot = biplot, var_env_proj = var_env_proj_fut_1, K = K, type = "future")
-    Proj_fut_2 <- offset_proj_helper(env = env_fut_2, biplot = biplot, var_env_proj = var_env_proj_fut_2, K = K, type = "future")
+  # Predicting pixels genetic component based on the loadings of the variables for each RDA axis
+  # TODO warnings 'number of items to replace is not a multiple of replacement length'
+  Proj_pres <- offset_proj_helper(env = env_pres, biplot = biplot, var_env_proj = var_env_proj_pres, K = K, type = "present")
+  Proj_fut_1 <- offset_proj_helper(env = env_fut_1, biplot = biplot, var_env_proj = var_env_proj_fut_1, K = K, type = "future")
+  Proj_fut_2 <- offset_proj_helper(env = env_fut_2, biplot = biplot, var_env_proj = var_env_proj_fut_2, K = K, type = "future")
 
-    # Single axis genetic offset
-    Proj_offset_1 <- list()
-    for(i in 1:K) {
-      Proj_offset_1[[i]] <- abs(Proj_pres[[i]] - Proj_fut_1[[i]])
-      names(Proj_offset_1)[i] <- paste0("RDA", as.character(i))
-    }
-    Proj_offset_2 <- list()
-    for(i in 1:K) {
-      Proj_offset_2[[i]] <- abs(Proj_pres[[i]] - Proj_fut_2[[i]])
-      names(Proj_offset_2)[i] <- paste0("RDA", as.character(i))
-    }
+  # Single axis genetic offset
+  Proj_offset_1 <- list()
+  for(i in 1:K) {
+    Proj_offset_1[[i]] <- abs(Proj_pres[[i]] - Proj_fut_1[[i]])
+    names(Proj_offset_1)[i] <- paste0("RDA", as.character(i))
+  }
+  Proj_offset_2 <- list()
+  for(i in 1:K) {
+    Proj_offset_2[[i]] <- abs(Proj_pres[[i]] - Proj_fut_2[[i]])
+    names(Proj_offset_2)[i] <- paste0("RDA", as.character(i))
   }
 
   # Weights based on axis eigenvalues
@@ -85,9 +115,19 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
               weights = weights[1:K]))
 }
 
+offset_scaling_helper <- function(env_layer, center_env, scale_env, biplot) {
+  # Matrix with NA values preserved
+  env_vals <- terra::values(env_layer[[row.names(biplot)]], mat = TRUE)
+  # Manually scale the matrix using precomputed center and scale
+  scaled_vals <- sweep(env_vals, 2, center_env[row.names(biplot)], "-")
+  scaled_vals <- sweep(scaled_vals, 2, scale_env[row.names(biplot)], "/")
+  # Convert to df
+  var_env_proj <- as.data.frame(scaled_vals)
+  return(var_env_proj)
+}
+
 #' Helper function for calculating offset
 #'
-#' @param env env layers to project
 #' @param biplot RDA biplot results
 #' @param var_env_proj projected env
 #' @param K number of layers
@@ -95,17 +135,31 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut, rang
 #'
 #' @return
 #' @export
-offset_proj_helper <- function(env, biplot, var_env_proj, K, type) {
+offset_proj_helper <- function(biplot, var_env_proj, K, type) {
   Proj_list <- list()
   if (type == "present") prefix = "RDA_pres_"
   if (type == "future") prefix = "RDA_fut_"
   for(i in 1:K) {
-    ras <- env[[1]]
-    ras[!is.na(ras)] <- as.vector(apply(var_env_proj[,rownames(biplot[i])], 1, function(x) sum(x * biplot[,i])))
+    vars_i <- rownames(biplot)
+    loadings_i <- biplot[, i]
+  
+    projection_vals <- rowSums(var_env_proj[, vars_i] * matrix(loadings_i, nrow = nrow(var_env_proj), ncol = length(loadings_i), byrow = TRUE))
+    ras <- env_pres[[1]]
+    ras[] <- projection_vals
+
     names(ras) <- paste0(prefix, as.character(i))
     Proj_list[[i]] <- ras
     names(Proj_list)[i] <- paste0("RDA", as.character(i))
   }
+
+  # Old, uses raster package
+  # for(i in 1:K) {
+  #   ras <- env[[1]]
+  #   ras[!is.na(ras)] <- as.vector(apply(var_env_proj[,rownames(biplot[i])], 1, function(x) sum(x * biplot[,i])))
+  #   names(ras) <- paste0(prefix, as.character(i))
+  #   Proj_list[[i]] <- ras
+  #   names(Proj_list)[i] <- paste0("RDA", as.character(i))
+  # }
   return(Proj_list)
 }
 
