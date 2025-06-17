@@ -8,6 +8,7 @@
 #       - troubleshoot calculating AI from pc-corrected RDA results
 
 # Generate env data files, including future layers; generate fig comparing present and future PCs
+# Running the following is only necessary if environmental PCs are to be used
 Rscript p0_env_data.R
 
 # Generate vcf file with RDA outliers found within genes only; alternatively, can just use genes.raw dosage matrix (skip to p2)

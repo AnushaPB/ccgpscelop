@@ -52,3 +52,4 @@ raster::writeRaster(raster::stack(future_pcs[[1:3]]), paste0(here("data", "env",
 future_pcs_resamp <- terra::predict(resamp, model = env_pc_mod$model)
 names(future_pcs_resamp[[1:3]]) <- c("PC1", "PC2", "PC3")
 raster::writeRaster(raster::stack(future_pcs_resamp[[1:3]]), paste0(here("data", "env", "future"), "/CHELSA_", years, "_", model, "_", ssp, "_V.2.1_pca_resamp.tif"), overwrite = TRUE)
+

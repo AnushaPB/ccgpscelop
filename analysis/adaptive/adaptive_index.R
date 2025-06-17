@@ -9,16 +9,16 @@
 #' @export
 import_env_files <- function(type = "rasterPCs", future = FALSE) {
   if (type == "rasterPCs") {
-    env_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+    env_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
     names(env_pres) <- paste("env_", names(env_pres), sep = "")
   }
   if (type == "ind_layers") {
-    all_pres <- raster::stack(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
-    bio1 <- raster::subset(all_pres, "CHELSA_bio1_1981.2010_V.2.1")
-    ndvi <- raster::raster(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
+    all_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+    bio1 <- terra::subset(all_pres, "CHELSA_bio1_1981-2010_V.2.1")
+    ndvi <- terra::rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
     # Stack layers together and rename
-    resamp_ndvi <- terra::resample(terra::rast(ndvi), terra::rast(bio1))
-    env_pres <- raster::stack(bio1, raster::raster(resamp_ndvi))
+    resamp_ndvi <- terra::resample(ndvi, bio1)
+    env_pres <- c(bio1, resamp_ndvi)
     names(env_pres) <- c("BIO1", "NDVI")
   }
 
@@ -29,21 +29,21 @@ import_env_files <- function(type = "rasterPCs", future = FALSE) {
     ssp = c("ssp126", "ssp585")
 
     if (type == "rasterPCs") {
-      env_fut_1 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
-      env_fut_2 <- raster::stack(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
-      env_fut <- raster::stack(env_fut_1, env_fut_2)
+      env_fut_1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
+      env_fut_2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
+      env_fut <- c(env_fut_1, env_fut_2)
     }
 
     if (type == "ind_layers") {
-      bio1_fut_1 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
-      cropped_1 <- terra::crop(terra::rast(bio1_fut_1), terra::ext(resamp_ndvi)) # is this necessary?
-      resamp_1 <- terra::resample(cropped_1, resamp_ndvi)
+      bio1_fut_1 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[1], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[1], "_V.2.1.tif"))
+      cropped_1 <- terra::crop(bio1_fut_1, env_pres[[1]], mask = TRUE) # is this necessary?
+      resamp_1 <- terra::resample(cropped_1, env_pres[[1]])
 
-      bio1_fut_2 <- raster::raster(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
-      cropped_2 <- terra::crop(terra::rast(bio1_fut_2), terra::ext(resamp_ndvi)) # is this necessary?
-      resamp_2 <- terra::resample(cropped_2, resamp_ndvi)
+      bio1_fut_2 <- terra::rast(paste0(here("data", "env", "future", "envicloud/chelsa/chelsa_V2/GLOBAL/climatologies"), "/2071-2100/", cap_model, "/", ssp[2], "/bio/", "CHELSA_bio1_2071-2100_", lowerc_model, "_", ssp[2], "_V.2.1.tif"))
+      cropped_2 <- terra::crop(bio1_fut_2, env_pres[[1]], mask = TRUE) # is this necessary?
+      resamp_2 <- terra::resample(cropped_2, env_pres[[1]])
 
-      env_fut <- raster::stack(raster::raster(resamp_1), raster::raster(resamp_2), raster::raster(resamp_ndvi))
+      env_fut <- c(resamp_1, resamp_2, resamp_ndvi)
     }
   }
 
@@ -118,25 +118,22 @@ import_rda <- function(output_path, suffix, rds_obj = FALSE) {
 #' @param K number of PCs to retain if `method = "loadings"` (defaults to 3)
 #' @param env_pres environmental layer(s) on which to project
 #' @param coords sampling coords (only x and y)
-#' @param range whether to mask to species range (defaults to NULL)
-#' @param method how to predict values; options are "loadings" (use RDA results; default) or "predict" (use RDA predict)
 #' @param mod if `method = "predict"` selected, RDA model
 #'
 #' @return
 #' @export
-adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method = "loadings", mod = NULL) {
+adaptive_index <- function(biplot, K = 3, env_pres, coords, mod = NULL) {
   # Extract values from our environmental rasters
-  env <- raster::extract(env_pres, coords)
+  env <- terra::extract(env_pres, coords)
   # Standardize environmental variables and make into dataframe
   env <- scale(env, center = TRUE, scale = TRUE)
   # Recovering scaling coefficients for extracted env values
   scale_env <- attr(env, 'scaled:scale')
   center_env <- attr(env, 'scaled:center')
 
-  # TODO if names don't match between biplot and env layers
-
   # Formatting environmental rasters for projection
-  var_env_proj_pres <- as.data.frame(raster::rasterToPoints(env_pres[[row.names(biplot)]]))
+  # var_env_proj_pres <- as.data.frame(raster::rasterToPoints(env_pres[[row.names(biplot)]]))
+  var_env_proj_pres <- terra::as.data.frame(env_pres[[row.names(biplot)]], xy = TRUE, na.rm = FALSE)
 
   # Standardization of the environmental variables based on scaling coefficients
   var_env_proj_RDA <- as.data.frame(scale(var_env_proj_pres[,-c(1,2)],
@@ -145,29 +142,12 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method
 
   # Predicting pixels' genetic component based on RDA axes
   Proj_pres <- list()
-  if (method == "loadings") {
-    for (i in 1:K) {
-      ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[i])))), crs = raster::crs(env_pres))
-      names(ras_pres) <- paste0("RDA_pres_", as.character(i))
-      Proj_pres[[i]] <- ras_pres
-      names(Proj_pres)[i] <- paste0("RDA", as.character(i))
-    }
-  }
-
-  # Prediction with RDA model and linear combinations
-  if (method == "predict") {
-    pred <- predict(mod, var_env_proj_RDA[,rownames(biplot[i])], type = "lc")
-    for (i in 1:K) {
-      ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(pred[,i])), crs = crs(env_pres))
-      names(ras_pres) <- paste0("RDA_pres_", as.character(i))
-      Proj_pres[[i]] <- ras_pres
-      names(Proj_pres)[i] <- paste0("RDA", as.character(i))
-    }
-  }
-
-  # Mask with the range if supplied
-  if (!is.null(range)) {
-    Proj_pres <- lapply(Proj_pres, function(x) terra::mask(x, range))
+  for (i in 1:K) {
+    ras_pres <- raster::rasterFromXYZ(data.frame(var_env_proj_pres[,c(1,2)], Z = as.vector(apply(var_env_proj_RDA[,rownames(biplot[i])], 1, function(x) sum(x * biplot[i])))), crs = raster::crs(env_pres))
+    # terra::rast(data.frame(var_env_proj_pres[,c(1,2)], type = "xyz")
+    names(ras_pres) <- paste0("RDA_pres_", as.character(i))
+    Proj_pres[[i]] <- ras_pres
+    names(Proj_pres)[i] <- paste0("RDA", as.character(i))
   }
 
   # Returning projections for current climates for each RDA axis
@@ -188,20 +168,13 @@ adaptive_index <- function(biplot, K = 3, env_pres, coords, range = NULL, method
 #' @param coords if `plot_type = "rainbow"` or `plot_type = "extracted_vals"` or `plot_type = "extracted_rainbow"`, sampling coordinates
 #' @param biplot_axes if `plot_type = "rainbow"`, which RDA axes to include (defaults to 1 and 2)
 #' @param viridis_option option for viridis coloring
+#' @param bkg_col if `plot_type = "rainbow"`, background color for blank layer (defaults to "white")
 #'
 #' @return ggplot2 plot object
 #' @export
 plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptive index",
                           plot_type = "basic", loadings, coords, biplot_axes = c(1, 2),
-                          viridis_option = "D") {
-  # if (inherits(Proj_data, "SpatRaster") | inherits(Proj_data, "Raster")) {
-  #   if (to_mask) {
-  #     for (i in 1:n_layers) {
-  #       Proj_data[[i]] <- crop(terra::rast(Proj_data[[i]]), bkg, mask = TRUE)
-  #       Proj_data[[i]] <- raster::raster(Proj_data[[i]])
-  #     }
-  #   }
-  # }
+                          viridis_option = "D", bkg_col = "white") {
 
   if (inherits(Proj_data, "SpatRaster")) Proj_data <- raster::stack(Proj_data)
   n_layers = raster::nlayers(Proj_data)
@@ -291,7 +264,7 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
 
   if (plot_type == "rainbow" | plot_type == "extracted_rainbow") {
     rainbow <- rainbow_map(Proj_data = Proj_data, bkg = bkg, n_layers = n_layers,
-                           loadings = loadings, biplot_axes = biplot_axes, coords = coords)
+                           loadings = loadings, biplot_axes = biplot_axes, coords = coords, bkg_col = bkg_col)
     if (plot_type == "rainbow") p <- plot_grid(rainbow$map, rainbow$vector_load, rel_widths = c(2, 1))
     if (plot_type == "extracted_rainbow") {
       p1 <- ggplot() +
@@ -312,10 +285,11 @@ plot_adaptive <- function(Proj_data, bkg, to_mask = FALSE, index_name = "Adaptiv
 #' @param loadings
 #' @param biplot_axes
 #' @param coords
+#' @param bkg_col
 #'
 #' @returns
 #' @export
-rainbow_map <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords) {
+rainbow_map <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords, bkg_col) {
   if (inherits(Proj_data, "RasterStack")) Proj_data <- terra::rast(Proj_data)
   # Max number of layers to plot is 3, so adjust n_layers accordingly
   if (n_layers > 3) {
@@ -327,27 +301,34 @@ rainbow_map <- function(Proj_data, bkg, n_layers, loadings, biplot_axes, coords)
   # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
   # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
   if (n_layers < 3) {
-    warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
-    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
-    white_raster <- aiRGB[[1]] * 0 + 255
+    warning("Fewer than three non-zero coefficients provided, adding black/white substitute layers to RGB plot")
+    if (bkg_col == "white") bkg_raster <- aiRGB[[1]] * 0 + 255
+    if (bkg_col == "black") bkg_raster <- aiRGB[[1]] * 0
   }
 
   # If n_layers = 2, you end up making a bivariate map
   if (n_layers == 2) {
-    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], white_raster)
+    aiRGB <- c(aiRGB[[1]], aiRGB[[2]], bkg_raster)
   }
 
   # If n_layers = 1, you end up making a univariate map
   if (n_layers == 1) {
-    aiRGB <- c(aiRGB, white_raster, white_raster)
+    aiRGB <- c(aiRGB, bkg_raster, bkg_raster)
   }
-  p_rainbow <-
-    ggplot() +
+  
+  # Build base map
+  p_rainbow <- ggplot() +
     geom_sf(data = bkg, fill = "lightgrey") +
-    geom_spatraster_rgb(data = aiRGB, r = 2, g = 1, b = 3) +
     theme_map()
-  p_var <- plot_var_loadings(Proj_data = Proj_data, loadings = loadings,
-                             biplot_axes = biplot_axes, aiRGB = aiRGB, coords = coords)
+
+  if(bkg_col == "white") p_rainbow <- p_rainbow + geom_spatraster_rgb(data = aiRGB, r = 2, g = 1, b = 3)
+  if(bkg_col == "black") p_rainbow <- p_rainbow + geom_spatraster_rgb(data = aiRGB, r = 3, g = 2, b = 1)
+
+  p_var <- plot_var_loadings(Proj_data = Proj_data, 
+                             loadings = loadings,
+                             biplot_axes = biplot_axes, 
+                             aiRGB = aiRGB, 
+                             coords = coords)
   return(list(map = p_rainbow, vector_load = p_var$var_load_plot, pcacols = p_var$pcacols, rastRGB = aiRGB))
 }
 
