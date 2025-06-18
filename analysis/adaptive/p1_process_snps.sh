@@ -12,6 +12,9 @@ bcftools view -R ../gea/outputs/bio1ndvi_gea.bed ../../data/ccgp_data/58-Scelopo
 bcftools query -f "%POS\n" ./outputs/58-Sceloporus_bio1ndvi_gea.vcf | wc -l # 1,544,696
 cat ../gea/outputs/bio1ndvi_gea.bed | wc -l # 1,543,125
 
+# Now calculate Plink distances for the new vcf for running GDM
+plink --vcf ./outputs/58-Sceloporus_bio1ndvi_gea.vcf --out ./outputs/58-Sceloporus_bio1ndvi_gea --distance square --const-fid --allow-extra-chr
+
 # ================= rasterPCA results
 
 # Take first two cols of gea_gene_snp.csv as the regions file

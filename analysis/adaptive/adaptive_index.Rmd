@@ -164,10 +164,3 @@ pdf(paste0(here("analysis", "adaptive", "plots"), "/", prefix, "_ai_rainbowmap_e
 p_rainbow_ext
 dev.off()
 ```
-
-Mask based on species range:
-
-```{r}
-env_pres <- raster::mask(env_pres, range)
-env_fut <- raster::mask(env_fut, range)
-```

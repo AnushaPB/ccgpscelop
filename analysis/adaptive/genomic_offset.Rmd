@@ -309,3 +309,67 @@ cors_lyr_85 <- cors_lyr_85$`pearson correlation coefficient`
 cors_lyr_26 # 0.9955793
 cors_lyr_85 # 0.9954994
 ```
+
+# GDM-based genomic offset
+
+```{r}
+coords <- read_tsv(here("analysis", "adaptive", "outputs", "GDM_GEA_coords.txt"))
+# If `gdm_full` isn't loaded, do:
+# gdm_full <- readRDS(here("analysis", "adaptive", "outputs", "GDM_GEA_model.RDS"))
+
+# Extract layers
+env_pres <- envlayers$env_pres
+env_fut_26 <- terra::subset(envlayers$env_fut, c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1", "NDVI"))
+env_fut_85 <- terra::subset(envlayers$env_fut, c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1", "NDVI"))
+
+# Make env names consistent
+names(env_fut_26) <- names(env_pres)
+names(env_fut_85) <- names(env_pres)
+
+# Check that layers look good for each RCP
+terra::compareGeom(env_pres[[1]], 
+                   env_fut_26[[1]], 
+                   lyrs = TRUE, 
+                   crs = TRUE, 
+                   ext = TRUE, 
+                   rowcol = TRUE)
+terra::compareGeom(env_pres[[1]], 
+                   env_fut_85[[1]], 
+                   lyrs = TRUE, 
+                   crs = TRUE, 
+                   ext = TRUE, 
+                   rowcol = TRUE)
+```
+
+Run GDM-based offset:
+
+```{r}
+# The following will automatically save as GDMoffset.tif
+predict.gdm(object = gdm_full,
+            data = env_pres,
+            time = TRUE,
+            predRasts = env_fut_26)
+```
+
+Plot GDM-based offset
+
+```{r}
+gdm_offset <- terra::rast(here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset.tif"))
+
+p_gdm_offset <- ggplot() +
+  geom_sf(data = ca, fill = "lightgrey") +
+  geom_spatraster(data = gdm_offset) +
+  scale_fill_viridis_c(option = viridis_option, na.value = "transparent") +
+  geom_sf(data = ca, fill = NA, size = 0.1) +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  ggplot2::guides(fill = guide_legend(title = "GDM-based genomic offset")) +
+  # facet_grid(~lyr) +
+  theme_map() +
+  theme(panel.grid = element_blank(), plot.background = element_blank(),
+        panel.background = element_blank(), strip.text = element_text(size = 11))
+
+pdf(here("analysis", "adaptive", "plots", "58-Sceloporus_bio1ndvi_gdmgea.pdf"), width = 12, height = 8)
+p_gdm_offset
+dev.off()
+```
