@@ -40,6 +40,7 @@ colnames(dos) <- gsub("_[A-Z]$", "", colnames(dos))
 plot_genes <- function(gene, gene_name = NULL, df){
   if (is.null(gene_name)) gene_name <- gene
   gene_loci <- df %>% filter(grepl(gene, full_name)) %>% pull(locus)
+  if (length(gene_loci) == 0) gene_loci <- df %>% filter(full_name == gene) %>% pull(locus)
   if (length(gene_loci) == 0) {
     warning("No loci found for ", gene, "; Skipping")
     return(NULL)
@@ -67,28 +68,37 @@ plot_genes <- function(gene, gene_name = NULL, df){
     facet_wrap(~locus)
 
   nloci <- ncol(gene_dos) - 1 # -1 for SampleID
-  if (nloci < 1) {
+  if (nloci < 2) {
     return(list(dos = plt1, pca = NULL))
   }
   
-  gene_pca <- prcomp(select(nona_dos, -SampleID))
+  # Run PCA
+  gene_pca <- prcomp(dplyr::select(nona_dos, -SampleID))
 
-  gene_df <- 
+  # Get variable loadings
+  gene_loadings <- 
+    as.data.frame(gene_pca$rotation) %>%
+    rownames_to_column("locus")
+
+  pc_df <- 
     coords %>% 
     left_join(gene_dos, by = "SampleID") %>%
-    mutate(PC1 = gene_pca$x[, 1]) %>%
+    mutate(PC1 = gene_pca$x[, 1], PC2 = gene_pca$x[,2]) 
+  
+  gene_df <-
+    pc_df %>%
     pivot_longer(-c(SampleID, geometry, PC1), names_to = "locus", values_to = "dos")
 
   plt2 <-
     ggplot(gene_df) +
     geom_sf(data = ca) +
-    geom_sf(aes(fill = PC1), pch = 21, cex = 2, col = rgb(0,0,0,0)) +
+    geom_sf(aes(fill = PC1), pch = 21, size = 2, color = "black") +
     scale_fill_viridis_c(option = "turbo") +
     theme_void() +
     theme(legend.position = "bottom") +
     labs(title = paste0(gene_name, " (n = ", nloci, ")")) 
   
-  return(list(dos = plt1, pca = plt2))
+  return(list(dos = plt1, pca = plt2, loadings = gene_loadings, pc_df = pc_df))
 }
 
 # Get genes of interest
@@ -105,12 +115,99 @@ pdf(here(plotpath, "maps_of_gea_genes.pdf"), width = 8, height = 8)
 plt_dos
 dev.off()
 
-pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 15, height = 10)
-cowplot::plot_grid(plotlist = plt_pca, nrow = 2)
+pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 18, height = 18)
+cowplot::plot_grid(plotlist = plt_pca, nrow = 3)
 dev.off()
 
 ```
 
+```{r}
+dfs <- map(plt_list, pluck, "pc_df") %>% compact()
+loadings <- map(plt_list, pluck, "loadings") %>% compact()
+
+hsp70df <- dfs[[1]] 
+hsp70loadings <- loadings[[1]] %>% mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus))
+
+# Make PCA plot
+pdf(here(plotpath, "hsp70_pca.pdf"), width = 6, height = 5)
+
+ggplot(hsp70df) +
+  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
+  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
+  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
+  geom_point(aes(x = PC1, y = PC2, col = PC1)) +
+  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
+         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
+        hjust = 0.5, vjust = -0.5, color = "black") +
+  scale_color_viridis_c(option = "turbo") +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+dev.off()
+
+gene_str <- get_gene_structure()
+chr9_loci <- hsp70loadings %>% filter(grepl("chr9", locus)) %>% pull(locus)
+
+dos[, gene_loci] %>% distinct()
+
+hsp70_str <- gene_str %>% filter(full_name %in% hsp70_chr9$full_name)
+hsp70_chr9 <- 
+  df %>% 
+  filter(locus %in% chr9_loci) %>% 
+  mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus)) %>% 
+  left_join(distinct(hsp70_str, gene_start, gene_end, full_name, gene_name))
+
+hsp70_chr9 %>% dplyr::select(full_name, locus)
+
+
+pdf(here(plotpath, "hsp70_pca.pdf"), width = 10, height = 2)
+ggplot(hsp70_chr9) +
+  geom_rect(data = hsp70_str, aes(xmin = gene_start, xmax = gene_end, ymin = 0, ymax = 0.5), fill = "lightgray") +
+  geom_rect(data = hsp70_str, aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 0.5), fill = "gray") +
+  geom_rect(data = hsp70_str, aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 0.5), fill = "darkgray") +
+  geom_text(data = distinct(hsp70_chr9, gene_start, gene_end, gene_name), aes(x = (gene_start + gene_end) / 2, y = 0.5, label = gene_name), 
+        color = "black", size = 3, vjust = -1) +
+  # geom_rect(aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 1, fill = "exon")) +
+  # geom_rect(aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 1, fill = "CDS")) +
+  # Lollipop stems: lines from y = 1 to y = 1.15 (height of stick)
+  geom_segment(aes(x = position, xend = position, y = 0, yend = 1, col = clean_locus), linewidth = 0.6) +
+  # Lollipop heads: points at the end of each stick
+  geom_point( aes(x = position, y = 1, col = clean_locus), size = 2, alpha = 0.5) +
+  # Styling
+  theme_classic() +
+  labs(x = "", fill = "", col = "") +
+  theme(legend.position = "bottom") 
+
+ggplot(hsp70_chr9) +
+  geom_segment(aes(x = gene_start, xend = gene_end, y = 1, yend = full_name),
+               color = "gray40", size = 1.5) +
+  geom_segment(aes(x = position, xend = position,
+                   y = 1, yend = as.numeric(as.factor(full_name)) + 0.3),
+               color = "black") +
+  geom_point(aes(x = position,
+                 y = 1.5,
+                 color = csq),
+             size = 3) 
+
+ggplot(hsp70df) +
+  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
+  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
+  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
+  geom_point(aes(x = PC1, y = PC2, col = PC1)) +
+  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
+         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
+        hjust = 0.5, vjust = -0.5, color = "black") +
+  scale_color_viridis_c(option = "turbo") +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+dev.off()
+
+```
 
 # Compare HSP70 and temperature
 
@@ -126,13 +223,15 @@ nona_dos <-
   gene_dos %>%
   mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
 
-gene_pca <- prcomp(select(nona_dos, -SampleID))
+gene_pca <- prcomp(dplyr::select(nona_dos, -SampleID))
 
 gene_df <- 
   coords_df %>% 
   left_join(gene_dos, by = "SampleID") %>%
   mutate(PC1 = gene_pca$x[, 1]) %>%
   drop_na()
+
+nona_dos <- nona_dos %>% filter(SampleID %in% gene_df$SampleID)
 
 cor(gene_df$bio1, gene_df$NDVI) # 0.11
 
@@ -144,7 +243,6 @@ cowplot::plot_grid(plt1, plt2, nrow = 1)
 dev.off()
 
 summary(lm(PC1 ~ bio1 + NDVI, data = gene_df))
-summary(lm(PC1 ~ pcenv, data = gene_df))
 
 cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
   cor_result <- cor.test(.x, gene_df$bio1)
@@ -152,30 +250,20 @@ cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
 })
 cor_results$locus <- colnames(select(nona_dos, -SampleID))
 
-cor_results %>% arrange(desc(abs(r))) 
-#  1 -0.340  0.0000108 chr2_103247522_G_C
-#  2 -0.328  0.0000224 chr5_153615785_C_T
-#  3  0.249  0.00152   chr9_25970915_C_T 
-#  4 -0.244  0.00190   chr9_25967268_G_A 
-#  5 -0.235  0.00274   chr9_25986335_C_T 
-#  6  0.201  0.0109    chr9_25967457_C_T 
-#  7  0.199  0.0116    chr9_25986389_C_T 
-#  8  0.176  0.0264    chr2_103247737_G_C
-#  9 -0.156  0.0492    chr1_366003709_G_C
-# 10 -0.0834 0.294     chr5_187268636_C_T
-# 11  0.0757 0.341     chr3_213287000_G_C
-# 12 -0.0279 0.726     chr9_25966826_G_A 
-# 2 -0.328  0.0000224 chr5_153615785_C_T
- 3  0.249  0.00152   chr9_25970915_C_T 
- 4 -0.244  0.00190   chr9_25967268_G_A 
- 5 -0.235  0.00274   chr9_25986335_C_T 
- 6  0.201  0.0109    chr9_25967457_C_T 
- 7  0.199  0.0116    chr9_25986389_C_T 
- 8  0.176  0.0264    chr2_103247737_G_C
- 9 -0.156  0.0492    chr1_366003709_G_C
-# 10 -0.0834 0.294     chr5_187268636_C_T
-# 11  0.0757 0.341     chr3_213287000_G_C
-# 12 -0.0279 0.726     chr9_25966826_G_A 
+cor_results %>% arrange(desc(abs(r)))                                               
+#  1 -0.278  0.000385 Scaffold_13__1_contigs__length_49873245_13302027_C_T
+#  2  0.271  0.000537 chr7_47088909_A_G                                   
+#  3  0.248  0.00164  chr9_25970915_C_T                                   
+#  4 -0.242  0.00208  chr9_25967268_G_A                                   
+#  5 -0.234  0.00302  chr9_25986335_C_T                                   
+#  6  0.202  0.0106   chr9_25986389_C_T                                   
+#  7  0.198  0.0125   chr9_25967457_C_T                                   
+#  8 -0.154  0.0530   chr1_366003709_G_C                                  
+#  9  0.144  0.0705   chr4_246620258_C_T                                  
+# 10 -0.0815 0.307    chr5_187268636_C_T                                  
+# 11  0.0773 0.333    chr3_213287000_G_C                                  
+# 12  0.0737 0.356    chr7_60251840_C_A                                   
+# 13 -0.0572 0.474    Scaffold_13__1_contigs__length_49873245_13301778_T_C
 ```
 
 
@@ -200,6 +288,7 @@ gene_df <-
   right_join(gene_dos, by = "SampleID") %>%
   mutate(PC1 = gene_pca$x[, 1]) %>%
   drop_na()   
+nona_dos <- nona_dos %>% filter(SampleID %in% gene_df$SampleID)
 
 pdf(here(plotpath, "gene_map2.pdf"), width = 8, height = 4)
 plt1 <- ggpartial("bio1", "PC1", c("NDVI", "bio1"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
@@ -224,14 +313,14 @@ cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
 cor_results$locus <- colnames(select(nona_dos, -SampleID))
 
 cor_results %>% arrange(desc(abs(r))) 
-#        r          p locus                                              
-#    <dbl>      <dbl> <chr>                                              
-# 1 -0.360 0.00000295 chr5_7801341_G_A                                   
-# 2 -0.266 0.000685   Scaffold_138__1_contigs__length_2391489_2298866_T_C
-# 3  0.250 0.00144    chr5_7833956_A_C                                   
-# 4 -0.105 0.188      Scaffold_138__1_contigs__length_2391489_2298855_C_T
-```
 
+#         r          p locus                                              
+#     <dbl>      <dbl> <chr>                                              
+# 1 -0.357  0.00000475 chr5_7801341_G_A                                   
+# 2  0.246  0.00195    chr5_7833956_A_C                                   
+# 3 -0.227  0.00442    Scaffold_138__1_contigs__length_2391489_2298866_T_C
+# 4 -0.0724 0.369      Scaffold_138__1_contigs__length_2391489_2298855_C_T
+```
 
 # Similarity to core map
 
@@ -468,7 +557,7 @@ detect_private_loci <- function(dat, dist_thresh,
 }
 
 final_result <- detect_private_loci(
-  dat = dat,
+  dat = dat, # TODO: figure out what dat is supposed to be
   dist_thresh = 10000,
   adj_threshold = 0.1,
   nonadj_threshold = 0.1,
@@ -569,4 +658,63 @@ plt <-
 
 plot_grid(plt, leg, ncol = 2, rel_widths = c(1, 1))
 dev.off()
+```
+
+# Look at genes with multiple SNPs
+
+```{r}
+nonsyn <- get_gea_genes(nonsyn = TRUE)
+gene_str <- get_gene_structure()
+
+high_nsnp <- 
+  nonsyn %>% 
+  # Use full-name because the same uniprotIDs can be assigned to multiple genes in the genome
+  group_by(full_name) %>%
+  filter(grepl("Name=", full_name)) %>% 
+  summarize(n = n()) %>%
+  arrange(desc(n)) 
+
+high_nsnp
+
+sd <- 
+  nonsyn %>% 
+  filter(full_name == high_nsnp$full_name[1]) 
+head(sd)
+
+sd_str <-
+  gene_str %>%
+  filter(full_name == high_nsnp$full_name[1]) 
+
+ca <- get_ca()
+pdf(here(plotpath, "multi_snp_genes.pdf"), width = 5, height = 5)
+plot_genes(gene = high_nsnp$full_name[1], gene_name = "Interferon-induced very large GTPase 1", df)
+dev.off()
+
+
+pdf(here(plotpath, "multi_snp_genes.pdf"), width = 8, height = 2)
+ggplot(sd_str) +
+  geom_rect(aes(xmin = gene_start, xmax = gene_end, ymin = 0, ymax = 1, fill = "gene")) +
+  geom_rect(aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 1, fill = "exon")) +
+  geom_rect(aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 1, fill = "CDS")) +
+
+  # Lollipop stems: lines from y = 1 to y = 1.15 (height of stick)
+  geom_segment(data = sd, aes(x = position, xend = position, y = 1, yend = 1.15, col = factor(csq)), linewidth = 0.6) +
+
+  # Lollipop heads: points at the end of each stick
+  geom_point(data = sd, aes(x = position, y = 1.15, col = factor(csq)), size = 2) +
+
+  # Styling
+  theme_classic() +
+  scale_fill_manual(values = c("gene" = "#CBD5E1", "exon" = "#94A3B8", "CDS" = "#475569")) +
+  theme(
+    legend.position = "bottom",
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  ) +
+  labs(x = "", fill = "", col = "")
+dev.off()
+
+
 ```

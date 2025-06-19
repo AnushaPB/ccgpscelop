@@ -19,7 +19,7 @@ write_csv(csq, here(outpath, "csq.csv"))
 csq <- read_csv(here(outpath, "csq.csv"))
 
 # Identify variants with different consequences
-nonsyn <- csq %>% filter(csq != ".", csq != "intron", csq != "synonymous")
+nonsyn <- csq %>% filter(grepl("missense|stop_gained|start_lost", csq))
 syn <- csq %>% filter(csq == "synonymous")
 exons <- csq %>% filter(csq != "intron")
 
@@ -42,39 +42,28 @@ gea_genes <-
   read_csv(here(outpath, "bio1ndvi_gea_genes_snp.csv")) %>%
   left_join(exons, by = c("scaffold", "position"))
 
-# Compare number of nonsynonymous to synonymous variants in genes
-distinct(gea_genes, csq, position) %>% count(csq == "synonymous")
-#   `csq == "synonymous"`      n
-#   <lgl>                  <int>
-# 1 FALSE                  29616
-# 2 TRUE                   16183
-# 3 NA                    552089
-
 # Get the non-synonymous and synonymous variants
 gea_genes_syn <- gea_genes %>% filter(csq == "synonymous") 
 gea_genes_syn_snp <- gea_genes_syn %>% distinct(locus) %>% pull(locus)
-gea_genes_nonsyn <- gea_genes %>% filter(csq != "synonymous", csq != ".")
+gea_genes_nonsyn <- gea_genes %>% filter(grepl("missense|stop_gained|start_lost", csq))
 gea_genes_nonsyn_snp <- gea_genes_nonsyn %>% distinct(locus) %>%  pull(locus)
 
 # Write out non-syn information
 write_csv(gea_genes_nonsyn, here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 gea_genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
-message("Number of non-synonymous SNPs in genes: ", length(gea_genes_nonsyn_snp))
-message("Number of unique genes with non-synonymous SNPs: ", length(unique(gea_genes_nonsyn$full_name)))
+message("Number of non-synonymous SNPs in genes: ", length(gea_genes_nonsyn_snp)) #17731
+message("Number of unique genes with non-synonymous SNPs: ", length(unique(gea_genes_nonsyn$full_name))) #11671
 
 # Write out the gene IDs for the synonymous and non-synonymous variants to separate files
 writeLines(gea_genes_syn_snp, here(outpath, "bio1ndvi_gea_genes_syn_ids.txt"))
 writeLines(gea_genes_nonsyn_snp, here(outpath, "bio1ndvi_gea_genes_nonsyn_ids.txt"))
-
-# Check csq of non-synonymous variants
-unique(gea_genes %>% filter(csq != "synonymous", csq != ".") %>% pull(csq))
 
 # Create bed file
 gea_nonsyn_bed <-
   gea_genes_nonsyn %>%
   # Convert to 0-based start/end to join with bed files
   mutate(start = position - 1, end = position) %>%
-  select(scaffold, start, end) %>%
+  dplyr::select(scaffold, start, end) %>%
   distinct()
 
 write.table(gea_nonsyn_bed, here(outpath, "bio1ndvi_gea_genes_nonsyn.bed"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
@@ -124,6 +113,8 @@ linked_syn <-
 writeLines(linked_syn, here(outpath, "bio1ndvi_gea_gene_unlinked_syn_ids.txt"))
 
 # GET NON-SYNONYMOUS SNPs IN GENES NOT IN GEA -------------------------------------------------------------
+
+# NEED TO RUN IS CRASHING
 nonsyn <- read_csv(here(outpath, "nonsynonymous.csv"))
 notgeagenes <- read_csv(here(outpath, "all_genes_not_in_gea.csv"))
 head(notgeagenes)

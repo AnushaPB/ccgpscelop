@@ -1,8 +1,11 @@
 library(tidyverse)
 library(here)
+source(here("general_functions.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
 
 # Function to get original locus names from GEA SNPs in genes
 intersect_genes <- function(prefix){
+  
   # Outpath
   outpath <- here("analysis", "gea", "outputs")
   
@@ -12,14 +15,37 @@ intersect_genes <- function(prefix){
   genes <- read.table(path, sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
   
   # Get positions for SNPs in genes
-  gene_pos <- 
+  mrna_pos <- 
     genes %>% 
-    dplyr::rename(scaffold = V1, start = V2, end = V3, gene_start = V5, gene_end = V6, full_name = V13) %>%
-    # Remove duplicates (if you don't you will get an error later with the joins) (only needed for GEA genes since multiple SNPs can fall in the same gene so genes will be duplicated)
-    select(scaffold, start, end, gene_start, gene_end, full_name) %>%
+    dplyr::rename(scaffold = V1, start = V2, end = V3, cds_start = V5, cds_end = V6, mrna_name = V13) %>%
+    # Remove duplicate genes
+    # (if you don't you will get an error later with the joins)
+    # (needed for GEA genes since multiple SNPs can fall in the same gene so genes will be duplicated)
+    select(scaffold, start, end, cds_start, cds_end, mrna_name) %>%
+    # Extract mrna ID from the full name
+    mutate(mrna = str_extract(mrna_name, "Parent=mrna-([0-9]+)")) %>%
+    mutate(mrna = str_extract(mrna, "[0-9]+")) %>%
     distinct()
 
-  # Get RDA positions (which have SNP names)
+  # Load information about genes to link mrna to full gene name
+  gene_info <- 
+    get_gene_structure() %>% 
+    dplyr::select(scaffold, mrna, full_name, gene_start, gene_end, cds_start, cds_end) %>%
+    distinct()
+
+  # Join gene positions with gene info to get full gene names
+  gene_pos <- 
+    mrna_pos %>% 
+    left_join(gene_info, by = c("mrna", "cds_start", "cds_end", "scaffold")) %>%
+    # Drop CDS info and just keep the gene 
+    # (i.e., there are multiple coding regions in a gene, but we just want the gene name)
+    dplyr::select(scaffold, start, end, gene_start, gene_end, full_name) %>%
+    distinct()
+
+  # Make sure all genes have names
+  stopifnot(all(complete.cases(gene_pos$full_name)))
+
+  # Get RDA positions (these have SNP names)
   rda <-
     read_csv(here(outpath, paste0(prefix, "_rda_ids.csv"))) %>%
     # Convert to 0-based start/end bed format
@@ -61,7 +87,7 @@ intersect_genes <- function(prefix){
       "Number of unique genes with UniProtID (GO genes)"),
     Value = c(
       length(unique(rda$locus)), 
-      nrow(distinct(gene_pos,scaffold,  start, end)), 
+      nrow(distinct(gene_pos, scaffold,  start, end)), 
       gene_pos$full_name %>% unique() %>% length(),
       genes_org$full_name %>% unique() %>% length()
     )
@@ -100,7 +126,7 @@ clean_gene_annotations <- function(gene_info) {
         # Extract gene name (everything before the square bracket)
         gene_name <- gsub("\\s*\\[.*\\].*$", "", name_org)
         
-        return(data.frame(ID = gene_id, gene_name = gene_name, organism = organism, full_name= name_org, uniprot_id = uniprot_id, original_entry = entry))
+        return(data.frame(ID = gene_id, gene_name = gene_name, organism = organism, name_org = name_org, uniprot_id = uniprot_id, full_name = entry))
     }
     
     # Apply the extraction function to each row
@@ -121,26 +147,21 @@ clean_gene_annotations <- function(gene_info) {
 #intersect_genes("pca")
 genes <- intersect_genes("bio1ndvi")
 
-# Summary Statistics:
+# Summary Statistics:                                                           
 #  -------------------
 #  Number of RDA + Linked SNPs: 1543125
-#  Number of SNPs in genes: 598475
-#  Number of unique genes: 30547
-#  Number of unique genes with UniProtID (GO genes): 12719
+#  Number of SNPs in genes: 34409 (all mutation types)
+#  Number of unique genes: 17672
+#  Number of unique genes with UniProtID (GO genes): 7988
 
 # Get positions for all genes
-all_genes <- read.table(here("analysis", "gea", "outputs", "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
-nrow(all_genes) # 74808
-all_gene_pos <- 
-  all_genes %>% 
-  dplyr::rename(scaffold = V1, start = V4, end = V3, full_name = V10) %>%
-  dplyr::select(scaffold, start, end, full_name) 
+all_genes <- get_all_genes_bed()
   
 # Clean gene names
 all_gene_info <- unique(all_gene_pos$full_name)
-length(all_gene_info) # 74,808
+length(all_gene_info) # 74,808 genes
 all_genes_clean <- clean_gene_annotations(all_gene_info)
-nrow(all_genes_clean) # 74,808
+nrow(all_genes_clean) # Confirming 74,808 genes
 
 all_genes_org <- 
   all_genes_clean %>% 
@@ -151,7 +172,22 @@ all_genes_org <-
   # remove version from uniprot_id
   mutate(uniprot_id = gsub("\\..*", "", uniprot_id)) 
 
-nrow(all_genes_org) # 30,349
+nrow(all_genes_org) # 30,349 genes with uniprotids
+nrow(distinct(all_genes_org, full_name)) # 30,349 unique original entries
+nrow(distinct(all_genes_org, uniprot_id)) # 18,357 unique uniprot IDs
+
+# Get repeated uniprot_ids
+repeated_uniprot_ids <- 
+  all_genes_org %>%
+  group_by(uniprot_id) %>%
+  mutate(n = n()) %>%
+  filter(n > 1) %>%
+  ungroup() %>%
+  arrange(desc(n))
+
+# Check original entries for repeated uniprot_ids
+# (e.g. each has it's own GNX ID, but the name/uniprotID is the same)
+repeated_uniprot_ids %>% filter(uniprot_id == "O75132") %>% dplyr::select(full_name)
 
 # Write out full list
 write_csv(all_genes_org, here("analysis", "gea", "outputs", "all_genes_list.csv"))

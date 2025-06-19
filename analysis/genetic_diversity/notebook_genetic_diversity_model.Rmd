@@ -28,8 +28,16 @@ dem <- get_dem(r= TRUE)
 ```
 
 ```{r}
+# Get beckii sample IDs
+beckii <- read_table(here("data", "beckii_sampleids.txt"), col_names = "SampleID")
+
 # Get genome-wide heterozygosity
-het <- get_het()
+het <- 
+  get_het("58-Sceloporus_chr.het") %>%
+  filter(!SampleID %in% beckii$SampleID) # TEMPORARY REMOVE BECKII
+
+# Count number of sites used to calculate heterozygosity
+mean(het$`N(NM)`, na.rm = TRUE) # 61283344
 
 # Get adaptive heterozygosity
 genes <- 
@@ -85,6 +93,19 @@ paleoclim_mod_df <-
 
 # All paleovariables are highly correlated
 cor(paleoclim_mod_df[, - 1], use = "pairwise.complete.obs")
+```
+```{r}
+pdf(here(plotpath, "paleoclim_test.pdf"))
+test_df <- left_join(paleoclim_mod_df, het) %>% left_join(coords) %>% st_as_sf()
+
+ggplot(test_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = Ho)) +
+  scale_color_viridis_c(option = "turbo", end = 0.1, begin = 0.9) +
+  theme_void() 
+
+gglm("csi_custom", "Ho", test_df)
+dev.off()
 ```
 
 # Hypothesis 2: Genetic diversity explained by past climate stability
@@ -147,7 +168,7 @@ cor(test$csi_past, test$Ho, use = "pairwise.complete.obs") > 0 # Confirm value i
 
 # Hypothesis 3: Genetic diversity explained by admixture
 ```{r}
-q <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv"))
+q <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
 
 q_mod_df <- 
   q %>%
@@ -277,8 +298,7 @@ test_df <-
   left_join(q_mod_df) %>%
   left_join(tmean_mod_df) %>%
   left_join(env_mod_df) %>%
-  drop_na(Ho, cur_lgm, lgm_lig, csi_custom, Q) %>%
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+  drop_na(Ho, cur_lgm, lgm_lig, csi_custom, Q) 
 
 cor(test_df[, c("cur_lgm", "lgm_lig", "csi_custom", "tmean_dif")], use = "pairwise.complete.obs")
 cor(test_df$Ho, test_df[, c("cur_lgm", "lgm_lig", "csi_custom", "tmean_dif")], use = "pairwise.complete.obs")
@@ -361,12 +381,11 @@ mod_df <-
   mutate(csi_past = csi_custom) %>%
   dplyr::select(Ho, Ho_gea, SampleID, geometry, all_of(mod_vars)) %>%
   drop_na(Ho) %>%
-  # REMOVE CHANNEL ISLAND SAMPLE
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
-  filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
+  # REMOVE CHANNEL ISLAND SAMPLES
+  filter(!SampleID %in% beckii$SampleID)
 
-
-nrow(mod_df) # 160
+nrow(het)
+nrow(mod_df) # 265
 
 # Count NAs in each column
 have_nas <- colSums(is.na(mod_df))[colSums(is.na(mod_df)) > 0]
@@ -524,22 +543,22 @@ dev.off()
 ```
 
 ```{r}
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
 # Create formula
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
-# Run model selection
-#dredge_result <- sem_dredge(f, data = mod_sf, listw = listw)
-#dredge_result %>% arrange(AIC) %>% head(3)
-#f_best <- dredge_result %>% arrange(AIC) %>% slice(1) %>% pull(model_formula)
+# Compare error and lag
+errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE) %>% summary()
+lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE) %>% summary()
+  safe_spm <- purrr::safely(spmodel::splm)
+  fit <- safe_spm(f, data = sub_data, spcov_type = "exponential")
 
 # Compare full model and best model
-full_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-#best_model <- errorsarlm(f_best, data = mod_sf, listw = listw, zero.policy = TRUE)
-#full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-#impacts_model <- impacts(full_model, listw = listw, tr = TRUE) 
+full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
 
+broom::tidy(full_model) 
 # Significant variables are the same between the full model and the best model
-broom::tidy(full_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
+broom::tidy(full_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) # Q, csi_past, tmean_dif, bio1
 #broom::tidy(best_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
 
 # To keep interpretability, we will use the full model for further analysis
@@ -548,42 +567,21 @@ summary(best_model)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
 r2_alternative <- cor(sem_model$fitted.values, sem_model$y)^2
-print(r2_alternative) # 50%
+print(r2_alternative) # 61%
 
 # McFadden's pseudo R²
 # Fit a null model with only an intercept
-sem_null <- errorsarlm(Ho ~ 1, data = mod_sf, listw = listw, zero.policy = TRUE)
+sem_null <- lagsarlm(Ho ~ 1, data = mod_sf, listw = listw, zero.policy = TRUE)
 # Extract log-likelihoods and compute McFadden's pseudo R²
 ll_model <- as.numeric(logLik(sem_model))
 ll_null <- as.numeric(logLik(sem_null))
 pseudo_r2 <- 1 - (ll_model / ll_null)
-print(pseudo_r2) # -0.02 ... this is an understimate 
+print(pseudo_r2) # -0.02 ... this is an underestimate 
 ```
-
 
 ```{r}
-# https://www.seas.upenn.edu/~tesmith/NOTEBOOK/Part_III/9_Goodness_of_Fit_Measures_for_Spatial_Regression.pdf
-library(spatialreg)
-# Extract residuals
-e_sem <- residuals(full_model)
-
-# Response variable
-y <- full_model$y
-
-# Construct the model matrix manually
-X <- model.matrix(f, data=mod_sf)
-
-# Compute D = I - X (X'X)^{-1} X'
-D <- diag(nrow(X)) - X %*% solve(t(X) %*% X) %*% t(X)
-
-# Compute denominator (y' D y)
-yDy <- t(y) %*% D %*% y
-
-# Compute R^2 for SEM
-R2_SEM <- 1 - (t(e_sem) %*% e_sem) / yDy
-R2_SEM
+spmodel::splm(f, data = mod_sf, spcov_type = "exponential") %>% summary()
 ```
-
 
 ## Variance partioning analysis
 ```{r}
@@ -626,6 +624,8 @@ gt::gtsave(best_model_table, filename = here(plotpath, "best_model_table_Ho.html
 ```
 
 ```{r}
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
+
 # Make pretty plots 
 mod <- best_model
 
@@ -725,37 +725,37 @@ print(vgm_range)
 nb <- dnearneigh(mod_sf, d1 = 0, d2 = vgm_range)
 listw <- nb2listw(nb, style = "W", zero.policy = TRUE)
 
-# Fit an SEM model
-sem_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-summary(sem_model)
-mod_sf$sem_resids <- residuals(sem_model)
+# Fit an spatial model
+sp_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+summary(sp_model)
+mod_sf$sp_resids <- residuals(sp_model)
 
 # Calculate Moran's I before and after accounting for spatial autocorrelation
 moran.test(mod_sf$ols_resids, listw)$estimate
-moran.test(mod_sf$sem_resids, listw)$estimate
+moran.test(mod_sf$sp_resids, listw)$estimate
 ```
 
 ```{r}
-# Run model selection
-dredge_result <- sem_dredge(f, data = mod_sf, listw = listw)
-dredge_result %>% arrange(AIC) %>% head(3)
-f_best <- dredge_result %>% arrange(AIC) %>% slice(1) %>% pull(model_formula)
+full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
 
-# Compare full model and best model
-full_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
-best_model <- errorsarlm(f_best, data = mod_sf, listw = listw, zero.policy = TRUE)
-
-# Significant variables are the same between the full model and the best model, except NDVI is significant in the full_model
+# Variables are NDVI + glacier + Q
 broom::tidy(full_model) %>% filter(p.value < 0.05)
-broom::tidy(best_model) %>% filter(p.value < 0.05)
 
-# To keep interpretability, we will use the full model for further analysis and to be consistent with the Ho model
 best_model <- full_model
 summary(best_model)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
 r2_alternative <- cor(sem_model$fitted.values, sem_model$y)^2
-r2_alternative # 31%
+r2_alternative # 43%
+```
+
+```{r}
+# DELETE Later
+pdf(here(plotpath, "partial_plots.pdf"), width = 4, height = 4)
+ggpartial("csi_past", "Ho", mod_vars, mod_df_imputed, col = "csi_past")
+ggpartial("tmean_dif", "Ho", mod_vars, mod_df_imputed, col = "tmean_dif")
+ggpartial("bio1", "Ho", mod_vars, mod_df_imputed, col = "bio1")
+dev.off()
 ```
 
 ## Variance partioning analysis
@@ -986,7 +986,7 @@ cor_plt <-
 names(mod_vars) <- mod_vars
 confounded_vars <- map(mod_vars, ~cor.test(mod_df_imputed$Ho, mod_df_imputed[[.x]])$p.value) < 0.05
 confounded_vars <- names(confounded_vars[confounded_vars])
-confounded_vars <- confounded_vars[!(confounded_vars %in% c("cur_lgm", "Q"))]
+confounded_vars <- confounded_vars[!(confounded_vars %in% c("csi_past", "Q"))]
 
 missig_plt <-
   mod_df_imputed %>%
@@ -1040,7 +1040,7 @@ dev.off()
 ca <- get_ca()
 
 colpal = "plasma"
-sig_vars <- c("lgm_lig", "Q")
+sig_vars <- c("csi_past", "Q")
 plot_map <- function(var){
   ggplot(st_as_sf(mod_df_imputed)) +
     geom_sf(data = ca) +
@@ -1098,6 +1098,19 @@ plot_grid(plts, plts_gea, nrow = 2)
 dev.off()
 ```
 
+# Committee meeting
+
+```{r}
+pdf(here(plotpath, "committee_meeting.pdf"), width = 15, height = 3.5)
+sig_vars <- c("csi_past", "tmean_dif", "bio1", "Q")
+partial_plts <- map(sig_vars, ~ggpartial(.x, "Ho", sig_vars, mod_df_imputed, col = "Ho", cex = 2) + scale_fill_viridis_c(option = colpal))
+do.call(plot_grid, c(partial_plts, list(nrow = 1)))
+dev.off()
+
+pdf(here(plotpath, "committee_meeting.pdf"), width = 5, height = 4)
+plot_map("Ho") + scale_fill_viridis_c(option = "mako")
+dev.off()
+```
 # Test of what variables are no longer significant after accounting for spatial autocorrelation
 
 In the lm() bio1/tmean_dif is significant but in the spatial model it is not.

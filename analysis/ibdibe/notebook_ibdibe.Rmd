@@ -46,12 +46,20 @@ stopifnot(gendist_coords$SampleID == row.names(genedist))
 ```
 
 ```{r}
+
 envstack <- 
   rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif")) %>%
   terra::project("epsg:3310")
 env_agg <- mask(envstack, get_range())
 
-plot(envstack, axes = FALSE, box = FALSE)
+bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))  %>% project("epsg:3310")
+bio1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
+ndvi <- rast(here("data", "env", "california_ndvi_mean_2000_2020.tif")) %>% project("epsg:3310")
+ndvi <- resample(ndvi, bio1, method = "bilinear")
+envstack <- c(bio1, ndvi)
+names(envstack) <- c("bio1", "ndvi")
+env_agg <- mask(envstack, get_range())
+#plot(envstack, axes = FALSE, box = FALSE)
 
 ```
 

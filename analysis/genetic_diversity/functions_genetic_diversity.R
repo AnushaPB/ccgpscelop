@@ -1,6 +1,6 @@
 
 
-get_het <- function(file = "58-Sceloporus.het"){
+get_het <- function(file = "58-Sceloporus_chr.het"){
   # callable sites for denominator
   callable <- read.csv(here("data_processing", "callable_counts.csv"))
   callable_sites <- callable %>% pull(callable_sites)
@@ -339,3 +339,4 @@ lm_variance_partition <- function(predictor_sets, response, scale_vars = TRUE) {
   )
   return(results)
 }
+

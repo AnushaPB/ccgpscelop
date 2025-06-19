@@ -30,9 +30,14 @@ plotpath <- here("analysis", "gea", "plots")
 ```
 
 ```{r}
+# Get all genes
+all_genes <- get_all_genes_bed()
+nrow(all_genes) #74,808
+length(unique(all_genes$full_name))
+
 # GEA
 gea <- get_gea_genes(nonsyn = FALSE) %>% distinct()
-gea_nonsyn <- get_gea_genes(nonsyn = TRUE) %>% distinct() # FIGURE OUT HOW TO DEAL WITH DUPLICATES: GNX-391/GNX-359 (overlapping genes, same SNP)
+gea_nonsyn <- get_gea_genes(nonsyn = TRUE) %>% distinct() 
 
 # Tajima's D
 tjd <- get_tajimad(windowkb = 10) 
@@ -43,7 +48,9 @@ nonsyn <- get_nonsyn() %>% dplyr::rename(start = position) # NOTE: position = SN
 # Chromenv
 chromenv <- get_chromenv() %>% filter(p_adj < 0.05) %>% filter(var %in% c("csi_past", "tmean_dif"))
 chromenv_neg <- chromenv %>% filter(estimate < 0) %>% filter(var %in% c("csi_past", "tmean_dif"))
+```
 
+```{r}
 # CHECKING BOTTOM 5% CALCULATION
 tjd_neg <- tjd %>% group_by(pop) %>% mutate(bottom = TajimaD < quantile(TajimaD, 0.05, na.rm = TRUE))
 tjd_neg %>% ungroup() %>% filter(bottom) %>% summarize(mean(outliers == "Bottom 5%")) == 1
@@ -110,13 +117,13 @@ goi_combo <- gea_combo_df %>% dplyr::filter(full_name %in% goi$full_name)
 # Look at all SNPs with very negative TJD & chromenv
 gea_combo_df %>% 
   filter(tjd & chromenv_neg) %>% 
-  distinct(name) %>%
+  distinct(full_name) %>%
   drop_na()
 
 # Look at all SNPs with very negative TJD
 gea_combo_df %>% 
   filter(tjd) %>% 
-  distinct(name) %>%
+  distinct(full_name) %>%
   drop_na() %>% nrow() # Count genes
 gea_combo_df %>% 
   filter(tjd) %>% 
@@ -125,18 +132,18 @@ gea_combo_df %>%
 
 gea_combo_df %>% 
   filter(tjd) %>% 
-  distinct(name) %>%
+  distinct(full_name) %>%
   drop_na()
 
 # Look at genes of interests: 
 # No genes of interest have both negative TJD and chromenv
-goi_combo %>% filter(tjd & chromenv_neg) %>% dplyr::select(scaffold, name, tjd, chromenv_neg)
+goi_combo %>% filter(tjd & chromenv_neg) %>% dplyr::select(scaffold, full_name, tjd, chromenv_neg)
 
-# Many HSP have negative TJD
-goi_combo %>% filter(tjd) %>% distinct(name) 
+# Several HSP (including HSP 70; e.g., Heat shock 70 kDa protein 1A) have negative TJD 
+goi_combo %>% filter(tjd) %>% distinct(full_name) 
 
 # TPRM8 is not in a negative tajima's D region
-goi_combo %>% filter(grepl("TRPM8", full_name))
+goi_combo %>% filter(grepl("TRPM8", full_name)) %>% dplyr::select(tjd)
 ```
 ```
 
@@ -215,7 +222,8 @@ hsp <-
   drop_na(TajimaD) %>% 
   dplyr::select(pop, name, TajimaD) %>% 
   left_join(tjd_quant) %>%
-  filter(grepl("Heat shock", name)) # Most of the negative Tajima's D are not in pop9
+  filter(grepl("Heat shock 70", name)) 
+hsp %>% filter(TajimaD < 0) %>% group_by(pop) %>% count()
 ```
 
 Run models of Tajima's D vs environmental variables:
@@ -365,16 +373,6 @@ ggplot(tjd_pop9) +
 dev.off()
 
 ```
-
-
-
-
-
-
-
-
-
-
 
 ```{r}
 plotchrom_c <- function(data, fill){
@@ -695,4 +693,74 @@ dev.off()
 #         strip.background = element_blank(),
 #         strip.text.x = element_text(hjust = 0))
 
+```
+
+# Look at Tajima's D in HSP70 gene
+```{r}
+# Get all genes
+all_genes <- get_all_genes_bed()
+nrow(all_genes) #74,808
+length(unique(all_genes$full_name))
+
+# GEA
+gea <- get_gea_genes(nonsyn = FALSE) %>% distinct()
+gea_nonsyn <- get_gea_genes(nonsyn = TRUE) %>% distinct() 
+
+# Tajima's D
+tjd <- get_tajimad(windowkb = 10) %>% mutate(pop = gsub("pop", "", pop))
+
+# Non-synonymous SNPs
+nonsyn <- get_nonsyn() %>% dplyr::rename(start = position) # NOTE: position = SNP position= start
+
+# Get gene strutcutr
+gene_str <- get_gene_structure()
+```
+
+```{r}
+hspa1a <- "Heat shock 70 kDa protein 1A"
+hspa1a_snps <- 
+  gea_nonsyn %>% 
+  filter(grepl(hspa1a, full_name)) 
+hspa1a_gene <- hspa1a_snps %>% distinct(gene_start, gene_end, full_name, scaffold)
+hspa1a_tjd <- 
+  tjd %>% 
+  filter(scaffold == hspa1a_gene$scaffold, BIN_START >= hspa1a_gene$gene_start - 100000, BIN_END <= hspa1a_gene$gene_end + 100000)
+
+hspa1a_gene_str <-
+  gene_str %>% 
+  filter(scaffold == hspa1a_gene$scaffold, gene_start >= hspa1a_gene$gene_start - 100000, gene_end <= hspa1a_gene$gene_end + 100000)
+
+hspa1a_cds_str <- 
+  hspa1a_gene_str %>%
+  dplyr::select(cds_start, cds_end, full_name, gene_name)
+
+hspa1a_gene_str <-
+  hspa1a_gene_str%>%
+  distinct(gene_start, gene_end, full_name, gene_name)
+
+
+hspa1a_gene_str2 <-
+  hspa1a_gene_str%>%
+  distinct(gene_start, gene_end, full_name, gene_name)%>% 
+  filter(gene_start >= hspa1a_gene$gene_start, gene_end <= hspa1a_gene$gene_end + 50000)
+
+
+pop_cols <- get_pop_cols()
+
+pdf(here(plotpath, "hspa1a_tjd.pdf"), width = 12, height = 2.5)
+ggplot(hspa1a_tjd) +
+  geom_rect(data = hspa1a_gene_str, aes(xmin = gene_start, xmax = gene_end), ymin = -Inf, ymax = Inf, fill = "lightgray") +
+  geom_rect(data = hspa1a_cds_str, aes(xmin = cds_start, xmax = cds_end), ymin = -Inf, ymax = Inf, fill = "gray") +
+  geom_rect(data = hspa1a_gene_str2, aes(xmin = gene_start, xmax = gene_end, fill = gene_name), ymin = -Inf, ymax = Inf) +
+  geom_rect(data = hspa1a_gene, aes(xmin = gene_start, xmax = gene_end), ymin = -Inf, ymax = Inf, fill = "pink") +
+  geom_vline(data = hspa1a_snps, aes(xintercept = start), col = "red") +
+  geom_line(aes(x = BIN_START, y = TajimaD, group = pop, col = pop), alpha = 0.9, lwd = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", lwd = 0.5, col = "black") +
+  geom_hline(yintercept = -1.13, linetype = "dashed", lwd = 0.5, col = "black") +
+  scaffold_theme() +
+  scale_x_continuous(expand = c(0, 0), breaks = seq(min(hspa1a_tjd$BIN_START), max(hspa1a_tjd$BIN_START), by = 50000), labels = scales::comma) +
+  labs(fill = "Gene", color = "Pop") +
+  scale_color_manual(values = pop_cols) +
+  theme(axis.text.x = element_text(), axis.ticks.x = element_line(), axis.line = element_line(), legend.position = "bottom") 
+dev.off()
 ```

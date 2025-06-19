@@ -245,7 +245,7 @@ ggplot(gg_df, aes(x = neutral, y = value, col = socal, pch = name, lty = name)) 
   )
 dev.off()
 ```
-
+f
 ```{r}
 gg_df <- 
   wingen_df %>% 

@@ -24,23 +24,40 @@ fi
 # create paths
 BASE_PATH="../../data"
 PREFIX="58-Sceloporus"
-GENOME="$BASE_PATH/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta.fai"
-GENOME_NAME="jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled"
+#GENOME="$BASE_PATH/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta.fai"
+#GENOME_NAME="jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled"
+GENOME="$BASE_PATH/genome/rSceOcc1.20250428.p_ctg_chr_names.fna.gz"
+GENOME_NAME="rSceOcc1.20250428.p_ctg_chr_names"
 CALLABLE="$BASE_PATH/ccgp_data/58-Sceloporus_callable_sites.bed"
+
+# Path to the uncompressed fasta file
+GENOME_FA="${GENOME%.gz}"  # strip .gz extension
+
+# If the .fai doesn't exist, generate it
+if [ ! -f "${GENOME_FA}.fai" ]; then
+    gunzip -c "$GENOME" > "$GENOME_FA"
+    samtools faidx "$GENOME_FA"
+fi
 
 # create reverse masks from genome data if they don't exist
 if [ -f "${PREFIX}_uncallable_sites.sorted.bed.gz" ]; then
     echo "Mask files already exists, skipping..."
 else
     # Convert the .fai file to a BED file representing all genomic regions
-    awk 'BEGIN {FS="\t"}; {print $1 "\t0\t" $2}' $GENOME > $GENOME_NAME.bed
+    awk 'BEGIN {FS="\t"}; {print $1 "\t0\t" $2}' "${GENOME_FA}.fai" > "${GENOME_NAME}.bed"
 
     # Subtract the callable sites from the complete genomic regions
     bedtools subtract -a $GENOME_NAME.bed -b $CALLABLE > ${PREFIX}_uncallable_sites.bed
 
     # Index the bed files
+    # Sort by chromosome (-k1,1) and start position (-k2,2n)
+    # (required for proper indexing and downstream compatibility)
     sort -k1,1 -k2,2n ${PREFIX}_uncallable_sites.bed > ${PREFIX}_uncallable_sites.sorted.bed
+
+    # Compress the sorted BED file using bgzip for tabix
     bgzip -c ${PREFIX}_uncallable_sites.sorted.bed > ${PREFIX}_uncallable_sites.sorted.bed.gz
+
+    # Index the bed file
     tabix -p bed ${PREFIX}_uncallable_sites.sorted.bed.gz
 fi
 
@@ -60,10 +77,17 @@ process_population() {
     # Creates the output directory if it does not exist
     mkdir -p "${output_dir}"
 
-    # Loops through each contig in the  contigs array
+    # Pick a random individual from the population to distinguish the population
+    # NOTE: the same distinguished individual must be used for all contigs in a population
+    local distinguished_ind=$(echo $inds | tr ',' '\n' | shuf -n 1)
+
+    # Write the distinguished individual to a file
+    echo $distinguished_ind > "${output_dir}/${pop}_distinguished_ind.txt"
+
+    # Loops through each contig in the contigs array
     # note: the ! operator is used for indirect reference, which means it gets the value of the variable whose name is stored in contigs
     for contig in "${CONTIGS[@]}"; do
-        process_contig "$contig" "$output_dir" "$pop" "$inds"
+        process_contig "$contig" "$output_dir" "$pop" "$inds" "$distinguished_ind"
     done
 
     # Select the *.smc.gz files listed in the output folder
@@ -75,7 +99,7 @@ process_population() {
     # timepoints are in generations, so we multiply by 2 assuming a generation time of 2 years
     # Sceloporus diverged ~1 Ma (1e6 years) ago = 1e6/2 = 5e5 generations
     # We will start at 100 generations ago (200 years ago)
-    smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" "${output_dir}"/*_"${pop}".smc.gz --timepoints 1e2 5e5 > "${output_dir}/smcpp.out"
+    smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" ${smc_files} --timepoints 1e2 5e5 > "${output_dir}/smcpp.out"
 
     # Generates a plot for the population analysis
     smc++ plot "${output_dir}/${pop}.pdf" "${output_dir}/model.final.json" -c
@@ -87,15 +111,10 @@ process_contig() {
     local output_dir=$2
     local pop=$3
     local inds=$4
+    local distinguished_ind=$5
 
     # Defines the path for the output file for the current contig
     local output_file="${output_dir}/${contig}_${pop}.smc.gz"
-
-    # Pick a random individual from the population to distinguish the population
-    local distinguished_ind=$(echo $inds | tr ',' '\n' | shuf -n 1)
-
-    # Write the distinguished individual to a file
-    echo $distinguished_ind > "${output_dir}/${pop}_distinguished_ind.txt"
 
     # If the output file doesn't exist, it generates a new one
     if [[ ! -f "${output_file}" ]]; then
@@ -128,7 +147,8 @@ BASE_PATH="../.."
 MUTATION_RATE=1e-8
 
 # Files
-VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
+#VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
+VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_occidentalis_only.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
 # Index the vcf file if it doesn't exist
@@ -139,35 +159,28 @@ fi
 # Make outputs file
 mkdir -p outputs
 
-# Get top 10 longest scaffolds
-python get_top_scaffolds.py
-CONTIG_FILE="outputs/top_10_scaffolds.txt"
-#mapfile -t CONTIGS < "${CONTIG_FILE}"
-mapfile -t CONTIGS < <(grep -v 'chr6' "${CONTIG_FILE}")
+# Get list of just chromosomes (not including sex-linked chromosomes)
+CONTIG_FILE="outputs/chromosome_names.txt"
+mapfile -t CONTIGS < "${CONTIG_FILE}"
 # Print the contigs
 echo ${CONTIGS[@]}
 
-# Process each population
-mkdir -p outputs
-for j in {3..10}
+# Process each populationmkdir -p outputs
+for j in {4..10}
 do
-  # Create the outputs directories
   mkdir -p outputs/outputs$j
-  echo ${CONTIGS[@]}
 
-  for i in {1..9}
+  for i in {1..8}
   do
     (
-      eval inds_pop$i=$(cat "${BASE_PATH}/analysis/admixture/outputs/k9_pop$i.txt" | paste -sd, -)
-      pop="inds_pop${i}"
-      process_population "pop${i}" "${!pop}" 2> pop$i.stderr
-      
-      mv pop$i/ outputs/outputs$j/pop$i
-    ) &   
+      inds=$(paste -sd, - < "${BASE_PATH}/analysis/admixture/outputs/k8_pop${i}.txt")
+      process_population "pop${i}" "$inds" 2> pop${i}.stderr
+
+      mv pop${i}/ outputs/outputs$j/pop${i}
+    ) &
   done
   wait
 
-  # Move error files into outputs
   mv *stderr outputs/outputs$j
 done
 
@@ -175,12 +188,11 @@ mv *bed* outputs
 
 # Check the status of the background jobs
 jobs
-[1] 2012606
-[2] 2012607
-[3] 2012608
-[4] 2012610
-[5] 2012612
-[6] 2012615
-[7] 2012620
-[8] 2012624
-[9] 2012630
+[1] 531019
+[2] 531020
+[3] 531021
+[4] 531024
+[5] 531026
+[6] 531028
+[7] 531032
+[8] 531036

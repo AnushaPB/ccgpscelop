@@ -141,6 +141,16 @@ for POP in {1..9}; do
   vcftools --gzvcf $VCF --keep ../admixture/outputs/k9_pop${POP}.txt --TajimaD 10000 --out outputs/58-Sceloporus_10kb_tajimad_pop${POP}
 done
 
+# Finest-scale Tajima's D on chr5 in 1 kb windows
+for POP in {1..9}; do
+  vcftools --gzvcf $VCF \
+    --keep ../admixture/outputs/k9_pop${POP}.txt \
+    --chr 5 \
+    --TajimaD 1000 \
+    --out outputs/58-Sceloporus_chr5_1kb_tajimad_pop${POP}
+done
+
+
 vcftools --gzvcf $VCF --weir-fst-pop ../admixture/outputs/k9_pop9.txt --weir-fst-pop ../admixture/outputs/k9_pop6.txt --fst-window-size 50000 --out outputs/58-Sceloporus_50kb_fst_pop9pop6
 
 # MAPPING FILES -------------------------------------------------------------------------

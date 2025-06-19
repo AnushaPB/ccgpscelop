@@ -71,8 +71,7 @@ Q <-
  bind_rows() %>%
  arrange(across(starts_with("V"))) %>%
  mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
- pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q") %>%
- filter(SampleID != "Scelocci_CHI1382_DAW5-46-21") 
+ pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q")
  
 df <-
  left_join(Q, coords[,c("x", "y", "SampleID")], by = "SampleID") %>%
@@ -90,8 +89,8 @@ ggplot(df) +
 barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
 do.call(ggarrange, c(barplots, ncol = 1))
 dev.off()
-
 ```
+
 ```{r}
 qdf <- df %>% group_by(SampleID, K) %>% summarize(score = 1 - max(Q, na.rm = TRUE))
 
@@ -108,7 +107,7 @@ dev.off()
 
 ```{r}
 grid <- coords_to_raster(coords_proj, res = 1000)
-qmat_samples <- get_Q(K = 6, qmat_only = FALSE)
+qmat_samples <- get_Q(K = 8, qmat_only = FALSE)
 coords_proj <- 
   get_coords(sf= TRUE) %>%
   st_transform(3310) %>% 
@@ -124,18 +123,18 @@ dev.off()
 ```
 ```{r}
 # FOR LINEAR MODELS: 
-# Write out Q files for K = 9
+# Write out Q files for K = 8
 # cluster = final cluster assignment for SampleID given max Q
 # PopGroup = Q values for each cluster
 Q %>% 
   # only keep the pop group/Q values corresponding to the cluster
   mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 9) %>%
-  write_csv(here(outpath, "Q9.csv"))
+  filter(cluster == PopGroup, K == 8) %>%
+  write_csv(here(outpath, "Q8.csv"))
 
-# write out Q values for the assigned population for Q = 9
+# write out Q values for the assigned population
 Q %>%
-  filter(K == 9) %>%
+  filter(K == 8) %>%
   # only keep the pop group/Q values corresponding to the cluster
   mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
   filter(cluster == PopGroup) %>%
@@ -144,18 +143,6 @@ Q %>%
   group_split() %>%
   map(~as.character(pull(.x, SampleID))) %>%
   iwalk(\(x, idx) write(x, here(outpath, paste0("pop", idx, ".txt"))))
-
-# Write out K=3 for models
-Q %>% 
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 3) %>%
-  write_csv(here(outpath, "Q3.csv"))
-Q %>% 
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup, K == 5) %>%
-  write_csv(here(outpath, "Q5.csv"))
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
@@ -198,20 +185,20 @@ ggplot(same_summarize_df) +
 library(here)
 library(tidyverse)
 library(sf)
-source(here("analysis", "admixture", "admixture.R"))
+source(here("analysis", "admixture", "functions_admixture.R"))
 source(here("general_functions.R"))
+outpath <- here("analysis", "admixture", "outputs")
+plotpath <- here("analysis", "admixture", "plots")
 # FOR ROH/SMCPP:
-# Write out individual pop assignments for Q = 9
-get_Q(K = 9) %>% 
-  # Remove channel island sample
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") %>%
+# Write out individual pop assignments for Q = 8
+get_Q(K = 8) %>% 
   group_by(cluster) %>% 
   group_split() %>%
-  iwalk(\(x, idx) write(x$SampleID, here(outpath, paste0("k9_pop", idx, ".txt"))))
+  iwalk(\(x, idx) write(x$SampleID, here(outpath, paste0("k8_pop", idx, ".txt"))))
 
 # Check population locations
 # Read in files and bind with coords 
-pop_files <- list.files(here(outpath), full.names = TRUE, pattern = "k9")
+pop_files <- list.files(here(outpath), full.names = TRUE, pattern = "k8")
 coords <- get_coords()
 pop_df <- 
   map(pop_files, ~{

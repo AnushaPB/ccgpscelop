@@ -9,7 +9,7 @@ source(here("analysis", "gea", "functions_selection_stats.R"))
 
 coords <- get_coords(sf = TRUE)
 plotpath <- here("analysis", "gea", "plots")
-adaptive_path <- here("analysis", "adaptive", "outputs")
+adaptive_path <- here("analysis", "gea", "outputs", "scelop_adaptive_env_layers")
 
 adapind_load <- rast(here(adaptive_path, "58-Sceloporus_bio1ndvi_gea_adapind_load.tif"))
 offset <- rast(here(adaptive_path, "58-Sceloporus_bio1ndvi_gea_offset_load_RCP85.tif"))
@@ -48,7 +48,7 @@ plot_rgb <- function(df) {
     scale_y_continuous(expand = expansion(mult = 0.1)) +
     coord_equal() +
     theme_void()
-
+}
 
 pdf(here(plotpath, "adaptive_index.pdf"), width = 5, height = 5)
 plot_rgb(rgb_df) 
@@ -79,8 +79,25 @@ dev.off()
 
 ```
 
+```{r}
+list.files(adaptive_path)
+raw_diff <- rast(here(adaptive_path, "diff_BIO1_RCP8.5_present.tif"))
+```
 
-```{}
+```{r}
+coords <- 
+  read_table(here("data", "ccgp_data_may2025backup", "58-Sceloporus.coords.txt"), col_names = c("SampleID", "x", "y")) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326)
+het <- get_het() %>% right_join(coords)
+coords$offset <- terra::extract(offset_total, coords, ID = FALSE)[,1]
+coords$raw_diff <- terra::extract(raw_diff, coords, ID = FALSE)[,1]
+
+layerCor(c(offset_total, raw_diff), "pearson")$correlation
+cor.test(coords$offset, coords$raw_diff)
+```
+
+
+# OLD:
 ```{r}
 coords <- get_coords(sf = TRUE)
 

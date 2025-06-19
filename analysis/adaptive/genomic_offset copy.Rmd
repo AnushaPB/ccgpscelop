@@ -59,6 +59,13 @@ if (gea_method == "pca") {
 }
 if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = TRUE)
 
+# ANUSHA ADDED 5/5/2025:
+# Convert future layers from Kelvin * 10 to celsius
+envlayers$env_fut[["CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1"]] <- envlayers$env_fut[["CHELSA_bio1_2071.2100_gfdl.esm4_ssp126_V.2.1"]] / 10 - 273.15
+envlayers$env_fut[["CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1"]] <- envlayers$env_fut[["CHELSA_bio1_2071.2100_gfdl.esm4_ssp585_V.2.1"]] / 10 - 273.15
+
+envlayers$env_fut <- terra::mask(envlayers$env_fut, envlayers$env_pres[[1]])
+
 # Check that above worked
 all(names(envlayers$env_pres) == row.names(dat_mod$biplot))
 names(envlayers$env_fut)
