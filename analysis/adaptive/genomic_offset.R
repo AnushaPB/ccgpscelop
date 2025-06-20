@@ -38,12 +38,6 @@ genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut) {
   Proj_fut_26 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_26, K, type = "future")
   Proj_fut_85 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_85, K, type = "future")
 
-pdf(paste0(here("analysis", "adaptive", "plots"), "/test.pdf"), width = 12, height = 8)
-plot(Proj_offset_pres[[1]])
-dev.off()
-
-
-  
   # Single axis genetic offset
   Proj_offset_26 <- list()
   for(i in 1:K) {
@@ -150,8 +144,6 @@ offset_proj_helper <- function(biplot, var_env_proj, K, type) {
 #'  Predictions of biological change through time require two raster stacks or
 #'  bricks for environmental conditions at two time periods, each with a
 #'  layer for each environmental predictor in the fitted model.
-#'  
-#'  https://github.com/fitzLab-AL/gdm/blob/master/R/gdm.predict.R
 #'
 #' @usage \method{predict}{gdm}(object, data, time=FALSE, predRasts=NULL, filename="", ...)
 #'
@@ -159,7 +151,7 @@ offset_proj_helper <- function(biplot, var_env_proj, K, type) {
 #'
 #' @param data Either a data frame containing the values of predictors for pairs
 #' of sites, in the same format and structure as used to fit the model using
-#' \code{\link[gdm]{gdm}}, or a raster stack if a prediction of biological change
+#' \code{\link[gdm]{gdm}} or a raster stack if a prediction of biological change
 #' through time is needed.
 #'
 #' For a data frame, the first two columns - distance and weights - are required
@@ -178,71 +170,108 @@ offset_proj_helper <- function(biplot, var_env_proj, K, type) {
 #' the site-pair table used to fit the model.
 #'
 #' @param time TRUE/FALSE: Is the model prediction for biological change through time?
+#'
 #' @param predRasts A raster stack characterizing environmental conditions for a
 #' different time in the past or future, with the same extent, resolution, and
 #' layer order as the data object. Required only if time=T.
+#'
 #' @param filename character. Output filename for rasters. When provided the raster layers are
 #' written to file directly.
+#'
 #' @param ... additional arguments to pass to terra \code{\link[terra]{predict}} function.
 #'
 #' @return predict returns either a response vector with the same length as the
 #'  number of rows in the input data frame or a raster depicting change through time across the study region.
 #'
-predict.gdm <- function(object, data, time = FALSE, predRasts = NULL, filename = "", ...) {
-  # object <- object$model
+#' @seealso \code{\link[gdm]{gdm.transform}}
+#'
+#' @examples
+#' ##set up site-pair table using the southwest data set
+#' sppData <- southwest[, c(1,2,14,13)]
+#' envTab <- southwest[, c(2:ncol(southwest))]
+#'
+#' # remove soils (no rasters for these)
+#' envTab <- envTab[,-c(2:6)]
+#' sitePairTab <- formatsitepair(sppData, 2, XColumn="Long", YColumn="Lat", sppColumn="species",
+#'                              siteColumn="site", predData=envTab)
+#'
+#' # create GDM
+#' gdmMod <- gdm(sitePairTab, geo=TRUE)
+#'
+#' ##predict GDM
+#' predDiss <- predict(gdmMod, sitePairTab)
+#'
+#' ##time example
+#' rastFile <- system.file("./extdata/swBioclims.grd", package="gdm")
+#' envRast <- terra::rast(rastFile)
+#'
+#' ##make some fake climate change data
+#' futRasts <- envRast
+#' ##reduce winter precipitation by 25%
+#' futRasts[[3]] <- futRasts[[3]]*0.75
+#'
+#' timePred <- predict(gdmMod, envRast, time=TRUE, predRasts=futRasts)
+#' terra::plot(timePred)
+#'
+#' @keywords gdm
+#'
+#' @importFrom methods is
+#'
+#' @export
+predict.gdm <- function(object, data, time = FALSE, predRasts = NULL, filename){
+  #################
+  ##lines used to quickly test function
+  ##object = gdm model
+  ##data = a sitepair table
+  #object <- gdm.rastF
+  #data <- envRast
+  #time <- T
+  #predRasts <- futRasts
+  #################
+
   if (time) {
+    # data <- .check_rast(data, "data")
+    # predRasts <- .check_rast(predRasts, "predRasts")
     for(i in 1:terra::nlyr(data)){
-      if(names(data)[i] != names(predRasts)[i]){
+      if(names(data)[i]!=names(predRasts)[i]){
         stop("Layer names do not match the variables used to fit the model.")
       }
     }
-    if(terra::nlyr(data) != length(object$predictors) - 1 | terra::nlyr(predRasts) != length(object$predictors) - 1){
+    if (object$geo) {
+      if(terra::nlyr(data)!=length(object$predictors)-1 | terra::nlyr(predRasts)!=length(object$predictors)-1){
         stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
       }
-    # if (object$geo) {
-    #   if(terra::nlyr(data) != length(object$predictors) - 1 | terra::nlyr(predRasts) != length(object$predictors) - 1){
-    #     stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
-    #   }
-    # } else {
-    #   if(terra::nlyr(data)!=length(object$predictors) | terra::nlyr(predRasts)!=length(object$predictors)){
-    #     stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
-    #   }
-    # }
+    } else {
+      if(terra::nlyr(data)!=length(object$predictors) | terra::nlyr(predRasts)!=length(object$predictors)){
+        stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
+      }
+    }
 
-    # create XY rasters; data and predRasts must have the same XY
-    x <- terra::init(data[[1]], fun = "x")
-    y <- terra::init(data[[1]], fun = "y")
-    
-    # sets the correct names to the data
+    # Sets the correct names to the data
     names(data) <- paste0("s1.", names(data))
     names(predRasts) <- paste0("s2.", names(predRasts))
-    
-    # stack all the raster layers to for prediction
-    data <- c(
-      # stats::setNames(dummData, "distance"),
-      # stats::setNames(dummData, "weights"),
-      stats::setNames(x, "s1.xCoord"),
-      stats::setNames(y, "s1.yCoord"),
-      stats::setNames(x, "s2.xCoord"),
-      stats::setNames(y, "s2.yCoord"),
-      data,
-      predRasts
-    )
-    
+
+    # Stack all the raster layers to for prediction
+    data <- c(data, predRasts)
   }
-  
+
   # makes the prediction based on the data object
-  gdm_predict <- function(mod, dat, ...) {
+  gdm_predict <- function(mod, dat, raster = FALSE, ...) {
+
     nr <- nrow(dat)
     predicted <- rep(0, times = nr)
-    
+
     # convert to matrix once
     dat <- as.matrix(dat)
-    # add the constants
-    const <- matrix(0L, nrow = nr, ncol = 2)
-    colnames(const) <- c("distance", "weights")
-    dat <- cbind(const, dat)
-    
+    # if predicting with rasters, get xy from interpolate and add constants
+    if (raster) {
+      const <- matrix(0L, nrow = nr, ncol = 2)
+      colnames(const) <- c("distance", "weights")
+      xy_cols <- dat[, 1:2]
+      colnames(xy_cols) <- c("s1.xCoord", "s1.yCoord")
+      dat <- cbind(const, xy_cols, dat)
+    }
+
     z <- .C( "GDM_PredictFromTable",
              dat,
              as.integer(mod$geo),
@@ -253,31 +282,36 @@ predict.gdm <- function(object, data, time = FALSE, predRasts = NULL, filename =
              as.double(c(mod$intercept, mod$coefficients)),
              preddata = as.double(predicted),
              PACKAGE = "gdm")
-    
-    return(z$preddata)
+
+    return(
+      z$preddata
+    )
   }
-  
+
   # if a time prediction, maps the predicted values to a raster and returns
   # the layer, otherwise returns a dataframe of the predicted values
   if (time) {
-    # predict using gdm model and terra package
-    output <- terra::predict(
+    # predict using gdm model and terra package using terra::interpolate to get xy too
+    output <- terra::interpolate(
       object = data,
       model = object,
       fun = gdm_predict,
+      xyNames = c("s2.xCoord", "s2.yCoord"),
+      raster = TRUE,
       na.rm = TRUE,
-      filename = here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset.tif"), overwrite = TRUE
-    )
-    
+      filename = filename,
+      overwrite = TRUE)
+
     return(output)
-    
-  } else {
+
+  } else{
     # predict using a data.frame
     output <- gdm_predict(
       mod = object,
-      dat = data
+      dat = data,
+      raster = FALSE
     )
-    
+
     return(output)
   }
 }
@@ -537,4 +571,95 @@ plot_var_loadings_offset <- function(Proj_data, loadings, biplot_axes, aiRGB, co
 create_rgb_vec <- function(vec) {
   if (any(is.na(vec))) x <- NA else x <- rgb(vec[3], vec[1], vec[2], maxColorValue = 255)
   return(x)
+}
+
+#' Make map from model
+#'
+#' @param gdm_model GDM model
+#' @param envlayers SpatRaster or Raster* object (LAYER NAMES MUST CORRESPOND WITH GDM MODEL)
+#' @param coords data frame with x and y coordinates
+#' @param scl constant for rescaling variable vectors for plotting (defaults to 1)
+#' @param display_axes display PC axes text, labels, and ticks (defaults to FALSE)
+#'
+#' @return GDM RGB map
+#'
+#' @export
+custom_gdm_map <- function(gdm_model, envlayers, coords, plot_vars = TRUE, scl = 1, display_axes = FALSE, quiet = FALSE) {
+  # # convert envlayers to SpatRaster
+  # if (!inherits(envlayers, "SpatRaster")) envlayers <- terra::rast(envlayers)
+  # if (inherits(coords, "sf")) coords <- sf::st_coordinates(coords)
+  # if (is.matrix(coords)) coords <- data.frame(coords)
+  # colnames(coords) <- c("x", "y")
+  
+  # CHECK that all of the model variables are included in the stack of environmental layers
+  # Create list of environmental predictors (everything but Geographic)
+  check_geo <- gdm_model$predictors == "Geographic"
+  if (any(check_geo)) {
+    model_vars <- gdm_model$predictors[-which(check_geo)]
+  } else {
+    model_vars <- gdm_model$predictors
+  }
+  
+  # Check that model variables are included in names of envlayers
+  var_check <- model_vars %in% names(envlayers)
+  
+  # Print error with missing layers
+  if (!all(var_check)) {
+    stop(paste("missing model variable(s) from raster stack:", model_vars[!var_check]))
+  }
+  
+  # Subset envlayers to only include variables in final model
+  envlayers_sub <- terra::subset(envlayers, model_vars)
+  
+  ## Create map
+  # Transform GIS layers
+  # Convert envlayers to raster
+  # envlayers_sub <- raster::stack(envlayers_sub)
+  rastTrans <- gdm::gdm.transform(gdm_model, envlayers)
+  # rastTrans <- terra::rast(rastTrans)
+  
+  # Remove NA values
+  rastDat <- na.omit(terra::values(rastTrans))
+  
+  # Run PCA
+  pcaSamp <- stats::prcomp(rastDat)
+  
+  # Count number of layers
+  n_layers <- terra::nlyr(rastTrans)
+  # Max number of layers to plot is 3, so adjust n_layers accordingly
+  if (n_layers > 3) {
+    n_layers <- 3
+  }
+  
+  # Check if there are only coordinate layers
+  # If there are only coordinate layers (i.e., no env layers) than you cannot create the map
+  if (all(names(rastTrans) %in% c("xCoord", "yCoord"))) stop("All model splines for environmental variables are zero")
+  
+  # Make PCA raster
+  pcaRast <- terra::predict(rastTrans, pcaSamp, index = 1:n_layers)
+  
+  # Scale rasters to get colors (each layer will correspond with R, G, or B in the final plot)
+  pcaRastRGB <- stack_to_rgb(pcaRast)
+  
+  # If there are fewer than 3 n_layers (e.g., <3 variables), the RGB plot won't work (because there isn't an R, G, and B)
+  # To get around this, create a blank raster (i.e., a white raster), and add it to the stack
+  if (n_layers < 3) {
+    warning("Fewer than three non-zero coefficients provided, adding white substitute layers to RGB plot")
+    # Create white raster by multiplying a layer of pcaRast by 0 and adding 255
+    white_raster <- pcaRastRGB[[1]] * 0 + 255
+  }
+  
+  # If n_layers = 2, you end up making a bivariate map
+  if (n_layers == 2) {
+    pcaRastRGB <- c(pcaRastRGB, white_raster)
+  }
+  
+  # If n_layers = 1, you end up making a univariate map
+  if (n_layers == 1) {
+    pcaRastRGB <- c(pcaRastRGB, white_raster, white_raster)
+  }
+  
+  s <- list(rastTrans, pcaRastRGB, pcaSamp, pcaRast)
+  names(s) <- c("rastTrans", "pcaRastRGB", "pcaSamp", "pcaRast")
+  return(s)
 }
