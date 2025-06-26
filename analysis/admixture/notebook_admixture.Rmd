@@ -189,13 +189,52 @@ source(here("analysis", "admixture", "functions_admixture.R"))
 source(here("general_functions.R"))
 outpath <- here("analysis", "admixture", "outputs")
 plotpath <- here("analysis", "admixture", "plots")
+
 # FOR ROH/SMCPP:
+k8 <- 
+  get_Q(K = 8) %>%
+  pivot_longer(starts_with("V"), names_to = "group", values_to = "Q") %>%
+  group_by(SampleID) %>%
+  filter(Q == max(Q, na.rm = TRUE)) 
+
+# Confirm that group == cluster
+stopifnot(all(k8$group == paste0("V", k8$cluster)))
+
+# Filter for individuals with low max Q values (admixed individuals)
+k8 %>%
+  filter(Q < 0.8) 
+
+# Filter out admixed individuals
+k8_filter <- 
+  k8 %>%
+  filter(Q > 0.8) 
+
+# Count individuals per population
+pop_count <-
+  k8_filter %>%
+  group_by(cluster) %>%
+  summarize(n = n(), .groups = "drop") %>%
+  arrange(desc(n))
+print(pop_count)
+
+# Check that n > 10 for each population
+stopifnot(all(pop_count$n > 10))
+
+# Write out individuals for SMC++ and window calculations
 # Write out individual pop assignments for Q = 8
-get_Q(K = 8) %>% 
+k8_filter %>% 
   group_by(cluster) %>% 
   group_split() %>%
   iwalk(\(x, idx) write(x$SampleID, here(outpath, paste0("k8_pop", idx, ".txt"))))
 
+# Write out distinguished individuals by taking the top 10 individuals with the highest Q values for each population
+k8_filter %>%
+  group_by(cluster) %>%
+  arrange(desc(Q)) %>%
+  slice_head(n = 10) %>%
+  group_split() %>%
+  iwalk(\(x, idx) write(x$SampleID, here(outpath, paste0("k8_pop", idx, "_distinguished_individuals.txt"))))
+  
 # Check population locations
 # Read in files and bind with coords 
 pop_files <- list.files(here(outpath), full.names = TRUE, pattern = "k8")
