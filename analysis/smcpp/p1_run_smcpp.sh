@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source activate ccgpscelop
+conda activate ccgpscelop
 
 # INSTALLATION -------------------------------------------------------------------
 # install smcpp if it doesn't exist already
@@ -22,13 +22,13 @@ fi
 # smcpp needs a bed file of sites that could not be called so that it properly identifies homozygous regions
 
 # create paths
-BASE_PATH="../../data"
+DATA_PATH="../../data"
 PREFIX="58-Sceloporus"
-#GENOME="$BASE_PATH/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta.fai"
+#GENOME="$DATA_PATH/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta.fai"
 #GENOME_NAME="jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled"
-GENOME="$BASE_PATH/genome/rSceOcc1.20250428.p_ctg_chr_names.fna.gz"
+GENOME="$DATA_PATH/genome/rSceOcc1.20250428.p_ctg_chr_names.fna.gz"
 GENOME_NAME="rSceOcc1.20250428.p_ctg_chr_names"
-CALLABLE="$BASE_PATH/ccgp_data/58-Sceloporus_callable_sites.bed"
+CALLABLE="$DATA_PATH/ccgp_data/58-Sceloporus_callable_sites.bed"
 
 # Path to the uncompressed fasta file
 GENOME_FA="${GENOME%.gz}"  # strip .gz extension
@@ -62,47 +62,53 @@ else
 fi
 
 # FUNCTIONS FOR SMCPP -----------------------------------------------------------
+
 # Function to process individual populations
 process_population() {
-    # Arguments:
-    # pop: population name
-    local pop=$1  
+    #   pop:              population name (e.g. “pop1”)
+    #   inds:             comma-separated list of all sample IDs in the population
+    #   distinguished_ind: one sample ID from the provided list for this iteration
+    #   it:               iteration index (1–10), used to namespace outputs
 
-    # inds: Sample identifiers for the population
-    local inds=$2    
+    local pop=$1
+    local inds=$2
+    local distinguished_ind=$3
+    local it=$4
 
     # Output directory path for storing the results of the population processing
-    local output_dir="${BASE_PATH}/analysis/smcpp/${pop}"  
-
-    # Creates the output directory if it does not exist
+    # Lands in analysis/smcpp/it${it}/${pop}
+    local output_dir="${BASE_PATH}/analysis/smcpp/it${it}/${pop}"
     mkdir -p "${output_dir}"
 
-    # Pick a random individual from the population to distinguish the population
-    # NOTE: the same distinguished individual must be used for all contigs in a population
-    local distinguished_ind=$(echo $inds | tr ',' '\n' | shuf -n 1)
-
     # Write the distinguished individual to a file
-    echo $distinguished_ind > "${output_dir}/${pop}_distinguished_ind.txt"
+    echo "${distinguished_ind}" > "${output_dir}/${pop}_distinguished_ind.txt"
 
-    # Loops through each contig in the contigs array
-    # note: the ! operator is used for indirect reference, which means it gets the value of the variable whose name is stored in contigs
+    # Loops through each contig in the CONTIGS array
     for contig in "${CONTIGS[@]}"; do
         process_contig "$contig" "$output_dir" "$pop" "$inds" "$distinguished_ind"
     done
 
     # Select the *.smc.gz files listed in the output folder
-    local smc_files=$(ls "${output_dir}"/*_"${pop}".smc.gz)
+    smc_files=( "${output_dir}"/*_"${pop}".smc.gz )
 
-    # Estimates population parameters using smc++ estimate
+   # Estimates population parameters using smc++ estimate
     # and outputs the results to a specified file
     # --timepoints: This command specifies the starting and ending time points of the model. It accepts two numbers t1 tK specifying the starting and ending time points of the model (in generations). If not specified, SMC++ will use an heuristic to calculate the model time points points automatically.
     # timepoints are in generations, so we multiply by 2 assuming a generation time of 2 years
     # Sceloporus diverged ~1 Ma (1e6 years) ago = 1e6/2 = 5e5 generations
     # We will start at 100 generations ago (200 years ago)
-    smc++ estimate -o "${output_dir}" "${MUTATION_RATE}" ${smc_files} --timepoints 1e2 5e5 > "${output_dir}/smcpp.out"
+    smc++ estimate \
+        -o "${output_dir}" \
+        "${MUTATION_RATE}" \
+        "${smc_files[@]}" \
+        --timepoints 1e2 5e5 \
+        > "${output_dir}/smcpp.out"
 
     # Generates a plot for the population analysis
-    smc++ plot "${output_dir}/${pop}.pdf" "${output_dir}/model.final.json" -c
+    smc++ plot \
+        "${output_dir}/${pop}.pdf" \
+        "${output_dir}/model.final.json" \
+        -c
 }
 
 # Function to process single contig
@@ -127,8 +133,6 @@ process_contig() {
 }
 
 # RUNNING SMCPP -------------------------------------------------------------
-# Define constants and file paths
-BASE_PATH="../.."
 
 # MUTATION RATE OPTION 1:
 # mutation rate per site per year of 5.60 × 10 −10 , which was previously estimated for glass lizards (Anguidae Ophisaurus; Perry et al., 2018) .
@@ -147,7 +151,7 @@ BASE_PATH="../.."
 MUTATION_RATE=1e-8
 
 # Files
-#VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz"
+BASE_PATH="../.."
 VCF_FILE="${BASE_PATH}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_occidentalis_only.vcf.gz"
 MASK_FILE="${PREFIX}_uncallable_sites.sorted.bed.gz"
 
@@ -156,43 +160,49 @@ if [ ! -f "${VCF_FILE}.csi" ]; then
     tabix -p vcf "${VCF_FILE}"
 fi
 
-# Make outputs file
-mkdir -p outputs
-
 # Get list of just chromosomes (not including sex-linked chromosomes)
 CONTIG_FILE="outputs/chromosome_names.txt"
 mapfile -t CONTIGS < "${CONTIG_FILE}"
 # Print the contigs
 echo ${CONTIGS[@]}
 
-# Process each populationmkdir -p outputs
-for j in {4..10}
-do
-  mkdir -p outputs/outputs$j
+# Make output directory
+mkdir -p outputs
 
-  for i in {1..8}
-  do
+# Define variables
+NUM_ITS=2
+ADMIX_DIR="${BASE_PATH}/analysis/admixture/outputs"
+
+# iterate 1…10 (“it”)
+for it in $(seq 1 $NUM_ITS); do
+  for i in {1..8}; do
     (
-      inds=$(paste -sd, - < "${BASE_PATH}/analysis/admixture/outputs/k8_pop${i}.txt")
-      process_population "pop${i}" "$inds" 2> pop${i}.stderr
+      pop="pop${i}"
 
-      mv pop${i}/ outputs/outputs$j/pop${i}
+      # inds: full comma-separated list for this population
+      inds=$(paste -sd, - < "${ADMIX_DIR}/k8_${pop}.txt")
+
+      # pick the it-th distinguished individual 
+      dist_file="${ADMIX_DIR}/k8_${pop}_distinguished_individuals.txt"
+      distinguished_ind=$(sed -n "${it}p" "${dist_file}")
+      echo "Processing population: $pop, distinguished individual: $distinguished_ind, iteration: $it"
+
+      process_population "$pop" "$inds" "$distinguished_ind" "$it" 2> "${pop}.stderr"
     ) &
   done
-  wait
 
-  mv *stderr outputs/outputs$j
+  wait
+  mv *.stderr outputs/it${it}/
 done
 
-mv *bed* outputs
 
 # Check the status of the background jobs
 jobs
-[1] 531019
-[2] 531020
-[3] 531021
-[4] 531024
-[5] 531026
-[6] 531028
-[7] 531032
-[8] 531036
+[1] 3852601
+[2] 3852602
+[3] 3852603
+[4] 3852605
+[5] 3852608
+[6] 3852612
+[7] 3852615
+[8] 3852617
