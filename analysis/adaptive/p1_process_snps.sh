@@ -13,7 +13,8 @@ bcftools query -f "%POS\n" ./outputs/58-Sceloporus_bio1ndvi_gea.vcf | wc -l # 1,
 cat ../gea/outputs/bio1ndvi_gea.bed | wc -l # 1,543,125
 
 # Now calculate Plink distances for the new vcf for running GDM
-plink --vcf ./outputs/58-Sceloporus_bio1ndvi_gea.vcf --out ./outputs/58-Sceloporus_bio1ndvi_gea --distance square --const-fid --allow-extra-chr
+# plink --vcf ./outputs/58-Sceloporus_bio1ndvi_gea.vcf --out ./outputs/58-Sceloporus_bio1ndvi_gea --distance square --const-fid --allow-extra-chr
+plink --vcf ./outputs/58-Sceloporus_bio1ndvi_gea.vcf --out ./outputs/58-Sceloporus_bio1ndvi_gea_ibs --distance square 1-ibs --const-fid --allow-extra-chr
 
 # ================= rasterPCA results
 

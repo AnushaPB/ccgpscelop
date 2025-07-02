@@ -240,3 +240,42 @@ scaffold_theme_y <- function() {
     )
   )
 }
+
+#' Import environmental layers of choice for RDA, adaptive index, or genomic offset calculations
+#'
+#' @param type options are "pca" or "bio1ndvi" for BIO1 + NDVI
+#' @param future whether to also import future env layers (defaults to FALSE)
+#'
+#' @return
+#' @export
+get_envlayers <- function(type = "bio1ndvi", future = FALSE) {
+  if (type == "pca") {
+    env_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
+      # terra::project("epsg:3310")
+    names(env_pres) <- paste("env_", names(env_pres), sep = "")
+  }
+  if (type == "bio1ndvi") {
+    bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
+    #  %>% project("epsg:3310")
+    bio1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
+    ndvi <- terra::rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
+    ndvi <- terra::resample(ndvi, bio1, method = "bilinear")
+    env_pres <- c(bio1, ndvi)
+    names(env_pres) <- c("BIO1", "NDVI")
+  }
+
+  if (future) {
+    if (type == "pca") {
+      env_fut_1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
+      env_fut_2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
+      env_fut <- c(env_fut_1, env_fut_2)
+    }
+
+    if (type == "bio1ndvi") {
+      env_fut <- terra::rast(here("data", "env", "future", "env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))
+      names(env_fut) <- c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1", "NDVI")
+    }
+  }
+  if (!future) env_fut <- NULL
+  return(list(env_pres = env_pres, env_fut = env_fut))
+}
