@@ -1,11 +1,11 @@
-get_smcpp <- function(folder = "outputs", K = 9, i = 10){
+get_smcpp <- function(K = 8, i = 10){
   # returns NULL if csv doesn't exist
   safe_csv <- possibly(read.csv)
 
   combos <- expand.grid(K = 1:K, i = 1:i)
 
   get_file <- function(K, i){
-    folder <- paste0("outputs", i)
+    folder <- paste0("it", i)
     path <- here("analysis", "smcpp", "outputs", folder, paste0("pop", K), paste0("pop", K, ".csv"))
     df <- safe_csv(path)
     df$i <- i

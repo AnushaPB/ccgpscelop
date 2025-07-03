@@ -67,14 +67,11 @@ ggplot(trace_vals, aes(x = yearbp, y = value)) +
   scale_color_viridis_c(option = "turbo")
 dev.off()
 
-
 paleovars <- get_paleovars()
 ```
 
 ```{r, fig.width = 13, fig.height = 6}
-smcpp <- 
-  get_smcpp(K = 8, i = 6) %>%
-  group_by(pop, i)
+smcpp <- get_smcpp(K = 8, i = 10)
 ```
 
 ```{r}
@@ -288,7 +285,7 @@ pop_label <-
   summarize(x = mean(X), y = mean(Y)) %>%
   left_join(distinct(select(gg_df_mean, group, pop)))
 
-gg_df2 <- gg_df %>% mutate(pop = factor(pop, levels = 1:9))
+gg_df2 <- gg_df %>% mutate(pop = factor(pop, levels = 1:8))
 
 pop_mean_change <-
   pop_mean_change %>%
@@ -407,7 +404,7 @@ plt5 <-
     legend.position = "none"
   )
 
-pdf(here(plotpath, "evolution_smcpp.pdf"), width = 10, height = 4)
+pdf(here(plotpath, "simple_smcpp.pdf"), width = 11.5, height = 4.5)
 cowplot::plot_grid(plt1, plt5, ncol = 2, rel_widths = c(0.7, 0.3))
 dev.off()
 ```
