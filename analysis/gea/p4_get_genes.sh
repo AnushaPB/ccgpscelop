@@ -9,7 +9,7 @@
 conda activate ccgpscelop
 #conda install -c bioconda bedops
 
-GFF=../../data/annotated_genome/annotation/protein-coding.w_func_relabelled.gff
+GFF=../../data/genome/annotation/complete.genomic.gff
 
 # 1. Extract all gene entries and convert to BED
 grep -P "\tgene\t" $GFF > outputs/all_genes.gff

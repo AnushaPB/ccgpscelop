@@ -1,7 +1,7 @@
 conda activate ccgpscelop
 
-GENOME=../../data/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta
-ANNOTATION=../../data/annotated_genome/annotation/protein-coding.w_func_relabelled.gff
+GENOME=../../data/genome/rSceOcc1.20250428.p_ctg_chr_names.fna
+ANNOTATION=../../data/genome/annotation/complete.genomic.gff
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 
 # Convert GFF to csq format (CHECK THIS)

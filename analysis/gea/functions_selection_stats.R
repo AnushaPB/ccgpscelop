@@ -72,25 +72,24 @@ get_all_genes_bed <- function(){
 }
 
 get_gene_structure <- function(){
+  genes_bed <- get_all_genes_bed()
   genes <- 
-    get_all_genes_bed() %>%
-    mutate(mrna = str_extract(full_name, "ID=GNX-([0-9]+)")) %>%
-    mutate(mrna = str_extract(mrna, "[0-9]+")) %>%
+    genes_bed %>%
     rename(gene_start = start, gene_end = end) %>%
     mutate(gene_name = str_extract(full_name, "Name=([^;]+)")) %>%
     mutate(gene_name = str_replace(gene_name, "Name=", "")) %>%
-    mutate(gene_name = str_remove(gene_name, "\\[.*\\]"))
+    mutate(locus_tag = str_extract(full_name, "locus_tag=([^;]+)")) %>%
+    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", "")) 
 
   path <- here("analysis", "gea", "outputs", "all_exons.bed")
   message("Reading in ", path)
-
   exons <-
     read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE)  %>%
     dplyr::rename(scaffold = V1, exon_start = V2, exon_end = V3, type = V8, info = V10) %>%
-    mutate(mrna = str_extract(info, "Parent=mrna-([0-9]+)")) %>%
-    mutate(mrna = str_extract(mrna, "[0-9]+")) %>%
-    dplyr::select(scaffold, exon_start, exon_end, mrna) %>%
-    left_join(genes, by = c("scaffold", "mrna"))
+    mutate(locus_tag = str_extract(info, "locus_tag=([^;]+)")) %>%
+    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", ""))  %>%
+    dplyr::select(scaffold, exon_start, exon_end, locus_tag) %>%
+    left_join(genes, by = c("scaffold", "locus_tag"))
 
   path <- here("analysis", "gea", "outputs", "all_cds.bed")
   message("Reading in ", path)
@@ -98,18 +97,29 @@ get_gene_structure <- function(){
   cds <-
     read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE) %>%
     rename(scaffold = V1, cds_start = V2, cds_end = V3, info = V10) %>%
-    mutate(mrna = str_extract(info, "Parent=mrna-([0-9]+)")) %>%
-    mutate(mrna = str_extract(mrna, "[0-9]+")) %>%
-    dplyr::select(scaffold, cds_start, cds_end, mrna) %>%
+    mutate(locus_tag = str_extract(info, "locus_tag=([^;]+)")) %>%
+    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", ""))  %>%
+    dplyr::select(scaffold, cds_start, cds_end, locus_tag) %>%
     # Relationship is many to many because exons can have multiple CDS
-    left_join(exons, by = c("scaffold", "mrna"), relationship = "many-to-many") 
+    left_join(exons, by = c("scaffold", "locus_tag"), relationship = "many-to-many") 
 
   head(cds)
 
   # Check that matching worked
   stopifnot(all(complete.cases(cds$full_name)))
 
-  return(cds)
+  # Only keep gene names from database
+  cds_formatted <- 
+    cds %>%
+    mutate(gene_name = case_when(
+      grepl("egapxtmp", gene_name) ~ NA_character_,  # Remove temporary gene names
+      TRUE ~ gene_name
+    ))
+
+  message("Number of unique gene IDs: ", length(unique(cds_formatted$gene_name)))
+  message("Number of unique gene IDs: ", length(genes$gene_name))
+
+  return(cds_formatted)
 }
 
 get_all_genes_uniprotid <- function(){

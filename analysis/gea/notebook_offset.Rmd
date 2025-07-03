@@ -6,7 +6,8 @@ library(tidyverse)
 source(here("general_functions.R"))
 source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
 source(here("analysis", "gea", "functions_selection_stats.R"))
-
+```
+```{r}
 coords <- get_coords(sf = TRUE)
 plotpath <- here("analysis", "gea", "plots")
 adaptive_path <- here("analysis", "gea", "outputs", "scelop_adaptive_env_layers")
@@ -95,6 +96,35 @@ coords$raw_diff <- terra::extract(raw_diff, coords, ID = FALSE)[,1]
 layerCor(c(offset_total, raw_diff), "pearson")$correlation
 cor.test(coords$offset, coords$raw_diff)
 ```
+
+# GDM 
+```{r}
+df <- 
+  read_table(here("data", "ccgp_data_may2025backup", "58-Sceloporus.coords.txt"), col_names = c("SampleID", "x", "y")) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  left_join(get_het())
+
+path <- here("analysis", "gea", "outputs")
+pca_rgb <- rast(here(path, "58-Sceloporus_GDMGEA_pcaRastRGB.tif"))
+gdm_offset <- rast(here(path, "58-Sceloporus_GDMoffset_RCP26.tif"))
+
+df$gdm_offset <- terra::extract(gdm_offset, coords, ID = FALSE)[,1]
+
+plotpath <- here("analysis", "gea", "plots")
+pdf(here(plotpath, "gdm_offset.pdf"), width = 5, height = 5)
+plotRGB(pca_rgb, r = 1, g = 2, b = 3, main = "GDM PCA RGB", axes = FALSE)
+plot(gdm_offset, main = "GDM offset", axes = FALSE, col = viridis::rocket(100, direction = -1))
+ggplot(df, aes(x = gdm_offset, y = Ho)) +
+  geom_point() +
+  geom_smooth(col = "black", method = "lm") +
+  xlab("GDM offset") +
+  ylab("Genome-wide heterozygosity") +
+  ggpubr::stat_cor() +
+  theme_classic()
+dev.off()
+
+```
+
 
 
 # OLD:
