@@ -66,6 +66,8 @@ env_agg <- mask(envstack, get_range())
 # GDM
 
 ```{r}
+plotpath <- here("analysis", "ibdibe", "plots")
+pdf(here(plotpath, "gdm_outputs.pdf"), width = 5, height = 5)
 coords_proj <- 
   gendist_coords[,c("x", "y")] %>% 
   st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
@@ -73,19 +75,21 @@ coords_proj <-
 
 env <- terra::extract(envstack, coords_proj, ID = FALSE)
 
-gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
+gdm <- gdm_do_everything(gendist = genedist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
 
 print(gdm$coeff_df)
 
 gdm_plot_isplines(gdm$model)
 
-maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = TRUE)
+maps <- gdm_map(gdm$model, env_agg,  coords_proj, plot_vars = TRUE)
 
 rgb_mask <- mask(maps$pcaRastRGB, get_range())
 plotRGB(rgb_mask)
 #rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
 #plotRGB(rgb_envonly)
 #points(coords_proj, pch = 1, cex = 1)
+
+plotRGB(maps$pcaRastRGB)
 
 rgb_df <- 
   as.data.frame(rgb_mask, xy = TRUE) %>%
@@ -95,8 +99,6 @@ coords_rgb <-
   cbind(coords_proj, terra::extract(rgb_mask, coords_proj, ID = FALSE)) %>%
   mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
 
-
-pdf(here("analysis", "ibdibe", "plots", "gdm.pdf"), width = 5, height = 5)
 ggplot(rgb_df) +
   geom_sf(data = ca_proj) +
   geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
@@ -104,6 +106,138 @@ ggplot(rgb_df) +
   theme_void() +
   scale_fill_identity() +
   theme(legend.position = "none")
+dev.off()
+```
+
+```{r}
+future <- rast(here("analysis", "gea", "outputs", "scelop_adaptive_env_layers","env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))[[2:3]] %>% project("epsg:3310")
+names(future) <- c("bio1", "ndvi")
+future <- crop(future, envstack)
+future <- mask(future, envstack)
+gdm_offset_map <- predict(gdm$model, envstack, time = TRUE, predRasts = future)
+
+pdf(here(plotpath, "gdm_offset_map.pdf"), width = 5, height = 5)
+plot(gdm_offset_map, axes = FALSE, box = FALSE, col = viridis::rocket(100))
+dev.off()
+
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+model_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+df <- 
+  read_table(here("data", "ccgp_data_may2025backup", "58-Sceloporus.coords.txt"), col_names = c("SampleID", "x", "y")) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  left_join(get_het()) %>%
+  st_transform(3310) 
+  
+df$gdm_offset <- terra::extract(gdm_offset_map, df, ID = FALSE)[,1]
+
+df2 <- model_df %>% left_join(get_coords(sf = TRUE)) %>% st_as_sf()
+df2$bio1 <- terra::extract(envstack[["bio1"]], df2, ID = FALSE)[,1]
+df2$bio1_future <- terra::extract(future[["bio1"]], df2, ID = FALSE)[,1]
+df2$future_change <- df2$bio1_future - df2$bio1
+df2$gdm_offset <- terra::extract(gdm_offset_map, df2, ID = FALSE)[,1]
+
+cor.test(df2$tmean_dif, df2$gdm_offset)
+
+cor.test(df$Ho, df$gdm_offset, method = "pearson")
+
+pdf(here(plotpath, "gdm_offset_vs_pastcc.pdf"), width = 4, height = 4)
+ggplot(df2, aes(x = tmean_dif, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  labs(x = "Past climate change", y = "Genome-wide heterozygosity") +
+  theme_classic() +
+  scale_color_viridis_c(option = "rocket") +
+  #ggpubr::stat_cor(label.y = min(df$Ho, na.rm = TRUE)) +
+  theme(legend.position = "none")
+
+ggplot(df2, aes(x = tmean_dif, y = gdm_offset)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  labs(y = "Future genomic offset", x = "Past climate change (°C)") +
+  theme_classic() +
+  scale_color_viridis_c(option = "rocket") +
+  ggpubr::stat_cor(label.y = min(df2$gdm_offset, na.rm = TRUE)) +
+  theme(legend.position = "none")
+ggplot(df2, aes(x = tmean_dif, y = future_change)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  labs(y = "Future genomic offset", x = "Past climate change (°C)") +
+  theme_classic() +
+  scale_color_viridis_c(option = "rocket") +
+  ggpubr::stat_cor(label.y = min(df2$future_change, na.rm = TRUE)) +
+  theme(legend.position = "none")
+ggplot(df2, aes(x = future_change, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  labs(y = "Ho", x = "Future climate change (°C)") +
+  theme_classic() +
+  scale_color_viridis_c(option = "rocket") +
+  ggpubr::stat_cor(label.y = min(df2$Ho, na.rm = TRUE)) +
+  theme(legend.position = "none")
+dev.off()
+gdm_offset_df <- 
+  as.data.frame(gdm_offset_map, xy = TRUE) %>%
+  filter(lyr1 < max(df$gdm_offset, na.rm = TRUE), lyr1 > min(df$gdm_offset, na.rm = TRUE)) 
+
+pdf(here(plotpath, "gdm_isplines.pdf"), width = 8, height = 3)
+gdm_plot_isplines(gdm$model)
+dev.off()
+
+pdf(here(plotpath, "gdm_maps.pdf"), width = 5, height = 5)
+map <- gdm_map(gdm$model, envstack,  coords_proj, plot_vars = TRUE)
+dev.off()
+
+raw_map_df <-
+  envstack %>%
+  as.data.frame(xy = TRUE) %>%
+  select(bio1, ndvi, x, y) %>%
+  mutate_at(vars(bio1, ndvi), scale) %>%
+  pivot_longer(cols = -c(x, y), names_to = "variable", values_to = "value") %>%
+  mutate(type = "Original env layers")
+
+trans_map_df <- 
+  map$rastTrans %>% 
+  as.data.frame(xy = TRUE) %>% 
+  select(bio1, ndvi, x, y) %>% 
+  mutate_at(vars(bio1, ndvi), scale) %>%
+  pivot_longer(cols = -c(x, y), names_to = "variable", values_to = "value") %>%
+  mutate(type = "Transformed env layers") %>%
+  bind_rows(raw_map_df) 
+
+
+pdf(here(plotpath, "gdm_transform.pdf"), width = 6, height = 6)
+ggplot(trans_map_df) +
+  geom_sf(data = st_transform(ca, 3310)) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  facet_grid(type~variable) +
+  scale_fill_viridis_c(option = "viridis", na.value = NA) +
+  theme_void() +
+  theme(legend.position = "none")
+dev.off()
+
+pdf(here(plotpath, "gdm_offset_vs_het.pdf"), width = 8.5, height = 4)
+plt1 <- 
+  ggplot(gdm_offset_df) +
+  geom_sf(data = st_transform(ca, 3310)) +
+  geom_raster(aes(x = x, y = y, fill = lyr1)) +
+  geom_sf(data = df, aes(fill = gdm_offset), pch = 21, cex = 1.5) +
+  scale_fill_viridis_c(option = "rocket", na.value = NA, direction = -1) +
+  theme_void()  +
+  labs(fill = "Future\ngenomic\noffset") +
+  theme(legend.position = "right") 
+
+plt2 <- 
+  ggplot(df, aes(x = (gdm_offset), y = Ho)) +
+  geom_point(aes(col = gdm_offset)) +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  labs(y = "Genome-wide heterozygosity", x = "Future genomic offset") +
+  theme_classic()+
+  scale_color_viridis_c(option = "rocket") +
+  ggpubr::stat_cor(label.y = min(df$Ho, na.rm = TRUE)) +
+  theme(legend.position = "none")
+
+cowplot::plot_grid(plt2, plt1, nrow = 1, rel_widths = c(1, 1))
 dev.off()
 ```
 
