@@ -370,7 +370,7 @@ mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "c
 mod_df <- 
   get_coords() %>% 
   left_join(get_het("58-Sceloporus_chr.het")) %>%
-  left_join(genes) %>%
+  #left_join(genes) %>%
   left_join(env_mod_df) %>%
   left_join(paleoclim_mod_df) %>%
   left_join(q_mod_df) %>%
@@ -379,7 +379,7 @@ mod_df <-
   left_join(tmean_mod_df) %>%
   # Replace csi_past with csi_custom
   mutate(csi_past = csi_custom) %>%
-  dplyr::select(Ho, Ho_gea, SampleID, geometry, all_of(mod_vars)) %>%
+  dplyr::select(Ho, SampleID, geometry, all_of(mod_vars)) %>%
   drop_na(Ho) %>%
   # REMOVE CHANNEL ISLAND SAMPLES
   filter(!SampleID %in% beckii$SampleID)
@@ -548,25 +548,29 @@ mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
 f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
 
 # Compare error and lag
-errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE) %>% summary()
-lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE) %>% summary()
-  safe_spm <- purrr::safely(spmodel::splm)
-  fit <- safe_spm(f, data = sub_data, spcov_type = "exponential")
+errormod <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE) 
+lagmod <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+spmod <- spmodel::splm(f, data = mod_sf, spcov_type = "exponential") 
 
-# Compare full model and best model
-full_model <- lagsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+errormod %>% broom::tidy() %>% filter(p.value < 0.05) %>% pull(term) # "bio1" "csi_past" "tmean_dif" "Q"
+lagmod %>% broom::tidy() %>% filter(p.value < 0.05) %>% pull(term) # "bio1" "csi_past" "tmean_dif" "Q"          
+spmod %>% broom::tidy() %>% filter(p.value < 0.05) %>% pull(term)  # "gHM" "csi_past" "Q"  
 
-broom::tidy(full_model) 
+AIC(sem_model, slm_model, spmod) # Best model is SEM
+#           df       AIC
+# sem_model 10 -3644.353
+# slm_model 10 -3610.882
+# spmod      3 -3553.513
+
+# Pick best model
+best_model <- errorsarlm(f, data = mod_sf, listw = listw, zero.policy = TRUE)
+
+broom::tidy(best_model) 
 # Significant variables are the same between the full model and the best model
-broom::tidy(full_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) # Q, csi_past, tmean_dif, bio1
-#broom::tidy(best_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
-
-# To keep interpretability, we will use the full model for further analysis
-best_model <- full_model
-summary(best_model)
+broom::tidy(best_model) %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) # Q, csi_past, tmean_dif, bio1
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-r2_alternative <- cor(sem_model$fitted.values, sem_model$y)^2
+r2_alternative <- cor(best_model$fitted.values, best_model$y)^2
 print(r2_alternative) # 61%
 
 # McFadden's pseudo R²
@@ -576,11 +580,7 @@ sem_null <- lagsarlm(Ho ~ 1, data = mod_sf, listw = listw, zero.policy = TRUE)
 ll_model <- as.numeric(logLik(sem_model))
 ll_null <- as.numeric(logLik(sem_null))
 pseudo_r2 <- 1 - (ll_model / ll_null)
-print(pseudo_r2) # -0.02 ... this is an underestimate 
-```
-
-```{r}
-spmodel::splm(f, data = mod_sf, spcov_type = "exponential") %>% summary()
+print(pseudo_r2) # -0.03 ... this is an underestimate 
 ```
 
 ## Variance partioning analysis
@@ -692,7 +692,49 @@ dev.off()
 ```
 
 ```{r}
-model_Ho <- best_model
+sig_vars <- c("csi_past", "tmean_dif", "bio1", "Q")
+plts <- map(sig_vars, ~ggpartial(.x, "Ho", mod_vars, mod_df_imputed, col = .x))
+
+pred_vs_obs <- 
+  ggplot(mod_df_imputed, aes(x = predict(best_model), y = Ho)) +
+  geom_point(col = "lightgray", cex = 0.9) +
+  #geom_abline(intercept = 0, slope = 1) +
+  geom_smooth(method = "lm", col = "black") +
+  theme_classic() +
+  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
+  stat_cor(label.y = min(mod_df_imputed[["Ho"]], na.rm = TRUE))
+
+ho_plot <- 
+  ggplot(mod_df_imputed) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = Ho), cex = 0.9) +
+  theme_void() +
+  scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
+
+env_plot <-
+  map(sig_vars, ~{
+    ggplot(mod_df_imputed) +
+      geom_sf(data = ca) +
+      geom_point(aes(x = x, y = y, col = .data[[.x]]), cex = 0.9) +
+      theme_void() +
+      labs(col = gsub(" ", "\n", make_pretty_names(.x))) +
+      scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9, direction = -1) +
+      theme(legend.position = "right")
+  })
+
+pltlist1 <- c(list(pred_vs_obs), plts)
+pltlist2 <- c(list(ho_plot), env_plot)
+pdf(here(plotpath, "partial_plots_Ho.pdf"), width = 16, height = 6)
+a <- plot_grid(plotlist = pltlist1, nrow = 1)
+b <- plot_grid(plotlist = pltlist2, nrow = 1, align = "hv")
+plot_grid(a, b, ncol = 1)
+dev.off()
+
+
+ ```
+
+```{r}
+model_Ho <- full_model
 ```
 
 

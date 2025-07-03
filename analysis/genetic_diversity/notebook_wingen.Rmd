@@ -32,6 +32,7 @@ knitr::opts_chunk$set(
 
 source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
 source(here("general_functions.R"))
+plotpath <- here("analysis", "genetic_diversity", "plots")
 ```
 
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
@@ -68,10 +69,7 @@ ca_proj <- st_transform(ca, 3310)
 lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
 
 # Calculate windowed mean of Ho
-window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 9, stat = mean, na.rm = TRUE)
-
-# Plot windowed mean of Ho
-ggplot_gd(window_Ho, bkg = ca_proj, col = magma(100))
+window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 5, min_n = 1, stat = mean, na.rm = TRUE)
 
 # Perform kriging interpolation on windowed mean of Ho
 krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
@@ -81,13 +79,48 @@ count_mask <- resample(window_Ho$sample_count, krig_Ho)
 mask_Ho <- mask_gd(krig_Ho, ca_proj)
 mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 0.1)
 
-# Plot masked kriging result
+# GAM interpolation
+library(mgcv)
+df <- as.data.frame(window_Ho, xy = TRUE, na.rm = TRUE)
+names(df)[3] <- "diversity"  # make sure the third column is named for the model
+gam_mod <- mgcv::gam(diversity ~ s(x, y, bs = "tp", k = 100),
+               data   = df,
+               method = "REML")
+pred_df <- as.data.frame(lyr, xy = TRUE, na.rm = FALSE)
+names(pred_df)[3] <- "diversity"  # make sure the third column is named for the model
+r_pred <- predict(gam_mod, newdata = pred_df)
+gam_Ho <- lyr
+gam_Ho[] <- r_pred
+gam_Ho <- mask(lyr, ca_proj)
+
+tps_mod <- fields::Tps(
+  x          = as.matrix(pred_df[, c("x", "y")]),
+  Y          = pred_df$diversity
+)
+grd_df <- terra::as.data.frame(lyr, xy = TRUE, na.rm = FALSE)
+pred_vals <- fields::predict.Krig(
+  object = tps_mod,
+  x      = as.matrix(grd_df[, c("x", "y")])
+)
+grd_df$Ho <- pred_vals
+out <- terra::rast(grd_df[, c("x", "y", "Ho")], crs = terra::crs(window_Ho))                
+
+# Plot results
+pdf(here(plotpath, "wingen.pdf"), width = 7, height = 7)
+
 ggplot_gd(mask_Ho, bkg = ca_proj, col = mako(100)) +
   labs(fill = "Ho")
 
+ggplot_gd(gam_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "Block kriged Ho")
+
+ggplot_gd(gam_Ho, bkg = ca_proj, col = mako(100)) +
+  labs(fill = "GAM Ho")
 
 ggplot_gd(window_Ho, bkg = ca_proj, col = mako(100)) +
   labs(fill = "Ho")
+
+dev.off()
 ```
 
 # ROH
