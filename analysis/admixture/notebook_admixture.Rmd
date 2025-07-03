@@ -121,6 +121,27 @@ pdf(here(plotpath, "kriging.pdf"), width = 5, height = 5)
 tess_plot(krig_admix)
 dev.off()
 ```
+
+## Potentially incorrect coordinates
+```{r}
+df8 <- 
+  df %>% 
+  filter(K == 8) %>%
+  distinct(geometry, SampleID, cluster) %>%
+  bind_cols(st_coordinates(.))
+problem_coords <- c("Sceocc_HBS142161", "Sceocc_HBS142159")
+problem_df <- df8 %>% filter(SampleID %in% problem_coords)
+problem_df
+pdf(here(plotpath, "potentially_incorrect_coordinates.pdf"), width = 7, height = 7)
+ggplot(df8) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  geom_sf(data = problem_df, aes(col = cluster), size = 3) +
+  ggrepel::geom_text_repel(data = problem_df, aes(x = X, y = Y, label = SampleID), size = 3) +
+  theme_void()
+dev.off()
+```
+## Write out Q files 
 ```{r}
 # FOR LINEAR MODELS: 
 # Write out Q files for K = 8
