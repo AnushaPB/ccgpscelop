@@ -1,38 +1,5 @@
 # Import/export functions -------------------------------------------------
 
-#' Import environmental layers of choice for RDA, adaptive index, or genomic offset calculations
-#'
-#' @param type options are "rasterPCs" or "ind_layers" for BIO1 + NDVI
-#' @param future whether to also import future env layers (defaults to FALSE)
-#'
-#' @return
-#' @export
-import_env_files <- function(type = "rasterPCs", future = FALSE) {
-  if (type == "rasterPCs") {
-    env_pres <- terra::rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"))
-    names(env_pres) <- paste("env_", names(env_pres), sep = "")
-  }
-  if (type == "ind_layers") {
-    env_pres <- terra::rast(here("data", "env", "env_pres.tif"))
-    names(env_pres) <- c("BIO1", "NDVI")
-  }
-
-  if (future) {
-    if (type == "rasterPCs") {
-      env_fut_1 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[1], "_V.2.1_pca.tif"))
-      env_fut_2 <- terra::rast(paste0(here("data", "env", "future"), "/CHELSA_2071-2100_", cap_model, "_", ssp[2], "_V.2.1_pca.tif"))
-      env_fut <- c(env_fut_1, env_fut_2)
-    }
-
-    if (type == "ind_layers") {
-      env_fut <- terra::rast(here("data", "env", "future", "env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))
-      names(env_fut) <- c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1", "NDVI")
-    }
-  }
-  if (!future) env_fut <- NULL
-  return(list(env_pres = env_pres, env_fut = env_fut))
-}
-
 #' Export raw values from RDA model result
 #'
 #' @param mod RDA model object

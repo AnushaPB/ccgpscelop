@@ -20,13 +20,14 @@ prefix = args[3] # "58-Sceloporus_bio1ndvi_gdmgea" or "58-Sceloporus_bio1ndvi_gd
 # Get sampling coordinates and env layers
 coords_xy <- get_coords()
 
-ids <- read_tsv(here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist.id"),
+ids <- read_tsv(here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea_ibs.mdist.id"),
                 col_names = c("tmp", "SampleID")) %>% dplyr::select(SampleID)
+# ids <- read_tsv(here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist.id"),
+#                 col_names = c("tmp", "SampleID")) %>% dplyr::select(SampleID)
 coords_xy <- coords_xy %>% filter(SampleID %in% ids$SampleID)
 write_tsv(coords_xy, here("analysis", "adaptive", "outputs", "GDM_GEA_coords.txt"))
 
-if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = FALSE)
-if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = FALSE)
+envlayers <- get_envlayers(type = gea_method, future = FALSE)
 
 # Extract and standardize environmental variables and make into dataframe
 coords <- get_coords(sf = TRUE)
@@ -63,63 +64,21 @@ colSums(is.na(mod_df_imputed))[colSums(is.na(mod_df_imputed)) > 0]
 # Extract imputed env values for all samples
 env <- mod_df_imputed %>% st_drop_geometry() %>% dplyr::select(ID, BIO1, NDVI) %>% as.data.frame()
 
-# Retrieve gendists calculated using only RDA outliers
-gendist <- algatr::gen_dist(plink_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist"), 
-                            plink_id_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist.id"), 
-                            dist_type = "plink")
 
-gdm_wgeo <- gdm_run(
+# Process genetic distances -----------------------------------------------
+
+# Retrieve gendists calculated using only RDA outliers
+gendist <- algatr::gen_dist(plink_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea_ibs.mdist"), 
+                            plink_id_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea_ibs.mdist.id"), 
+                            dist_type = "plink")
+# gendist <- algatr::gen_dist(plink_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist"), 
+#                             plink_id_file = here("analysis", "adaptive", "outputs", "58-Sceloporus_bio1ndvi_gea.dist.id"), 
+#                             dist_type = "plink")
+
+gdm_result <- gdm_run(
   gendist = as.matrix(gendist),
   coords = coords_xy %>% dplyr::select(x, y) %>% as.matrix(),
   env = env %>% dplyr::select(BIO1, NDVI),
   model = "full",
   scale_gendist = TRUE)
-saveRDS(gdm_wgeo, here("analysis", "adaptive", "outputs", "GDM_GEA_model.RDS"))
-
-# gdm_wgeo_best <- gdm_run(
-#   gendist = as.matrix(gendist),
-#   coords = coords_xy %>% dplyr::select(x, y) %>% as.matrix(),
-#   env = env,
-#   model = "best",
-#   scale_gendist = TRUE
-# )
-# vars <- gdm::gdm.varImp(gdmData,
-#     geo = FALSE,
-#     splines = NULL,
-#     nPerm = 10,
-#     predSelect = TRUE
-#   )
-
-
-
-
-# Run GDM without geo dists
-# Create GDM formatted data objects
-formatted_data <- 
-  gdm_format(
-    gendist = gendist, 
-    coords = coords_xy %>% as.matrix(), 
-    env = env,
-    scale_gendist = TRUE, 
-    geodist_type = "Euclidean", 
-    distPreds = NULL, 
-    dist_lyr = NULL,
-    gdmPred = TRUE,
-    gdmGen = TRUE
-    )
-  
-gdmData <- formatted_data$gdmData
-gdmPred <- formatted_data$gdmPred
-gdmGen <- formatted_data$gdmGen
-
-# Vector of sites (for individual-based sampling, this is just assigning 1 site to each individual)
-site <- 1:nrow(gendist)
-
-# RUN GDM -------------------------------------------------------------------------------------------------------
-# Remove any remaining incomplete cases
-cc <- stats::complete.cases(gdmData)
-if (!all(cc)) {
-  gdmData <- gdmData[cc, ]
-  warning(paste(sum(!cc), "NA values found in gdmData, removing;", sum(cc), "values remain"))
-  }
-gdm_nogeo <- gdm::gdm(gdmData, geo = TRUE)
+saveRDS(gdm_result, here("analysis", "adaptive", "outputs", "GDM_GEA_model.RDS"))

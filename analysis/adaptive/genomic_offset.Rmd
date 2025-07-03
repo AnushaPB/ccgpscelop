@@ -47,7 +47,6 @@ prefix = "58-Sceloporus_bio1ndvi_gea" # "58-Sceloporus_bio1ndvi_gea_genes_nonsyn
 # dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = TRUE)
 dat_mod <- import_rda(output_path = path, suffix = paste0(prefix, "_mod"), rds_obj = FALSE)
 
-
 # Retrieve coords for samples on which RDA was run
 coords <- read_tsv(here(path, "RDA_genes_coords.txt"), col_names = TRUE)
 ca <- get_ca()
@@ -316,11 +315,11 @@ cors_lyr_85 # 0.9954994
 
 ```{r}
 coords <- read_tsv(here("analysis", "adaptive", "outputs", "GDM_GEA_coords.txt"))
-# If `gdm_wgeo` isn't loaded, do:
-# gdm_wgeo <- readRDS(here("analysis", "adaptive", "outputs", "GDM_GEA_model.RDS"))
+# If `gdm_result` isn't loaded, do:
+gdm_result <- readRDS(here("analysis", "adaptive", "outputs", "GDM_GEA_model.RDS"))
 
-if (gea_method == "pca") envlayers <- import_env_files(type = "rasterPCs", future = TRUE)
-if (gea_method == "bio1ndvi") envlayers <- import_env_files(type = "ind_layers", future = TRUE)
+envlayers <- get_envlayers(type = gea_method, future = TRUE)
+
 # Extract layers
 env_pres <- envlayers$env_pres
 env_fut_26 <- terra::subset(envlayers$env_fut, c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp126_V.2.1", "NDVI"))
@@ -348,27 +347,29 @@ terra::compareGeom(env_pres[[1]],
 Run GDM-based offset:
 
 ```{r}
-gdmoff_26 <- predict.gdm(object = gdm_wgeo$model,
+gdmoff_26 <- predict_gdm(object = gdm_result$model,
                          data = env_pres,
                          time = TRUE,
                          predRasts = env_fut_26,
-                         filename = here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset_RCP26.tif"))
+                         filename = here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset_RCP26_IBSdist.tif"),
+                         overwrite = TRUE)
 
-gdmoff_85 <- predict.gdm(object = gdm_wgeo$model,
+gdmoff_85 <- predict_gdm(object = gdm_result$model,
                          data = env_pres,
                          time = TRUE,
                          predRasts = env_fut_26,
-                         filename = here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset_RCP85.tif"))
+                         filename = here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMoffset_RCP85_IBSdist.tif"),
+                         overwrite = TRUE)
 ```
 
 Plot GDM results
 
 ```{r}
-map <- custom_gdm_map(gdm_wgeo$model, env_pres, coords %>% dplyr::select(x, y))
+map <- custom_gdm_map(gdm_result$model, env_pres, coords %>% dplyr::select(x, y))
 # GDM PCA layers
-writeRaster(map$pcaRastRGB, here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMGEA_pcaRastRGB.tif"))
+writeRaster(map$pcaRastRGB, here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMGEA_pcaRastRGB_IBSdist.tif"))
 # GDM-transformed raster layers
-writeRaster(map$rastTrans, here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMGEA_rastTrans.tif"))
+writeRaster(map$rastTrans, here("analysis", "adaptive", "outputs", "58-Sceloporus_GDMGEA_rastTrans_IBSdist.tif"))
 
 # GDM rainbow map
 p_gdm_rainbow <- ggplot() +
@@ -383,7 +384,7 @@ p_vars <-
                 x = "PC1", y = "PC2", 
                 scl = 1, display_axes = FALSE)
 
-pdf(here("analysis", "adaptive", "plots", "58-Sceloporus_GDMGEA_rainbow.pdf"))
+pdf(here("analysis", "adaptive", "plots", "58-Sceloporus_GDMGEA_rainbow_IBSdist.pdf"))
 plot_grid(p_gdm_rainbow, p_vars, nrow = 1, rel_widths = c(2, 1))
 dev.off()
 ```
@@ -391,6 +392,8 @@ dev.off()
 Plot GDM-based offset
 
 ```{r}
+ca <- get_ca()
+
 p_gdm_offset_26 <- ggplot() +
   geom_sf(data = ca, fill = "lightgrey") +
   geom_spatraster(data = gdmoff_26) +
@@ -418,7 +421,7 @@ p_gdm_offset_85 <- ggplot() +
         panel.background = element_blank(), strip.text = element_text(size = 11))
 
 
-pdf(here("analysis", "adaptive", "plots", "58-Sceloporus_GDMGEA.pdf"), width = 20, height = 8)
+pdf(here("analysis", "adaptive", "plots", "58-Sceloporus_GDMGEA_IBSdist.pdf"), width = 20, height = 8)
 plot_grid(p_gdm_offset_26, p_gdm_offset_85, nrow = 1)
 dev.off()
 ```
