@@ -28,16 +28,14 @@ dem <- get_dem(r= TRUE)
 ```
 
 ```{r}
-# Get beckii sample IDs
-beckii <- read_table(here("data", "beckii_sampleids.txt"), col_names = "SampleID")
-
 # Get genome-wide heterozygosity
-het <- 
-  get_het("58-Sceloporus_chr.het") %>%
-  filter(!SampleID %in% beckii$SampleID) # TEMPORARY REMOVE BECKII
+het <- get_het("58-Sceloporus_chr.het") 
+
+# Make sure you have the expected number of samples
+stopifnot(nrow(het) == 259)
 
 # Count number of sites used to calculate heterozygosity
-mean(het$`N(NM)`, na.rm = TRUE) # 61283344
+mean(het$`N(NM)`, na.rm = TRUE) # 59955192
 
 # Get adaptive heterozygosity
 genes <- 
@@ -47,7 +45,7 @@ genes <-
   dplyr::select(SampleID, Ho_gea) 
 ```
 
-# Hypothesis 1: Genetic diversity explained by paleoclimate
+# Hypothesis 1: Genetic diversity explained by paleoclimate stability
 
 ```{r}
 # Get current climate data (NOTE: not using paleoclim data because they use V1.2 instead of V2.1)
@@ -64,7 +62,7 @@ lig <- get_paleovars("lig", cache = TRUE)$lig$bio_1/10
 paleovars <- get_paleovars(c("lh", "mh", "eh", "yds", "ba", "hs1", "lig", "mis19"))
 paleobio1 <- map(paleovars, ~.x$bio_1) %>% rast()/10
 
-# Calculate climate change
+# Calculate climate change over different time periods
 cur_lgm <- cur - lgm
 names(cur_lgm) <- "cur_lgm"
 # Note: LIG is lower resolution than current and LGM data, so we need to resample it
@@ -73,11 +71,15 @@ names(lgm_lig) <- "lgm_lig"
 
 # Calculate climate stability
 chelsabio1 <- list(cur, lgm)
-csi_stack <- c(as.list(chelsabio1), as.list(paleobio1)) %>% map(~resample(.x, cur)) %>% rast()
-names(csi_stack)
+# Resample the higher resolution data (CHELSA) to match the lower resolution (rpaleoclim)
+# This is the most conservative approach to avoid over-interpreting fine-scale variation 
+csi_stack <- 
+  c(as.list(chelsabio1), as.list(paleobio1)) %>% 
+  map(~resample(.x, paleobio1[[1]])) %>% 
+  rast()
 
-# Calculate the variance of the four raster stacks
-csi_custom <- app(csi_stack, var, na.rm = FALSE)
+# Calculate the standard deviation over the stack of rasters
+csi_custom <- app(csi_stack, sd, na.rm = FALSE)
 
 # Scale CSI raster from 0 to 1 and subtract from 1 to get higher values = more stable
 csi_custom[] <- 1 - scales::rescale(csi_custom[], to = c(0, 1), na.rm = TRUE)
@@ -95,16 +97,15 @@ paleoclim_mod_df <-
 cor(paleoclim_mod_df[, - 1], use = "pairwise.complete.obs")
 ```
 ```{r}
-pdf(here(plotpath, "paleoclim_test.pdf"))
+pdf(here(plotpath, "paleoclim_test.pdf"), width = 10, height = 10)
 test_df <- left_join(paleoclim_mod_df, het) %>% left_join(coords) %>% st_as_sf()
 
 ggplot(test_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = Ho)) +
-  scale_color_viridis_c(option = "turbo", end = 0.1, begin = 0.9) +
-  theme_void() 
-
-gglm("csi_custom", "Ho", test_df)
+  geom_point(aes(x = csi_custom, y = Ho), inherit.aes = FALSE) +
+  geom_smooth(aes(x = csi_custom, y = Ho), method = "lm", col = "green") +
+  stat_smooth(aes(x = csi_custom, y = Ho), method = "gam", formula = y ~ s(x, k = 3), col = "blue") +
+  stat_smooth(aes(x = csi_custom, y = Ho), method = "lm", formula = y ~ poly(x, 2), col = "red", linetype = "dashed") +
+  theme_classic()
 dev.off()
 ```
 
