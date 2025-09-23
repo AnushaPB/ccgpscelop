@@ -170,9 +170,10 @@ lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_
 lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
 
 # Add a new column to coords indicating whether each point is inside the LGM glacial extent
+glacier_coords <- coords %>% st_transform(st_crs(lgm_glaciers))
 glacier_mod_df <- 
   coords %>%
-  mutate(glacier = as.numeric(lengths(st_within(coords, lgm_glaciers)) > 0)) %>%
+  mutate(glacier = as.numeric(lengths(st_within(glacier_coords, lgm_glaciers)) > 0)) %>%
   st_drop_geometry()
 ```
 
@@ -248,8 +249,8 @@ tmean_cur_r <-
 tmean_dif_r <- tmean_cur_r - tmean_his_r
 
 # Crop to california and mask
-tmean_dif_r <- crop(tmean_dif_r, ca)
-tmean_dif_r <- mask(tmean_dif_r, st_transform(ca, st_crs(tmean_dif_r)))
+tmean_dif <- crop(tmean_dif_r, ca)
+tmean_dif <- mask(tmean_dif, st_transform(ca, st_crs(tmean_dif_r)))
 
 # Calculate change
 tmean_mod_df <- 
@@ -382,7 +383,7 @@ dev.off()
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier_factor", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "Q")
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "Q")
 
 # GLS can't handle 0 distances, so take the average of the coordinates
 mod_sf_unique <- 
@@ -483,7 +484,7 @@ print(sig_vars_by_model)
 # Fit final model 
 ```{r}
 # Create formula
-f <- formula(paste0("Ho ~", paste(mod_vars, collapse = " + ")))
+f <- formula("Ho ~ NDVI + gHM +  csi_past + glacier_factor + Q + tmean_dif + bio1")
 
 # Fit model
 final_model <-  gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
