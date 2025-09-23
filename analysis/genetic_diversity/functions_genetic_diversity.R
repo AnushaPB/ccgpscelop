@@ -45,6 +45,19 @@ get_roh <- function(){
   return(roh)
 }
 
+# Impute NA values for extracted values using bilinear interpolation
+# x - imput vector of extracted values
+# r - raster from which values were extracted
+# coords - coordinates of the points where values were extracted
+# Checks which values are NA and replaces them with bilinear interpolation from the raster
+bilinear_impute <- function(x, r, coords) {
+  na_vals <- which(is.na(x))
+  if (length(na_vals) > 0) {
+    message("Imputing ", length(na_vals), " missing values")
+    x[na_vals] <- terra::extract(r, coords[na_vals,], ID = FALSE, method = "bilinear")[,1]
+  }
+  return(x)
+}
 
 geosummarize <- function(coords, stat = "Ho", res = 50000){
   # transform coords
@@ -66,8 +79,6 @@ geosummarize <- function(coords, stat = "Ho", res = 50000){
     st_transform(4326)
 
 }
-
-
 
 spatial_dredge <- function(full_formula, data, coords = c("x", "y"), 
                           random = "~ 1 | dummy", method = "ML", corFunction = corExp) {
