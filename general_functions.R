@@ -1,21 +1,100 @@
 get_ca <- function() {
   # Load the U.S. state boundaries data
   states <- tigris::states(cb = TRUE)
+
   # Extract the boundary of California (CA)
   ca <- states[states$STUSPS == "CA", "STUSPS"]
   #ca <- st_read(here("data", "ca_state", "CA_State.shp"))
   #ca <- sf::st_transform(ca, sf::st_crs(4326))
-  return(ca)
+  
+  # Remove islands by taking the largest polygon
+  ca_parts <- st_cast(ca, "POLYGON")
+  ca_parts$area <- st_area(ca_parts)
+  ca_mainland <- ca_parts[which.max(ca_parts$area), ]
+
+  return(ca_mainland)
+}
+
+get_corrected_coords <- function() {
+  cc <- 
+    readxl::read_excel(here("data", "CCGP_SCOC_coordfixes.xlsx")) %>% 
+    dplyr::select(SampleID = SequenceID, x = Longitude1, y = Latitude1) 
 }
 
 get_coords <- function(sf = FALSE) {
   # sample coords
   coords <- read_table(here("data", "ccgp_data", "58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
+
+  # CORRECTED COORDS:
+  cc <- get_corrected_coords()
+
+  # Add corrected coordinates
+  coords <- 
+    coords %>%
+    left_join(cc, by = "SampleID") %>%
+    mutate(
+      x = ifelse(is.na(x.y), x.x, x.y),
+      y = ifelse(is.na(y.y), y.x, y.y)
+    ) %>%
+    select(SampleID, x, y)
+
+  # Check that coordinates were correctly replaced
+  stopifnot(coords %>% filter(SampleID == "Sceocc_HBS142159") %>% pull(y) == cc %>% filter(SampleID == "Sceocc_HBS142159") %>% pull(y))
+
+  # S. beckii samples
+  beckii_samples <- 
+    c(
+      "Scelocci_CCGPMC_MW01-3-14",
+      "Scebec_7687",
+      "Scebec_7727",
+      "Scebec_7457",
+      "Scebec_7499",
+      "Scebec_7548",
+      "Scebec_7553"
+    )
+
+  # Unknown provenance
+  unknown_samples <- "Scelocci_CHI1382_DAW5-46-21"
+
+  # Potenitally swapped samples
+  swapped_samples <- c("Scelocci_CAS213197", "Scelocci_CAS214858")
+
+  # Filter for samples in the VCF
+  fam <- read_table(here("data", "ccgp_data", "58-Sceloporus_complete_coords_annotated.fam"), col_names = FALSE)
+  
+  # Identify samples not in vcf
+  ndropped <- length(setdiff(coords$SampleID, fam$X2))
+
+  # Filter to samples in vcf
+  coords <- coords %>% filter(SampleID %in% fam$X2)
+
+  message(
+    "Removing: ", length(beckii_samples), " S. beckii samples, ", 
+    length(unknown_samples), " unknown provenance sample, and ", 
+    length(swapped_samples), " potentially swapped samples",
+    "\nNumber of samples dropped from VCF during QC: ", ndropped
+  )
+  
+  # Remove beckii, unknown provenance sample, and potentially swapped samples
+  coords <-
+    coords %>%
+    filter(!SampleID %in% c(beckii_samples, unknown_samples, swapped_samples))
+
   if (sf) {
     coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326)
   }
+  
+  message(nrow(coords), " samples with coordinates")
+
   return(coords)
+}
+
+get_range <- function(){
+  range_map <- 
+    st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>% 
+    st_transform(3310) %>%
+    st_intersection(get_ca() %>% st_transform(3310)) 
 }
 
 get_dem <- function(r = FALSE) {
@@ -77,7 +156,7 @@ get_biokey <- function(){
   }
 
 get_pops <- function(){
-  path <- here("analysis", "admixture", "outputs", "Q9.csv")
+  path <- here("analysis", "admixture", "outputs", "Q8.csv")
   message("Reading in ", path)
   pop_df <- read_csv(path) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
 }
@@ -89,11 +168,6 @@ get_pop_cols <- function(){
   names(cs2) <- c("9", "8", "6", "2", "3")
   cs <- c(cs1, cs2)
   return(cs)
-}
-
-get_range <- function(){
-  sf::st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1")) %>% 
-    st_transform(3310)
 }
 
 gglm <- function(x, y, df, col = NULL){
@@ -192,7 +266,7 @@ make_pretty_names <- function(vars){
     if (x == "eh_lgm") return("Paleoclimate change\n(EH - LGM)")
     if (x == "csi_custom") return("Temperature stability\n(MIS19 to CUR)")
     if (grepl("bio1", x)) return("Contemporary temperature")
-    if (grepl("csi_past", x)) return("Past climate stability")
+    if (grepl("csi_past", x)) return("Paleoclimate stability")
     if (grepl("csi_future", x)) return("Future climate stability")
     if (grepl("gHM", x)) return("Human modification")
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
