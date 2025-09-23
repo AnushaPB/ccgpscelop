@@ -12,8 +12,10 @@ library(here)
 library(algatr)
 library(terra)
 library(sf)
+library(cowplot)
 source(here("general_functions.R"))
-source(here("analysis", "ibdibe", "functions_gendist.R"))
+source(here("analysis", "ibdibe", "functions_ibdibe.R"))
+plotpath <- here("analysis", "ibdibe", "plots")
 ```
 
 ```{r}
@@ -23,17 +25,16 @@ format_dist()
 
 ```{r}
 ca <- get_ca()
+range_map <- get_range()
 coords <- get_coords()
-rm_inds <- c("JEM16-001-S14_na", "Scelocci_CCGPMC_MW01-3-14", "Scelocci_CHI1382_DAW5-46-21")
 ```
 
 
 ```{r}
 gendist <- get_gendist() 
-gendist <- gendist[!rownames(gendist) %in% rm_inds, !colnames(gendist) %in% rm_inds]
+stopifnot(dim(gendist) == c(259, 259))
 
 genedist <- get_genedist()
-genedist <- genedist[!rownames(genedist) %in% rm_inds, !colnames(genedist) %in% rm_inds]
 
 gendist_coords <- 
   coords %>% 
@@ -46,7 +47,6 @@ stopifnot(gendist_coords$SampleID == row.names(genedist))
 ```
 
 ```{r}
-
 envstack <- 
   rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1_pca.tif")) %>%
   terra::project("epsg:3310")
@@ -57,7 +57,7 @@ bio1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
 ndvi <- rast(here("data", "env", "california_ndvi_mean_2000_2020.tif")) %>% project("epsg:3310")
 ndvi <- resample(ndvi, bio1, method = "bilinear")
 envstack <- c(bio1, ndvi)
-names(envstack) <- c("bio1", "ndvi")
+names(envstack) <- c("Temperature", "NDVI")
 env_agg <- mask(envstack, get_range())
 #plot(envstack, axes = FALSE, box = FALSE)
 
@@ -65,9 +65,7 @@ env_agg <- mask(envstack, get_range())
 
 # GDM
 
-```{r}
-plotpath <- here("analysis", "ibdibe", "plots")
-pdf(here(plotpath, "gdm_outputs.pdf"), width = 5, height = 5)
+```{r, fig.width = 5, fig.height = 5}
 coords_proj <- 
   gendist_coords[,c("x", "y")] %>% 
   st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
@@ -75,38 +73,63 @@ coords_proj <-
 
 env <- terra::extract(envstack, coords_proj, ID = FALSE)
 
-gdm <- gdm_do_everything(gendist = genedist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
+gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
 
 print(gdm$coeff_df)
 
-gdm_plot_isplines(gdm$model)
+pdf(here("gdm_out.pdf"))
+maps <- gdm_map(gdm$model, env_agg, coords_proj, plot_vars = FALSE)
+dev.off()
 
-maps <- gdm_map(gdm$model, env_agg,  coords_proj, plot_vars = TRUE)
-
-rgb_mask <- mask(maps$pcaRastRGB, get_range())
-plotRGB(rgb_mask)
-#rgb_envonly <- stack_to_rgb(maps$rastTrans[[3:5]])
-#plotRGB(rgb_envonly)
-#points(coords_proj, pch = 1, cex = 1)
-
-plotRGB(maps$pcaRastRGB)
-
-rgb_df <- 
-  as.data.frame(rgb_mask, xy = TRUE) %>%
-  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
 ca_proj <- ca %>% st_transform(3310) 
 coords_rgb <-
-  cbind(coords_proj, terra::extract(rgb_mask, coords_proj, ID = FALSE)) %>%
+  cbind(coords_proj, terra::extract(maps$pcaRastRGB, coords_proj, ID = FALSE)) %>%
+  mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1)))) %>%
+    drop_na()
+
+
+rgb_df <- 
+  as.data.frame(maps$pcaRastRGB, xy = TRUE) %>%
   mutate(across(starts_with("PC"), ~ scales::rescale(.x, to = c(0, 1))))
 
-ggplot(rgb_df) +
+rgb_map <-
+ ggplot(rgb_df) +
   geom_sf(data = ca_proj) +
   geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
-  geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 0.7) +
+  geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 0.7, cex = 3) +
   theme_void() +
   scale_fill_identity() +
   theme(legend.position = "none")
+
+rgb_legend <- 
+  gdm_pc(gdm$model, env_agg, coords_proj, scl = 0.6) +
+  theme(
+    plot.background = element_rect(fill = NA, color = NA),       # transparent background
+    panel.background = element_rect(fill = NA, color = NA)
+  ) +
+  coord_equal(clip = "off")
+
+rgb_plt <- 
+  ggdraw() +
+  draw_plot(rgb_map) +  # main plot
+  draw_plot(rgb_legend, 
+            x = 0.5, y = 0.5, 
+            width = 0.45, height = 0.45)  # inset
+
+```
+```{r}
+plt1 <- gdm_plot_diss(gdm$model) 
+plt2 <- gdm_plot_isplines(gdm$model, env = env, coords = coords, scales = "free_x", nrow = 1)
+group1 <- plot_grid(plt1, plt2, ncol = 1, labels = c("A", "B"))
+
+pdf(here(plotpath, "gdm_outputs.pdf"), width = 15, height = 7)
+plot_grid(group1, rgb_plt, ncol = 2, rel_widths = c(1, 0.8), labels = c("", "C")) 
 dev.off()
+
+png(here(plotpath, "gdm_outputs.png"), width = 15*300, height = 7*300, res = 300)
+plot_grid(group1, rgb_plt, ncol = 2, rel_widths = c(1, 0.8), labels = c("", "C"))
+dev.off()
+
 ```
 
 ```{r}
@@ -272,9 +295,9 @@ mmrr_df <-
   mutate(var = 
     case_when(
       var == "geodist" ~ "Geographic distance",
-      var == "PC1" ~ "Env. PC1 distance",
-      var == "PC2" ~ "Env. PC2 distance",
-      var == "PC3" ~ "Env. PC3 distance")
+      var == "ndvi" ~ "NDVI distance",
+      var == "bio1" ~ "Temperature distance"
+    )
   )
 
 mod_xy <- 
@@ -289,13 +312,13 @@ mod_df <-
   mutate(var = 
     case_when(
       var == "geodist" ~ "Geographic distance",
-      var == "PC1" ~ "Env. PC1 distance",
-      var == "PC2" ~ "Env. PC2 distance",
-      var == "PC3" ~ "Env. PC3 distance")
+      var == "ndvi" ~ "NDVI distance",
+      var == "bio1" ~ "Temperature distance"
+    )
   ) %>%
   left_join(mod_xy, by = "var")
 
-png(here("analysis", "ibdibe", "plots", "mmrr.png"), width = 6.5, height = 6, units = "in", res = 300)
+png(here("analysis", "ibdibe", "plots", "mmrr.png"), width = 8, height = 3, units = "in", res = 300)
 ggplot(mmrr_df, aes(x = X, y = Y)) +
   geom_hex(bins = 50) +
   scale_fill_viridis_c(option = "magma", na.value = NA) +
