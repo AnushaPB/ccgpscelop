@@ -144,6 +144,10 @@ dev.off()
 hindcast_mean <- mean(hindcast, na.rm = FALSE) 
 paleoclim_mod_df$sdm_stability <- terra::extract(hindcast, coords, ID = FALSE)[,1]
 all(!is.na(paleoclim_mod_df$sdm_stability)) 
+
+test <- left_join(paleoclim_mod_df, het)
+cor(test$sdm_stability, test$Ho, use = "pairwise.complete.obs") # 0.42
+cor(test$csi_past, test$Ho, use = "pairwise.complete.obs") # 0.36
 ```
 
 # Hypothesis 2: Genetic diversity explained by admixture
@@ -176,6 +180,7 @@ env_mod_df <- data.frame(
 print(colSums(is.na(env_mod_df)))
 
 # Some coastal points have NA values for gHM and bio1, so use a bilinear approach to get take the average of the four nearest raster cells
+# Note: This function only imputes missing values, not all values
 env_mod_df$gHM <- bilinear_impute(env_mod_df$gHM, ghm, coords)
 env_mod_df$bio1 <- bilinear_impute(env_mod_df$bio1, bio1, coords)
 
@@ -186,9 +191,11 @@ print(colSums(is.na(env_mod_df)))
 # Hypothesis 4: Genetic diversity explained by glaciation
 ```{r}
 lgm_glaciers <- st_read(here("data", "env", "Glaciotect_NA_lgm", "shp", "LGM_maxextent.shp"))
+
 # Note: have to first intersect and then transform otherwise you get a node error
 lgm_glaciers <- st_intersection(lgm_glaciers, st_transform(ca, crs = st_crs(lgm_glaciers)))
 lgm_glaciers <- st_transform(lgm_glaciers, crs = st_crs(ca))
+
 # Add a new column to coords indicating whether each point is inside the lgm shapefile
 coords <- get_coords(sf = TRUE) %>% st_transform(crs = st_crs(lgm_glaciers))
 glacier_mod_df <- 
@@ -245,6 +252,10 @@ tmean_mod_df <-
   right_join(coords) %>% 
   dplyr::select(SampleID, tmean_dif, tmean_cur)
 
+# Check for NAs
+tmean_mod_df %>% 
+  summarise(across(everything(), ~sum(is.na(.))))
+
 # Create and save raster
 tmean_dif <- tmean_dif_r %>% project("epsg:3310")
 names(tmean_dif) <- "tmean_dif"
@@ -297,7 +308,7 @@ env_stack <-
 
 # Create model data
 ```{r}
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "cur_lgm", "lgm_lig", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "x", "y")
 
 # Combine dataframes
 mod_df <- 
@@ -308,13 +319,18 @@ mod_df <-
   left_join(paleoclim_mod_df) %>%
   left_join(q_mod_df) %>%
   left_join(glacier_mod_df) %>%
-  left_join(tmean_mod_df)%>%
-  # TEMPORARY
-  mutate(csi_past = sdm_stability) %>%
-  dplyr::select(Ho, SampleID, all_of(mod_vars)) %>%
+  left_join(tmean_mod_df) %>%
+  dplyr::select(Ho, SampleID, all_of(mod_vars))
+
+# Check values that have NA for Ho
+mod_df %>% filter(is.na(Ho)) %>% select(SampleID)
+
+# Drop Ho NA values
+mod_df <-
+  mod_df %>%
   drop_na(Ho) 
 
-# Check sample numebr
+# Check sample number
 stopifnot(nrow(mod_df) == 259)
 
 # Confirm no NAs:
@@ -343,6 +359,7 @@ write_csv(export_df, here(outpath, "model_df.csv"))
 r <- cor(mod_df_scaled[, mod_vars], use = "pairwise.complete.obs")
 # Set the diagonal and lower triangle to NA
 r[lower.tri(r, diag = TRUE)] <- NA
+
 # Find the pairs with correlations greater than 0.6
 high_corr <- which(abs(r) > 0.6, arr.ind = TRUE)
 # Print the pairs
@@ -352,9 +369,18 @@ high_corr_pairs <- data.frame(
   Correlation = r[high_corr]
 )
 high_corr_pairs
+```
 
-# cur_lgm, csi_past, and lgm_lig are all correlated
+```{r}
+#Make nice correlation plot
+r <- stats::cor(mod_df_scaled[, setdiff(mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
+rownames(r) <- colnames(r) <- make_pretty_names(rownames(r))
+r[lower.tri(r, diag = TRUE)] <- NA
 
+library(corrplot)
+png(here(plotpath, "correlation_plot.png"), width = 10*300, height = 10*300, units = "px", res = 300)
+corrplot(r, method = "ellipse", type = "upper", tl.col = "black", tl.srt = 45, diag = FALSE, addCoef.col = "black", number.cex = 0.8)
+dev.off()
 ```
 
 # Run Ho models
@@ -430,7 +456,7 @@ gls_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data =
 summary(gls_model)
 # Use type = "normalized" to get residuals decorrelated and standardized by the fitted 
 # spatial covariance matrix; this removes modeled spatial structure and makes them 
-# suitable for Moran's I. If you don't do this Moran's I will appear higher than it actually is
+# suitable for Moran's I. If you don't do this Moran's I will appear higher than it actually is.
 mod_sf_unique$gls_resids <- residuals(gls_model, type = "normalized")
 
 # Test with nugget = TRUE
@@ -518,16 +544,18 @@ morans_I <- c(
   GLS_nugget = unname(moran.test(mod_sf_unique$nugget_resids, listw, zero.policy = TRUE)$estimate[["Moran I statistic"]])
 )
 
-sig_tbl <- enframe(sig_vars_by_model, name = "Model", value = "Significant Variables") |>
+sig_tbl <- 
+  enframe(sig_vars_by_model, name = "Model", value = "Significant Variables") %>%
   mutate(`Significant Variables` = map_chr(`Significant Variables`,
                                            ~ if (length(.x)) paste(.x, collapse = ", ") else NA_character_))
 
 model_levels <- c("OLS", "SEM", "SLM", "GLS", "GLS_nugget")
 
-model_comparison_tbl <- aic_tbl |>
-  mutate(`Moran's I` = unname(morans_I[Model])) |>
-  left_join(sig_tbl, by = "Model") |>
-  mutate(Model = factor(Model, levels = model_levels)) |>
+model_comparison_tbl <- 
+  aic_tbl %>%
+  mutate(`Moran's I` = unname(morans_I[Model])) %>%
+  left_join(sig_tbl, by = "Model") %>%
+  mutate(Model = factor(Model, levels = model_levels)) %>%
   arrange(Model)
 
 model_comparison_tbl
@@ -537,7 +565,7 @@ model_comparison_tbl
 final_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier_factor", "tmean_dif", "Q")
 
 # Create formula
-f <- formula("Ho ~ NDVI + gHM + bio1 + csi_past + glacier_factor + tmean_dif + Q")
+f <- formula(paste0("Ho ~", paste(final_vars, collapse = " + ")))
 
 # Fit model
 best_model <-  gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique)
@@ -552,12 +580,218 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(best_model, mod_sf_unique), mod_sf_unique$Ho)^2 # 0.40
+cor(predict(best_model), mod_sf_unique$Ho)^2 # 0.42
+cor(predict(best_model), mod_sf_unique$Ho) # 0.65
+```
+
+## Variance partioning analysis
+```{r}
+all_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
+predictor_sets <- mod_df_scaled %>% dplyr::select(all_of(all_vars)) %>% as.list()
+response <- mod_df_scaled$Ho
+varpart_result <- lm_variance_partition(predictor_sets, response, scale_vars =TRUE)
+```
+
+## Plots 
+```{r}
+# Model variables for plotting (glacier is not treated as a factor for plotting)
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
+mod <- best_model
+
+# Confirm treating glacier as a factor vs numeric makes no difference because it is binary
+lm(Ho ~ glacier, data = mod_df_scaled) %>% summary()
+lm(Ho ~ glacier_factor, data = mod_df_scaled) %>% summary()
+
+# Created unscaled plot
+mod_sf_unique_unscaled <- 
+  mod_df %>%
+  group_by(x, y) %>%
+  summarise_at(c(mod_vars, "Ho"), mean, na.rm = TRUE)
+
+# Plot predicted vs observed
+plt1 <- 
+  map(mod_vars, ~{
+    ggplot(mod_sf_unique_unscaled) +
+      geom_point(aes(x = predict(mod), y = Ho, col = .data[[.x]])) +
+      #geom_abline(intercept = 0, slope = 1) +
+      geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
+      theme_classic() +
+      labs(x = "Predicted", y = "Observed") +
+      scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9)
+  })
+
+# Plot values across california
+plt2 <-
+  map(mod_vars, ~{
+    ggplot(mod_sf_unique_unscaled) +
+      geom_sf(data = ca) +
+      geom_point(aes(x = x, y = y, col = .data[[.x]])) +
+      theme_void() +
+      scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9)
+  })
+
+# Plot Ho vs variable
+plt3 <- map(mod_vars, ~{
+  ggplot(mod_sf_unique_unscaled, aes(x = .data[[.x]], y = Ho)) +
+    geom_point(aes(col = .data[[.x]])) +
+    geom_smooth(method = "lm") +
+    theme_classic() +
+    labs(x = gsub("\n", " ", .x), y = "Ho") +
+    scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9) +
+    theme(legend.position = "none") +
+    stat_cor(label.y = min(mod_df[["Ho"]], na.rm = TRUE))
+})
+
+# Plot Ho
+plt4 <-
+  map(1:length(mod_vars), ~{
+    ggplot(mod_sf_unique_unscaled) +
+      geom_sf(data = ca) +
+      geom_point(aes(x = x, y = y, col = Ho)) +
+      theme_void() +
+      scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
+})
+
+pdf(here(plotpath, "ho.pdf"), width = 4.5, height = 4.5)
+ggplot(mod_sf_unique_unscaled) +
+  geom_sf(data = ca) +
+  geom_point(aes(x = x, y = y, col = Ho)) +
+  theme_void() +
+  scale_color_viridis_c(option ="mako") +
+  theme(
+    plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "mm"),
+    legend.position = c(0.85, 0.6),  # (x, y) in npc coords (0-1)
+    legend.justification = c(1, 0)
+  )
+dev.off()
+
+# use cowplot to combine plots
+pdf(here(plotpath, "linear_model_plot_Ho.pdf"), width = 10, height = 25)
+ordered_plts <- pmap(list(plt3, plt1, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
+do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
+ordered_plts <- pmap(list(plt3, plt1, plt4), ggpubr::ggarrange, nrow = 1)
+do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
+dev.off()
+```
+
+```{r}
+scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1) {
+  aesthetic <- match.arg(aesthetic)
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  rng   <- r_max - r_min
+  lims  <- c(r_min - rng*extend_scale, r_max + rng*extend_scale)
+
+  pal <- rev(MetBrewer::met.brewer("Hiroshige", type = "continuous"))
+  if (aesthetic == "fill") {
+    ggplot2::scale_fill_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  } else {
+    ggplot2::scale_colour_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  }
+}
+
+
+plot_mod <- function(x, y, df, type = "residual", model = NULL, 
+                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif","Q"),
+                     color_var = c("x","y")) {
+
+  if (type == "partial") {
+    f_rhs <- paste(setdiff(mod_vars, x), collapse = " + ")
+    f_py  <- stats::as.formula(paste(y, "~", f_rhs))
+    f_px  <- stats::as.formula(paste(x, "~", f_rhs))
+    df[[x]] <- residuals(lm(f_px, data = df))
+    df[[y]] <- residuals(lm(f_py, data = df))
+  } else if (type == "residual") {
+    # partial residuals for y
+    stopifnot(!is.null(model))
+    # note; for this residuals should not be normalized
+    df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
+  }
+
+  col_var <- if (color_var == "x") x else y
+
+  ggplot(df, aes(x = .data[[x]], y = .data[[y]], colour = .data[[col_var]])) +
+    geom_point() +
+    geom_smooth(method = "lm", colour = "black") +
+    scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) +
+    ggpubr::stat_cor() +
+    labs(x = stringr::str_to_sentence(make_pretty_names(x)), 
+      y = stringr::str_to_sentence(paste0(type, " heterozygosity"))) +
+    theme_classic() +
+    theme(legend.position = "none",
+          axis.title = element_text(size = 14),
+          axis.text  = element_text(size = 10))
+
+}
+
+ca_proj <- get_ca() %>% sf::st_transform(3310)
+range_map <- get_range()
+wingen_r <- 
+  terra::rast(here(outpath, "Ho_kriged_masked.tif")) %>% 
+  mask(range_map) %>% 
+  as.data.frame(xy = TRUE, na.rm = TRUE) 
+names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
+
+sig_vars <- c("csi_past", "tmean_dif", "bio1", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
+
+# A: map
+ho_plot <- ggplot(wingen_r) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA) +
+  geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
+  scale_met_cont(wingen_r$layer, aesthetic = "fill", extend_scale = 0.1) +
+  labs(fill = "Heterozygosity") +
+  theme_void() +
+  geom_sf(data = mod_sf_unique, shape = 21, aes(fill = Ho), colour = "#00000087", size = 1.3) +
+  theme(
+    plot.margin = margin(1, 1, 1, 1, unit = "mm"),
+    legend.position = c(0.9, 0.6),
+    legend.justification = c(1, 0),
+    legend.key.height = unit(0.5, "cm"),
+    legend.key.width  = unit(0.5, "cm"),
+    legend.title = element_text(size = 12),
+    legend.text  = element_text(size = 10)
+  )
+
+
+# B: partial residuals 
+plts_residual_y <- purrr::map(
+  sig_vars, 
+  ~plot_mod(.x, "Ho", mod_sf_unique_unscaled, type = "residual", model = best_model, color_var = "y")
+)
+
+
+# C: predicted vs observed 
+pred_vs_obs <-
+  ggplot(mod_sf_unique_unscaled, aes(x = predict(best_model), y = Ho)) +
+  geom_point(aes(colour = Ho), shape = 1) +
+  geom_smooth(method = "lm", colour = "black") +
+  scale_met_cont(c(mod_sf_unique_unscaled$Ho, wingen_r$layer), aesthetic = "colour", extend_scale = 0.1) +
+  theme_classic() +
+  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
+  ggpubr::stat_cor() +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 13),
+        axis.text  = element_text(size = 10))
+
+pred_vs_obs_adj <- cowplot::plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = c(0.9, 0.1))
+
+plt1 <- cowplot::plot_grid(plotlist = plts_residual_y, nrow = 2)
+plt2 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
+                           labels = c("A", "C"), rel_heights = c(0.6, 0.4))
+pdf(here(plotpath, "figure_Ho.pdf"), height = 8, width = 12)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 0.67), labels = c("", "B"))
+dev.off()
+
+png(here(plotpath, "figure_Ho.png"), height = 8*300, width = 12*300, res = 300)
+cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 0.67), labels = c("", "B"))
+dev.off()
 ```
 
 # Make map of predictions
 ```{r}
 pred_vars <- sig_vars
+
 # Get coefficients (excluding the spatial error term) 
 betas <- coef(best_model)
 
@@ -605,367 +839,8 @@ dev.off()
 ```
 
 ```{r}
-library(wingen)
-source(here("analysis", "genetic_diversity", "functions_wingen.R"))
-wingen <- rast(here(outpath, "wingen.tif"))
-wingen_r=wingen
-resample_pred_stack <- resample(pred_stack, wingen, method = "bilinear")
-wingen_cokrig <- cokrig_gd2(wingen[[1]], covariates = resample_pred_stack, weight_r = wingen[[2]])
-wingen_krig <- cokrig_gd2(wingen[[1]], covariates = NULL, weight_r = wingen[[2]])
-wingen_unweighted <- cokrig_gd2(wingen[[1]], covariates = NULL, weight_r = NULL)
-wingen_cokrig <- mask(wingen_cokrig$prediction, range_map)
-wingen_krig <- mask(wingen_krig$prediction, range_map)
-wingen_unweighted <- mask(wingen_unweighted$prediction, range_map)
-
-wingen_plot <- function(x){
-  ggrast(x) + 
-  labs(fill = "Predicted\nHeterozygosity") +
-  scale_fill_gradientn(colors = hiroshige_cols, na.value = "transparent") 
-}
-pdf(here(plotpath, "kriging.pdf"), width = 15, height = 5)
-plt1 <- wingen_plot(wingen_cokrig) + ggtitle("Weighted Cokriging")
-plt2 <- wingen_plot(wingen_krig) + ggtitle("Weighted Kriging")
-plt3 <- wingen_plot(wingen_unweighted) + ggtitle("Unweighted Kriging")
-plot_grid(plt3, plt2, plt1, nrow = 1) +
-  theme(plot.title = element_text(hjust = 0.5))
-dev.off()
-```
-
-## Variance partioning analysis
-```{r}
-all_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
-predictor_sets <- mod_df_scaled %>% dplyr::select(all_of(all_vars)) %>% as.list()
-response <- mod_df_scaled$Ho
-varpart_result <- lm_variance_partition(predictor_sets, response, scale_vars =TRUE)
-```
-
-## Plots 
-```{r}
-# Model variables for plotting (glacier is not treated as a factor for plotting)
-mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
-mod <- best_model
-
-# Confirm treating glacier as a factor vs numeric makes no difference because it is binary
-lm(Ho ~ glacier, data = mod_df_scaled) %>% summary()
-lm(Ho ~ glacier_factor, data = mod_df_scaled) %>% summary()
-
-# Add back glacier
-mod_sf_unique <- 
-  mod_sf_unique %>%
-  mutate(glacier = as.numeric(as.character(glacier_factor)))
-
-# Plot predicted vs observed
-plt1 <- 
-  map(mod_vars, ~{
-    ggplot(mod_sf_unique) +
-      geom_point(aes(x = predict(mod), y = Ho, col = .data[[.x]])) +
-      #geom_abline(intercept = 0, slope = 1) +
-      geom_smooth(aes(x = predict(mod), y = Ho), method = "lm") +
-      theme_classic() +
-      labs(x = "Predicted", y = "Observed") +
-      scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9)
-  })
-
-# Plot values across california
-plt2 <-
-  map(mod_vars, ~{
-    ggplot(mod_sf_unique) +
-      geom_sf(data = ca) +
-      geom_point(aes(x = x, y = y, col = .data[[.x]])) +
-      theme_void() +
-      scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9)
-  })
-
-# Plot Ho vs variable
-plt3 <- map(mod_vars, ~{
-  ggplot(mod_sf_unique, aes(x = .data[[.x]], y = Ho)) +
-    geom_point(aes(col = .data[[.x]])) +
-    geom_smooth(method = "lm") +
-    theme_classic() +
-    labs(x = gsub("\n", " ", .x), y = "Ho") +
-    scale_color_viridis_c(option = "mako", end = 0.1, begin = 0.9) +
-    theme(legend.position = "none") +
-    stat_cor(label.y = min(mod_df[["Ho"]], na.rm = TRUE))
-})
-
-# Plot Ho
-plt4 <-
-  map(1:length(mod_vars), ~{
-    ggplot(mod_sf_unique) +
-      geom_sf(data = ca) +
-      geom_point(aes(x = x, y = y, col = Ho)) +
-      theme_void() +
-      scale_color_viridis_c(option ="mako", end = 0.1, begin = 0.9, direction = -1)
-})
-
-pdf(here(plotpath, "ho.pdf"), width = 4.5, height = 4.5)
-ggplot(mod_df) +
-  geom_sf(data = ca) +
-  geom_point(aes(x = x, y = y, col = Ho)) +
-  theme_void() +
-  scale_color_viridis_c(option ="mako") +
-  theme(
-    plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "mm"),
-    legend.position = c(0.85, 0.6),  # (x, y) in npc coords (0-1)
-    legend.justification = c(1, 0)
-  )
-dev.off()
-
-# use cowplot to combine plots
-pdf(here(plotpath, "linear_model_plot_Ho.pdf"), width = 10, height = 25)
-ordered_plts <- pmap(list(plt3, plt1, plt2), ggpubr::ggarrange, common.legend = TRUE, legend = "right", nrow = 1)
-do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
-ordered_plts <- pmap(list(plt3, plt1, plt4), ggpubr::ggarrange, nrow = 1)
-do.call(cowplot::plot_grid, c(ordered_plts, list(nrow = length(plt1))))
-dev.off()
-```
-
-```{r}
-# Plot results
-# Adjusted color function with dynamic limits
-palette_function <- function(values, type = "fill", extend_scale = 0.1) {
-  r_min <- min(values, na.rm = TRUE)
-  r_max <- max(values, na.rm = TRUE)
-  r_range <- r_max - r_min
-  
-  # Extend limits symmetrically
-  extended_limits <- c(
-    r_min - r_range * extend_scale,
-    r_max + r_range * extend_scale
-  )
-  
-  pal <- rev(MetBrewer::met.brewer("Hiroshige", type = "continuous"))
-  
-  if (type == "fill") {
-    ggplot2::scale_fill_gradientn(
-      colors = pal,
-      limits = extended_limits,
-      oob = scales::censor  # show NAs outside range
-    )
-  } else {
-    ggplot2::scale_color_gradientn(
-      colors = pal,
-      limits = extended_limits,
-      oob = scales::censor
-    )
-  }
-}
-
-plot_mod <- function(x, y, df, type = "residual", model = NULL, mod_vars = c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q"), col = "x") {
-  if (type == "partial") {
-    f_partial_y <- paste(y, "~", paste(setdiff(mod_vars, x), collapse = " + "))
-    f_partial_x <- paste(x, "~", paste(setdiff(mod_vars, x), collapse = " + "))
-    df[[x]] <- residuals(lm(f_partial_x, data = df))
-    df[[y]] <- residuals(lm(f_partial_y, data = df))
-  }
-
-  if (type == "residual") {
-    df[[y]] <- residuals(model) + coef(model)[x] * scale(df[[x]])
-  }
-
-  col_var <- ifelse(col == "x", x, y)
-  plt <-
-    ggplot(df, aes(x = .data[[x]], y = .data[[y]], col = .data[[col_var]])) +
-    geom_point() +
-    theme_classic() +
-    col_function(df[[col_var]]) +
-    labs(x = make_pretty_names(x), y = make_pretty_names(y)) +
-    theme(
-      legend.position = "none",
-      axis.title = element_text(size = 14), axis.text = element_text(size = 10)
-    ) +
-    ggpubr::stat_cor() + 
-    geom_smooth(method = "lm", col = "black")
-  
-  if (type == "residual") plt <- plt + ylab("Partial residuals of heterozygosity")
-}
-
-# Plot results
-# Adjusted color function with dynamic limits
-col_function <- function(values, extend_scale = 0.1) {
-  # Get min and max from data
-  r_min <- min(values, na.rm = TRUE)
-  r_max <- max(values, na.rm = TRUE)
-  
-  # Extend the limits based on the extend_scale
-  # This will extend the range by a percentage of the original range
-  extended_max <- r_max + (r_max - r_min) * extend_scale
-  extended_min <- r_min - (r_max - r_min) * extend_scale
-  # Get the max of each so it is an even scale
-  limits <- c(extended_min, extended_max)
-
-  scale_fill_gradientn(
-    colors = rev(MetBrewer::met.brewer("Hiroshige", type = "continuous")),
-    limits = limits,
-    oob = scales::squish  # Squeeze outliers into color scale range
-  )
-}
-
-# Adjusted custom_plot() to use dynamic col_function
-custom_plot <- function(r, coords = NULL, extend_scale = 0.1) {
-  r_df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
-  names(r_df)[3] <- "layer"
-  
-  plt <- ggplot(r_df) +
-    geom_sf(data = ca_proj, fill = "gray90", col = NA) +
-    geom_tile(aes(x = x, y = y, fill = layer), color = NA) +
-    col_function(r_df$layer, extend_scale = extend_scale) +
-    labs(fill = "Heterozygosity") +
-    theme_void()
-  
-  if (!is.null(coords)) {
-    plt <- plt + geom_sf(data = coords, pch = 21, aes(fill = Ho), col = "#00000087", cex = 1.3)
-  }
-  
-  return(plt)
-}
-
-wingen_r <- rast(here(outpath, "Ho_kriged_masked.tif")) %>% as.data.frame(xy = TRUE, na.rm = TRUE)
-
-# Repeated but params adjusted slightly
-ho_plot <-
-  custom_plot(wingen_r, coords = mod_sf_unique) +
-  labs(fill = "Heterozygosity") +
-  theme(
-    plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "mm"),
-    legend.position = c(0.9, 0.6),  # (x, y) in npc coords (0-1)
-    legend.justification = c(1, 0), 
-    legend.key.height = unit(0.5, "cm"),
-    legend.key.width = unit(0.5, "cm"),
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 10)
-  )
-
-pred_vs_obs <- 
-  ggplot(mod_sf_unique, aes(x = predict(best_model), y = Ho)) +
-  geom_point(aes(col = Ho), pch = 1) +
-  geom_smooth(method = "lm", col = "black") +
-  palette_function(c(mod_sf_unique$Ho, wingen_r$Ho), type = "col", extend_scale = 0.1) +
-  theme_classic() +
-  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
-  stat_cor() +
-  theme(legend.position = "none", axis.title = element_text(size = 13), axis.text = element_text(size = 10))
-
-pred_vs_obs_adj <- plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = c(0.9, 0.1))
-
-
-
-sig_vars <- c("csi_past", "tmean_dif", "bio1", "Q")
-mod_df_unique <- 
-  mod_df %>%
-  group_by(x, y) %>%
-  mutate(glacier_factor = as.numeric(as.character(glacier))) %>%
-  summarise(across(all_of(mod_vars), mean, na.rm = TRUE), Ho = mean(Ho, na.rm = TRUE)) %>%
-  #mutate(glacier = glacier_factor) %>%
-  ungroup()
-
-plts_partial <- map(sig_vars, ~plot_mod(.x, "Ho", mod_df_unique, type = "partial"))
-plts_raw <- map(sig_vars, ~plot_mod(.x, "Ho", mod_df_unique, type = "raw"))
-plts_raw_y <- map(sig_vars, ~plot_mod(.x, "Ho", mod_df_unique, type = "raw", col = "y"))
-plts_residual <- map(sig_vars, ~plot_mod(.x, "Ho", mod_df_unique, type = "residual", model = best_model, col = "x"))
-plts_residual_y <- map(sig_vars, ~plot_mod(.x, "Ho", mod_df_unique, type = "residual", model = best_model, col = "y"))
-
-env_plot <-
-  map(sig_vars, ~{
-    ggplot(mod_df_unique) +
-      geom_sf(data = ca) +
-      geom_point(aes(x = x, y = y, fill = .data[[.x]]), cex = 2, col = "black", pch = 21) +
-      theme_void() +
-      labs(fill = gsub(" ", "\n", make_pretty_names(.x))) +
-      palette_function(mod_df_unique[[.x]], type = "fill", extend_scale = 0.1) +
-      theme(
-        plot.margin = margin(t = 1, r = 1, b = 1, l = 1, unit = "mm"),
-        legend.position = c(0.9, 0.55),  # (x, y) in npc coords (0-1)
-        legend.justification = c(1, 0), 
-        legend.key.height = unit(0.5, "cm"),
-        legend.key.width = unit(0.5, "cm"),
-        legend.title = element_text(size = 10),
-        legend.text = element_text(size = 8)
-      )
-  })
-  
-
-ca_proj <- get_ca() %>% st_transform(3310)
-
-
-
-pltlist1 <- c(list(ho_plot), list(pred_vs_obs_adj))
-
-plt1 <- plot_grid(plotlist = plts_residual_y, nrow = 2)
-plt2 <- plot_grid(plotlist = pltlist1, ncol = 1, labels = c("A", "C"), rel_heights = c(0.6, 1 - 0.6))
-
-pdf(here(plotpath, "figure_Ho2.pdf"), height = 8, width = 12)
-plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 1 - 0.33), labels = c("", "B"))
-dev.off()
-
-png(here(plotpath, "figure_Ho2.png"), height = 8*300, width = 12*300, res = 300)
-plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 1 - 0.33), labels = c("", "B"))
-dev.off()
-```
-
-```{r}
-marginal_effect_plot <- function(var, model, data, listw, response = "Ho") {
-  # Sequence for var: from min to max observed
-  x_seq <- seq(min(data[[var]]), max(data[[var]]), length.out = 100)
-  
-  # Build newdata: hold all other predictors constant
-  newdata <- data[rep(1, 100), ]
-  newdata[[var]] <- x_seq
-  
-  # Set all other numeric predictors to their mean
-  numeric_vars <- sapply(data, is.numeric)
-  numeric_vars <- setdiff(names(data)[numeric_vars], c(var, response, "x", "y"))
-  for (v in numeric_vars) {
-    newdata[[v]] <- mean(data[[v]])
-  }
-  
-  # Set factors to their reference level (first level)
-  factor_vars <- sapply(data, is.factor)
-  for (v in names(data)[factor_vars]) {
-    newdata[[v]] <- factor(levels(data[[v]])[1], levels = levels(data[[v]]))
-  }
-  
-  # Drop row names to avoid region.id conflict
-  rownames(newdata) <- NULL
-  
-  # Predict using spatial error model
-  newdata$fit <- predict(model, newdata = newdata, listw = listw)
-  
-  # Plot predicted marginal effect with raw data
-  ggplot() +
-    geom_point(data = data, aes_string(x = var, y = response), alpha = 0.5) +
-    geom_line(data = newdata, aes_string(x = var, y = "fit"), color = "blue", size = 1.2) +
-    labs(
-      x = make_pretty_names(var),
-      y = "Predicted Heterozygosity"
-    ) +
-    theme_classic()
-}
-
-# Apply to all significant  variables
-marginal_plots <- map(sig_vars, ~marginal_effect_plot(.x, best_model, mod_df_scaled, listw))
-
-# Combine into a panel
-library(cowplot)
-pdf(here(plotpath, "partial_effects_Ho.pdf"), width = 12, height = 3)
-plot_grid(plotlist = marginal_plots, nrow = 1, align = "hv")
-dev.off()
-
-pltlist1b <- c(list(pred_vs_obs), marginal_plots)
-pltlist1a <- c(list(pred_vs_obs), plts_raw)
-pltlist2 <- c(list(ho_plot), env_plot)
-pdf(here(plotpath, "partial_plots_Ho.pdf"), width = 16, height = 9)
-a <- plot_grid(plotlist = pltlist1a, nrow = 1)
-b <- plot_grid(plotlist = pltlist1b, nrow = 1)
-d <- plot_grid(plotlist = pltlist2, nrow = 1, align = "hv")
-plot_grid(a, b, d, ncol = 1)
-dev.off()
-
-```
-```{r}
 model_Ho <- best_model
 ```
-
 
 # Run Adaptive Ho models
 

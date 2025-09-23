@@ -52,12 +52,6 @@ het <- get_het()
 coords <- 
   left_join(coords, het, by = "SampleID") %>% 
   drop_na(Ho)
-
-ggplot(coords) + 
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = Ho), col = "#00000087", pch = 21, cex = 3) +
-  scale_fill_viridis_c(option = "mako") +
-  theme_void()
 ```
 
 ```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
@@ -65,62 +59,85 @@ ggplot(coords) +
 coords_proj <- st_transform(coords, 3310)
 ca_proj <- st_transform(ca, 3310)
 
-# Convert coordinates to a raster layer with 10km resolution
+# Convert coordinates to a raster layer
 lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
 
+pdf(here(plotpath, "preview_wingen.pdf"), width = 7, height = 7)
+sc <- preview_gd(lyr, coords_proj, wdim = 5, sample_count = TRUE)
+sc[sc <= 0] <- NA
+plot(sc)
+dev.off()
+
 # Calculate windowed mean of Ho
-window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 5, min_n = 1, stat = mean, na.rm = TRUE)
+custom_mean <- function(x) mean(x, na.rm = TRUE)
+window_Ho <- window_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, wdim = 5, min_n = 1, stat = custom_mean)
+
+names(window_Ho) <- c("Ho", "sample_count")
+writeRaster(window_Ho, here(outpath, "wingen.tif"), overwrite = TRUE)
 
 # Perform kriging interpolation on windowed mean of Ho
-krig_Ho <- krig_gd(window_Ho, grd = lyr, disagg_grd = 2)
+weighted_results <- krig_gd2(window_Ho[[1]], window_Ho[[2]])
+weighted_krig_Ho <- weighted_results$prediction
+unweighted_krig_Ho <- krig_gd2(window_Ho[[1]])
+unweighted_krig_Ho <- unweighted_krig_Ho$prediction
 
 # Apply a mask to the kriging result
-count_mask <- resample(window_Ho$sample_count, krig_Ho)
-mask_Ho <- mask_gd(krig_Ho, ca_proj)
-mask_Ho <- mask_gd(mask_Ho, count_mask, minval = 0.1)
+range_map <- get_range()
+weighted_mask_Ho <- mask(weighted_krig_Ho, range_map)
+unweighted_mask_Ho <- mask(unweighted_krig_Ho, range_map)
 
-# GAM interpolation
-library(mgcv)
-df <- as.data.frame(window_Ho, xy = TRUE, na.rm = TRUE)
-names(df)[3] <- "diversity"  # make sure the third column is named for the model
-gam_mod <- mgcv::gam(diversity ~ s(x, y, bs = "tp", k = 100),
-               data   = df,
-               method = "REML")
-pred_df <- as.data.frame(lyr, xy = TRUE, na.rm = FALSE)
-names(pred_df)[3] <- "diversity"  # make sure the third column is named for the model
-r_pred <- predict(gam_mod, newdata = pred_df)
-gam_Ho <- lyr
-gam_Ho[] <- r_pred
-gam_Ho <- mask(lyr, ca_proj)
+# Plot results# Adjusted color function with dynamic limits
+col_function <- function(values, extend_scale = 0.1) {
+  # Get min and max from data
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  
+  # Extend the limits based on the extend_scale
+  # This will extend the range by a percentage of the original range
+  extended_max <- r_max + (r_max - r_min) * extend_scale
+  extended_min <- r_min - (r_max - r_min) * extend_scale
+  # Get the max of each so it is an even scale
+  limits <- c(extended_min, extended_max)
 
-tps_mod <- fields::Tps(
-  x          = as.matrix(pred_df[, c("x", "y")]),
-  Y          = pred_df$diversity
-)
-grd_df <- terra::as.data.frame(lyr, xy = TRUE, na.rm = FALSE)
-pred_vals <- fields::predict.Krig(
-  object = tps_mod,
-  x      = as.matrix(grd_df[, c("x", "y")])
-)
-grd_df$Ho <- pred_vals
-out <- terra::rast(grd_df[, c("x", "y", "Ho")], crs = terra::crs(window_Ho))                
+  scale_fill_gradientn(
+    colors = rev(MetBrewer::met.brewer("Hiroshige", type = "continuous")),
+    limits = limits,
+    oob = scales::squish  # Squeeze outliers into color scale range
+  )
+}
 
-# Plot results
-pdf(here(plotpath, "wingen.pdf"), width = 7, height = 7)
+# Adjusted custom_plot() to use dynamic col_function
+custom_plot <- function(r, coords = NULL, extend_scale = 0.1) {
+  r_df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
+  names(r_df)[3] <- "layer"
+  
+  plt <- ggplot(r_df) +
+    geom_sf(data = ca_proj, fill = "gray90", col = NA) +
+    geom_tile(aes(x = x, y = y, fill = layer), color = NA) +
+    col_function(r_df$layer, extend_scale = extend_scale) +
+    labs(fill = "Heterozygosity") +
+    theme_void()
+  
+  if (!is.null(coords)) {
+    plt <- plt + geom_sf(data = coords_proj, pch = 21, aes(fill = Ho), col = "#00000087", cex = 1.1)
+  }
+  
+  return(plt)
+}
 
-ggplot_gd(mask_Ho, bkg = ca_proj, col = mako(100)) +
-  labs(fill = "Ho")
 
-ggplot_gd(gam_Ho, bkg = ca_proj, col = mako(100)) +
-  labs(fill = "Block kriged Ho")
-
-ggplot_gd(gam_Ho, bkg = ca_proj, col = mako(100)) +
-  labs(fill = "GAM Ho")
-
-ggplot_gd(window_Ho, bkg = ca_proj, col = mako(100)) +
-  labs(fill = "Ho")
-
+window_Ho2 <- mask_gd(window_Ho[[1]], window_Ho[[2]], minval = 2)
+pdf(here(plotpath, "wingen.pdf"), width = 5, height = 5)
+custom_plot(weighted_mask_Ho)
+custom_plot(unweighted_mask_Ho)
+custom_plot(window_Ho) 
+custom_plot(window_Ho2)
+custom_plot(weighted_mask_Ho, coords = coords_proj)
+custom_plot(window_Ho, coords = coords_proj)
 dev.off()
+
+names(weighted_mask_Ho) <- "Ho"
+writeRaster(weighted_mask_Ho, here(outpath, "Ho_kriged_masked.tif"), overwrite = TRUE)
 ```
 
 # ROH

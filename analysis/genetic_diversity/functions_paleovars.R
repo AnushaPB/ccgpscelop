@@ -13,8 +13,8 @@ get_paleovars <- function(paleovars = c("mis19", "lig", "lgm", "hs1", "ba", "yds
   # Load and process the data using purrr
   if (process) {
     env_list <- purrr::map(file_paths, ~ {
-      ca <- get_ca()
       data <- rpaleoclim::load_paleoclim(.x)
+      ca <- get_ca() %>% st_transform(st_crs(data))
       data <- terra::crop(data, ca)
       data <- terra::mask(data, ca)
       data
