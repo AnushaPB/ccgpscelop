@@ -18,7 +18,15 @@ data_processing/chromosemble/*.delta
 *.log
 *.adj
 *.raw
-
+data_processing/chromosemble_old_june18/mummer-4.0.0rc1
+data_processing/chromosemble_old_june18/outputs
+data_processing/chromosemble_old_june18/satsuma2
+*.delta
+data_processing/chromosemble/new_vs_old
+data_processing/chromosemble/new_vs_old_copy
+*.filter
+*.fasta
+data_processing/sexchr/outputs
 
 maxent.jar
 
