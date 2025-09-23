@@ -21,66 +21,65 @@ meta <-
   mutate(sex = ifelse(is.na(sex), museum_sex, sex))
 table(meta$sex)
 
-males <- meta %>% filter(sex == "male") %>% filter(MinicoreID != "NaN") %>% pull(MinicoreID)
-females <- meta %>% filter(sex == "female") %>% filter(MinicoreID != "NaN") %>% pull(MinicoreID)
-writeLines(males, here("data_processing", "sexchr", "males.txt"))
-writeLines(females, here("data_processing", "sexchr", "females.txt"))
+# Depth across entire genome
+genomewide <- 
+  read_table(here("data_processing", "sexchr", "outputs", "genomewide.idepth")) %>% 
+  rename(MinicoreID = INDV, genomewide_depth = MEAN_DEPTH) %>% 
+  select(-N_SITES)
 
-# Depth
-sex1_depth <- read_table(here("data_processing", "sexchr", "sex_linked_1_depth.idepth")) %>% mutate(chr = "sex_linked_1")
-sex2_depth <- read_table(here("data_processing", "sexchr", "sex_linked_2_depth.idepth")) %>% mutate(chr = "sex_linked_2")
-sex_depth <- bind_rows(sex1_depth, sex2_depth) %>% rename(MinicoreID = INDV) %>% select(-N_SITES)
+# Samples in the same order as the DP columns
+samples <- scan(here("data_processing", "sexchr", "outputs", "samples.txt"), what = "")
+col_names <- c("CHROM", "POS", samples)
 
-# Missingness 
-sex1_miss <- read_table(here("data_processing", "sexchr", "sex_linked_1.imiss")) %>% mutate(chr = "sex_linked_1")
-sex2_miss <- read_table(here("data_processing", "sexchr", "sex_linked_2.imiss")) %>% mutate(chr = "sex_linked_2")
-sex_miss <- bind_rows(sex1_miss, sex2_miss) %>% rename(MinicoreID = INDV) %>% select(MinicoreID, chr, F_MISS)
+sex_depth_ind <- read_tsv(
+  here("data_processing", "sexchr", "outputs", "sex_linked.dp.tsv"),
+  col_names = col_names,
+  na = c(".", "NA", ""),                # <- treat "." as NA
+  col_types = cols(
+    CHROM = col_character(),
+    POS   = col_integer(),
+    .default = col_double()             # all DP columns numeric
+  )
+) %>%
+pivot_longer(
+  cols = all_of(samples),
+  names_to = "SampleID",
+  values_to = "DP"
+) 
 
-# Heterozygosity
-sex1_het <- read_table(here("data_processing", "sexchr", "sex_linked_1.het")) %>% mutate(chr = "sex_linked_1")
-sex2_het <- read_table(here("data_processing", "sexchr", "sex_linked_2.het")) %>% mutate(chr = "sex_linked_2")
-sex_het <- 
-  bind_rows(sex1_het, sex2_het) %>% 
-  rename(MinicoreID = IID) %>% 
-  dplyr::select(-FID) %>% 
-  mutate(Ho = (`N(NM)` - `O(HOM)`) / `N(NM)`) 
+sex_depth_ind_window <- 
+  sex_depth_ind %>%
+  mutate(window = (POS %/% 100000) * 100000) %>%
+  group_by(SampleID, window, CHROM) %>%
+  summarize(mean_DP = mean(DP, na.rm=TRUE)) %>%
+  ungroup() 
+  
+window_depth_df <-
+  sex_depth_ind_window %>%
+  rename(MinicoreID = SampleID) %>%
+  left_join(meta, by = "MinicoreID") %>%
+  left_join(genomewide, by = c("MinicoreID")) %>%
+  mutate(scaled_depth = mean_DP / genomewide_depth)
 
-sex_df <- left_join(sex_het, sex_depth) %>% left_join(sex_miss) %>% left_join(meta)
+averaged_by_sex <- 
+  window_depth_df %>%
+  drop_na(sex) %>%
+  group_by(window, CHROM, sex) %>%
+  summarize(scaled_depth = mean(scaled_depth, na.rm=TRUE)) 
 
-table(sex_df$sex)
-
-
-
-plt1 <- 
-  ggplot(sex_df) +
-  geom_point(aes(x = Ho, y = MEAN_DEPTH), alpha = 0.8, col = "lightgray") +
-  geom_point(data = drop_na(sex_df, sex), aes(x = Ho, y = MEAN_DEPTH, col = sex)) +
+pdf(here("data_processing", "sexchr", "sexchr_window_depth.pdf"), width=8, height=4)
+ggplot(window_depth_df) +
+  geom_line(
+    data = filter(window_depth_df, sex == "male"), # "female" before "male"
+    aes(x = window, y = scaled_depth, col = sex, group = MinicoreID),
+    alpha = 0.05) + 
+  geom_line(
+    data = filter(window_depth_df, sex == "female"), # "female" before "male"
+    aes(x = window, y = scaled_depth, col = sex, group = MinicoreID),
+    alpha = 0.05
+  ) +
+  geom_line(data = averaged_by_sex, aes(x = window, y = scaled_depth, col = sex), linewidth = 1) +
   theme_minimal() +
-  facet_wrap(~chr, nrow=1) +
-  labs(x = "Heterozygosity", y = "Mean Depth") 
-
-plt2 <-
-  ggplot(sex_df) +
-  geom_point(aes(x = Ho, y = F_MISS), alpha = 0.8, col = "lightgray") +
-  geom_point(data = drop_na(sex_df, sex), aes(x = Ho, y = F_MISS, col = sex)) +
-  theme_minimal() +
-  facet_wrap(~chr, nrow=1) +
-  labs(x = "Heterozygosity", y = "Missingness") 
-
-plt3 <- 
-  ggplot(sex_df) +
-  geom_point(aes(x = MEAN_DEPTH, y = F_MISS), alpha = 0.8, col = "lightgray") +
-  geom_point(data = drop_na(sex_df, sex), aes(x = MEAN_DEPTH, y = F_MISS, col = sex)) +
-  theme_minimal() +
-  facet_wrap(~chr, nrow=1) +
-  labs(x = "Mean Depth", y = "Missingness") 
-
-pdf(here("data_processing", "sexchr", "sexchr_plot.pdf"), width=7, height=9)
-cowplot::plot_grid(plt3, plt2, plt1, nrow=3)
+  labs(x = "Genomic Window", y = "Scaled Mean Depth (100kb Windows)") +
+  facet_wrap(~CHROM, ncol = 1)
 dev.off()
-
-sex_df %>% drop_na(sex) %>% group_by(chr, sex) %>% summarize_at(c("Ho", "MEAN_DEPTH", "F_MISS"), mean)
-
-# Summary:
-# sex_linked_1 - heterozygosity higher in females than males, depth higher in females than males, and missingness lower in females than males -> probably X chromosome
-# sex_linked_2 - heterozygosity higher in males than females, depth higher in males than females, and missingness lower in males than females -> probably Y chromosome
