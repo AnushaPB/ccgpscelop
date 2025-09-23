@@ -161,7 +161,7 @@ NUM_ITS=10
 ADMIX_DIR="${REPO_ROOT}/analysis/admixture/outputs"
 
 # iterate 1…10 (“it”)
-for it in $(seq 4 $NUM_ITS); do
+for it in $(seq 1 $NUM_ITS); do
   for i in {1..8}; do
     (
       pop="pop${i}"
