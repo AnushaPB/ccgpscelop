@@ -99,3 +99,4 @@ rsconnect/
 *.csv
 /data
 ccgpscelop.Rproj
+iterate.dat
