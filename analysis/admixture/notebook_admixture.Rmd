@@ -87,7 +87,7 @@ ggplot(df) +
   scale_color_manual(values = viridis::turbo(max(Kvals))) 
 
 barplots <- map(Kvals, ~structure_plot(qmat = get_Q(K = .x, qmat_only = TRUE)) + scale_fill_manual(values = viridis::turbo(max(Kvals))))
-do.call(ggarrange, c(barplots, ncol = 1))
+do.call(ggpubr::ggarrange, c(barplots, ncol = 1))
 dev.off()
 ```
 
@@ -106,38 +106,126 @@ dev.off()
 ```
 
 ```{r}
-grid <- coords_to_raster(coords_proj, res = 1000)
+library(algatr)
+library(wingen)
+ca_proj <- ca %>% st_transform(3310)
+grid <- coords_to_raster(coords_proj, res = 5000, buffer = 25)
+grid <- crop(grid, ca_proj)
+
 qmat_samples <- get_Q(K = 8, qmat_only = FALSE)
+
 coords_proj <- 
   get_coords(sf= TRUE) %>%
   st_transform(3310) %>% 
   filter(SampleID %in% qmat_samples$SampleID) %>% 
   drop_na()
-qmat <- get_Q(K = 6, qmat_only = TRUE)
+
+qmat <- get_Q(K = 8, qmat_only = TRUE)
+
 # kriging
 krig_admix <- tess_krig(qmat, coords_proj, grid)
+crs(krig_admix) <- crs(grid)
+
+# Get admixture score for each cell
+max_admix <- 1 - max(krig_admix)
 
 pdf(here(plotpath, "kriging.pdf"), width = 5, height = 5)
-tess_plot(krig_admix)
+plot(max_admix)
+dev.off()
+
+writeRaster(max_admix, here("analysis", "admixture", "outputs", "max_admix.tif"), overwrite = TRUE)
+```
+
+## Pie charts
+```{r}
+library(scatterpie)
+ca_longlat <- st_transform(ca, 4326)
+plts <-
+  df %>%
+  group_by(K) %>%
+  group_split() %>%
+  map(~{
+    gg_df <- 
+      .x %>%
+      bind_cols(st_coordinates(.x)) %>%
+      drop_na(Q) %>%
+      select(-cluster) %>%
+      group_by(SampleID, X, Y, PopGroup) %>%
+      pivot_wider(names_from = PopGroup, values_from = Q, values_fill = 0)
+
+    ggplot() +
+      geom_sf(data = ca_longlat) +
+      geom_scatterpie(
+        data = st_drop_geometry(gg_df),
+        aes(x = X, y = Y, group = SampleID),
+        cols = paste0("V", 1:unique(.x$K)),
+        pie_scale = 0.7
+      ) +
+      theme_void() +
+      labs(fill = "Population") +
+      ggtitle(paste("K =", .x$K[1]))
+  })
+
+pdf(here(plotpath, "admixture_pie_charts.pdf"), width = 6, height = 6)
+plts
 dev.off()
 ```
 
-## Potentially incorrect coordinates
+
+## Switched coordinates
 ```{r}
 df8 <- 
   df %>% 
   filter(K == 8) %>%
-  distinct(geometry, SampleID, cluster) %>%
-  bind_cols(st_coordinates(.))
-problem_coords <- c("Sceocc_HBS142161", "Sceocc_HBS142159")
-problem_df <- df8 %>% filter(SampleID %in% problem_coords)
+  group_by(SampleID) %>%
+  select(geometry, SampleID, PopGroup, Q, cluster) %>%
+  bind_cols(st_coordinates(.)) 
+problem_coords <- get_corrected_coords() %>% pull(SampleID)
+problem_df <-  
+  df8 %>% 
+  filter(SampleID %in% problem_coords) %>% 
+  group_by(SampleID) %>%
+  filter(Q == max(Q, na.rm = TRUE)) 
 problem_df
-pdf(here(plotpath, "potentially_incorrect_coordinates.pdf"), width = 7, height = 7)
+
+df8 %>% filter(grepl("213197", SampleID) | grepl("214858", SampleID)) %>% 
+  group_by(SampleID) %>%
+  filter(Q == max(Q, na.rm = TRUE)) 
+
+df_clean <- 
+  df8 %>%
+  drop_na(Q) %>%
+  select(-cluster) %>%
+  group_by(SampleID, X, Y, PopGroup) %>%
+  pivot_wider(names_from = PopGroup, values_from = Q, values_fill = 0)
+
+pdf(here(plotpath, "potentially_incorrect_coordinates.pdf"), width = 10, height = 8)
+# Plot
+library(scatterpie)
+ggplot() +
+  geom_sf(data = ca) +
+  geom_scatterpie(
+    data = st_drop_geometry(df_clean),
+    aes(x = X, y = Y, group = SampleID),
+    cols = paste0("V", 1:8),
+    pie_scale = 0.7
+  ) +
+  theme_void() 
+
 ggplot(df8) +
   geom_sf(data = ca) +
   geom_sf(aes(col = cluster)) +
   geom_sf(data = problem_df, aes(col = cluster), size = 3) +
-  ggrepel::geom_text_repel(data = problem_df, aes(x = X, y = Y, label = SampleID), size = 3) +
+  geom_sf(data = problem_df, size = 3, pch = 1) +
+  ggrepel::geom_text_repel(data = problem_df, aes(x = X, y = Y, label = SampleID), size = 3, vjust = 0.5) +
+  theme_void()
+dev.off()
+
+pdf(here(plotpath, "labelled_coordinates.pdf"), width = 20, height = 25)
+ggplot(distinct(df8, SampleID, cluster, geometry, X, Y)) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = cluster)) +
+  ggrepel::geom_text_repel(aes(x = X, y = Y, label = SampleID), size = 4, vjust = 0.5) +
   theme_void()
 dev.off()
 ```
