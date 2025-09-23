@@ -4,7 +4,7 @@ library(tidyverse)
 library(here)
 
 # Load chain file
-chain.ens <- read_table(here("data_processing", "chromosemble2", "outputs", "outputs_a", "xcorr_first", "satsuma_summary.chained.out"), col_names = FALSE)
+chain.ens <- read_table(here("data_processing", "chromosemble", "outputs", "outputs_p", "xcorr_first", "satsuma_summary.chained.out"), col_names = FALSE)
 names(chain.ens) <- c("qName", "qStart", "qStop", "refName", "refStart", "refStop", "V7", "dir")
 head(chain.ens)
 
@@ -43,8 +43,9 @@ df.chain.raw <-
   right_join(match.chain.df, by = "qName")
 
 # Remove scaffolds that had a cumultive matching sum < 100kb
+# Format data
 df.formatted <- 
-  df.chain.raw %>%
+  df.chain.raw %>% 
   filter(MaxMatch > 100000) %>%
   dplyr::rename(SCAFF = qName, ORIENTATION = dir) %>% 
   # Label non-chromosomes
@@ -52,6 +53,8 @@ df.formatted <-
     grepl("chr", refName) ~ refName,
     TRUE ~ "chrunknown"
   ))
+
+df.formatted %>% filter(grepl("chromosome_10", refName))
 
 # Get chromosomes
 chromosomes <- 
@@ -71,25 +74,36 @@ chromosomes_key <-
   ungroup() %>%
   select(nc, chr, refName) %>%
   distinct()
-filter(chromosomes_key, chr == "chr6")
 
 # Get rows where chrosome is duplicated (i.e., multiple scaffolds map to the same chromosome)
 # MAKE SURE TO CHECK THESE FOR MULTIPLE LARGE SCAFFOLDS ALIGNING TO THE SAME CHROSOME
 dups <- chromosomes %>% ungroup() %>% count(refName) %>% filter(n > 1) %>% pull(refName)
 chromosomes %>% filter(refName %in% dups) %>% arrange(refName) %>% data.frame()
+#    SCAFF refName MaxMatch
+# 1 SCAF_7   chr10  5021962 # X/Y?
+# 2 SCAF_8   chr10   330981 # X/Y?
+# 3 SCAF_6    chr6 29680717 # seperate chromosome
+# 4 SCAF_9    chr6 13558104 # seperate chromosome
+# 5 SCAF_7    chr7 15036356 # X/Y?
+# 6 SCAF_8    chr7 15140352 # X/Y?
+# 7 SCAF_9    chr7   111081 # X/Y?
+# chr6 and chr7 are associated with two scaffolds
 
-# Identify the scaffold with > 1Mb matches for each chromosome
+# Filter to final chromosomes with stricter max matching critera (filters out just the dups on chr10)
 final_chromosomes <- 
   chromosomes %>% 
-  filter(MaxMatch > 1000000) %>%
-  arrange(desc(MaxMatch)) 
+  filter(MaxMatch >= 50000) 
 
-final_chromosomes
+final_chromosomes %>% 
+  arrange(desc(MaxMatch)) %>% 
+  rename(new_scaff = SCAFF, und_chr = refName)
 
 # Create output file
 out <- 
   final_chromosomes %>%
   rename(CHR = refName) %>%
+  mutate(CHR = factor(CHR, levels = paste0("chr", 1:11))) %>%
+  arrange(CHR) %>%
   select(-MaxMatch) %>%
   rename(
     scaffold = SCAFF,
@@ -97,14 +111,18 @@ out <-
   ) %>%
   mutate(chr =
     case_when(
-      und_chr == "chr6" & scaffold == "SCAF_7" ~ "chr7",
-      scaffold == "SCAF_10" ~ "chr10",
+      und_chr == "chr6" & scaffold == "SCAF_9" ~ "chr7",
+      scaffold == "SCAF_7" ~ "XY?",
+      scaffold == "SCAF_8" ~ "XY?",
+      scaffold == "SCAF_12" ~ "chr10",
       TRUE ~ und_chr
     )
   ) %>%
-  select(-und_chr) 
+  select(-und_chr) %>%
+  # Distinct because the XY scaffolds are duplicated
+  distinct()
 
 out
 
 # Write output
-write_csv(out, here("data_processing", "chromosemble2", "outputs", "chromosome_labels_a.csv"))
+write_csv(out, here("data_processing", "chromosemble2", "outputs", "chromosome_labels_p.csv"))
