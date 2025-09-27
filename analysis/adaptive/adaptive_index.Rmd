@@ -27,7 +27,6 @@ source(here("general_functions.R"))
 ## Specify model to examine
 
 ```{r}
-gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
 prefix = "58-Sceloporus_bio1ndvi_gea"
 path = here("analysis", "adaptive", "outputs")
 ```

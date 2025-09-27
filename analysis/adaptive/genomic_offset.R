@@ -1,323 +1,5 @@
 # Calculating offset functions --------------------------------------------
 
-#' Predict genomic offset from an RDA model
-#' Code adapted from Capblancq & Forester (2021) https://doi.org/10.1111/2041-210X.13722
-#' GitHub repo available here: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/src/genomic_offset.R
-#'
-#' @param loadings loadings from RDA model
-#' @param biplot biplot values from RDA model
-#' @param eig eigenvalues from RDA model
-#' @param K number of RDA axes to retain (defaults to 2)
-#' @param env_pres present env layers
-#' @param env_fut future env layers
-#' @param scale_env attr for scaled env vars
-#' @param center_env attr for centered env vars
-#'
-#' @return list with five elements: projected present, future, offset, global offset, and weights
-#' @export
-genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut) {
-  # Extract values from our environmental rasters
-  env <- terra::extract(env_pres, coords)
-  # Standardize environmental variables and make into dataframe
-  env <- scale(env, center = TRUE, scale = TRUE)
-  # Recovering scaling coefficients for extracted env values
-  scale_env <- attr(env, 'scaled:scale')
-  center_env <- attr(env, 'scaled:center')
-
-  # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
-  env_fut_26 <- terra::subset(env_fut, c(1,3)) # BIO1 ssp126 & NDVI
-  names(env_fut_26) <- names(env_pres)
-  env_fut_85 <- terra::subset(env_fut, 2:3) # BIO ssp585 & NDVI
-  names(env_fut_85) <- names(env_pres)
-
-  var_env_proj_pres <- offset_scaling_helper(env_layer = env_pres, center_env, scale_env, biplot)
-  var_env_proj_fut_26 <- offset_scaling_helper(env_layer = env_fut_26, center_env, scale_env, biplot)
-  var_env_proj_fut_85 <- offset_scaling_helper(env_layer = env_fut_85, center_env, scale_env, biplot)
-
-  Proj_pres <- offset_proj_helper(biplot, var_env_proj = var_env_proj_pres, K, type = "present")
-  Proj_fut_26 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_26, K, type = "future")
-  Proj_fut_85 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_85, K, type = "future")
-
-  # Single axis genetic offset
-  Proj_offset_26 <- list()
-  for(i in 1:K) {
-    Proj_offset_26[[i]] <- abs(Proj_pres[[i]] - Proj_fut_26[[i]])
-    names(Proj_offset_26)[i] <- paste0("RDA", as.character(i))
-  }
-  Proj_offset_85 <- list()
-  for(i in 1:K) {
-    Proj_offset_85[[i]] <- abs(Proj_pres[[i]] - Proj_fut_85[[i]])
-    names(Proj_offset_85)[i] <- paste0("RDA", as.character(i))
-  }
-
-  # Weights based on axis eigenvalues
-  weights <- eig %>% dplyr::mutate(weights = mod.CCA.eig / sum(eig$mod.CCA.eig)) %>% pull(weights)
-
-  # Weighing the current and future adaptive indices based on the eigenvalues of the associated axes
-  # Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
-  Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_pres[[x]], mat = TRUE)}))
-  Proj_offset_pres <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_pres[,x] * weights[x])))
-
-  # Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_26[[x]])[,-c(1,2)]))
-  Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_26[[x]], mat = TRUE)}))
-  Proj_offset_fut_26 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_26[,x] * weights[x])))
-
-  # Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_2[[x]])[,-c(1,2)]))
-  Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_85[[x]], mat = TRUE)}))
-  Proj_offset_fut_85 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_85[,x] * weights[x])))
-
-  # Predict a global genetic offset, incorporating the first K axes weighted by their eigenvalues
-  # TODO in development
-  # ras_26 <- Proj_offset_26[[1]]
-  # ras_26[!is.na(ras_26)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_26[x,]), method = "euclidean")))
-  # names(ras_26) <- "Global_offset_26"
-  # Proj_offset_global_26 <- ras_26
-
-  # ras_85 <- Proj_offset_85[[1]]
-  # ras_85[!is.na(ras_85)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_85[x,]), method = "euclidean")))
-  # names(ras_85) <- "Global_offset_85"
-  # Proj_offset_global_85 <- ras_85
-
-  # Return projections for current and future climates for each RDA axis, prediction of genetic offset for each RDA axis and a global genetic offset
-  return(list(Proj_pres = Proj_pres, Proj_fut_RCP26 = Proj_fut_26, Proj_fut_RCP85 = Proj_fut_85,
-              Proj_offset_RCP26 = Proj_offset_26, Proj_offset_RCP85 = Proj_offset_85,
-              Proj_offset_global_RCP26 = NULL, Proj_offset_global_RCP85 = NULL,
-              weights = weights[1:K]))
-}
-
-offset_scaling_helper <- function(env_layer, center_env, scale_env, biplot) {
-  # Matrix with NA values preserved
-  env_vals <- terra::values(env_layer[[row.names(biplot)]], mat = TRUE)
-  # Manually scale the matrix using precomputed center and scale
-  scaled_vals <- sweep(env_vals, 2, center_env[row.names(biplot)], "-")
-  scaled_vals <- sweep(scaled_vals, 2, scale_env[row.names(biplot)], "/")
-  # Convert to df
-  var_env_proj <- as.data.frame(scaled_vals)
-  return(var_env_proj)
-}
-
-#' Helper function for calculating offset
-#'
-#' @param biplot RDA biplot results
-#' @param var_env_proj projected env
-#' @param K number of layers
-#' @param type either "present" or "future"; just for naming
-#'
-#' @return
-#' @export
-offset_proj_helper <- function(biplot, var_env_proj, K, type) {
-  Proj_list <- list()
-  if (type == "present") prefix = "RDA_pres_"
-  if (type == "future") prefix = "RDA_fut_"
-  for(i in 1:K) {
-    vars_i <- rownames(biplot)
-    loadings_i <- biplot[, i]
-  
-    projection_vals <- rowSums(var_env_proj[, vars_i] * matrix(loadings_i, nrow = nrow(var_env_proj), ncol = length(loadings_i), byrow = TRUE))
-    ras <- env_pres[[1]]
-    ras[] <- projection_vals
-
-    names(ras) <- paste0(prefix, as.character(i))
-    Proj_list[[i]] <- ras
-    names(Proj_list)[i] <- paste0("RDA", as.character(i))
-  }
-
-  # Old, uses raster package
-  # for(i in 1:K) {
-  #   ras <- env[[1]]
-  #   ras[!is.na(ras)] <- as.vector(apply(var_env_proj[,rownames(biplot[i])], 1, function(x) sum(x * biplot[,i])))
-  #   names(ras) <- paste0(prefix, as.character(i))
-  #   Proj_list[[i]] <- ras
-  #   names(Proj_list)[i] <- paste0("RDA", as.character(i))
-  # }
-  return(Proj_list)
-}
-
-#' @title Predict Biological Dissimilarities Between Sites or Times Using a
-#' Fitted Generalized Dissimilarity Model
-#'
-#' @description This function predicts biological distances between sites or times using a
-#'  model object returned from \code{\link[gdm]{gdm}}. Predictions between site
-#'  pairs require a data frame containing the values of predictors for pairs
-#'  of locations, formatted as follows: distance, weights, s1.X, s1.Y, s2.X,
-#'  s2.Y, s1.Pred1, s1.Pred2, ..., s1.PredN, s2.Pred1, s2.Pred2, ..., s2.PredN, ...,
-#'  Predictions of biological change through time require two raster stacks or
-#'  bricks for environmental conditions at two time periods, each with a
-#'  layer for each environmental predictor in the fitted model.
-#'
-#' @usage \method{predict}{gdm}(object, data, time=FALSE, predRasts=NULL, filename="", ...)
-#'
-#' @param object A gdm model object resulting from a call to \code{\link[gdm]{gdm}}.
-#'
-#' @param data Either a data frame containing the values of predictors for pairs
-#' of sites, in the same format and structure as used to fit the model using
-#' \code{\link[gdm]{gdm}} or a raster stack if a prediction of biological change
-#' through time is needed.
-#'
-#' For a data frame, the first two columns - distance and weights - are required
-#' by the function but are not used in the prediction and can therefore be filled
-#' with dummy data (e.g. all zeros). If geo is TRUE, then the s1.X, s1.Y and s2.X,
-#' s2.Y columns will be used for calculating the geographical distance between
-#' each site for inclusion of the geographic predictor term into the GDM model.
-#' If geo is FALSE, then the s1.X, s1.Y, s2.X and s2.Y data columns are ignored.
-#' However these columns are still REQUIRED and can be filled with dummy data
-#' (e.g. all zeroes). The remaining columns are for N predictors for Site 1 and
-#' followed by N predictors for Site 2. The order of the columns must match those
-#' in the site-pair table used to fit the model.
-#'
-#' A raster stack should be provided only when time=T and should contain one
-#' layer for each environmental predictor in the same order as the columns in
-#' the site-pair table used to fit the model.
-#'
-#' @param time TRUE/FALSE: Is the model prediction for biological change through time?
-#'
-#' @param predRasts A raster stack characterizing environmental conditions for a
-#' different time in the past or future, with the same extent, resolution, and
-#' layer order as the data object. Required only if time=T.
-#'
-#' @param filename character. Output filename for rasters. When provided the raster layers are
-#' written to file directly.
-#'
-#' @param ... additional arguments to pass to terra \code{\link[terra]{predict}} function.
-#'
-#' @return predict returns either a response vector with the same length as the
-#'  number of rows in the input data frame or a raster depicting change through time across the study region.
-#'
-#' @seealso \code{\link[gdm]{gdm.transform}}
-#'
-#' @examples
-#' ##set up site-pair table using the southwest data set
-#' sppData <- southwest[, c(1,2,14,13)]
-#' envTab <- southwest[, c(2:ncol(southwest))]
-#'
-#' # remove soils (no rasters for these)
-#' envTab <- envTab[,-c(2:6)]
-#' sitePairTab <- formatsitepair(sppData, 2, XColumn="Long", YColumn="Lat", sppColumn="species",
-#'                              siteColumn="site", predData=envTab)
-#'
-#' # create GDM
-#' gdmMod <- gdm(sitePairTab, geo=TRUE)
-#'
-#' ##predict GDM
-#' predDiss <- predict(gdmMod, sitePairTab)
-#'
-#' ##time example
-#' rastFile <- system.file("./extdata/swBioclims.grd", package="gdm")
-#' envRast <- terra::rast(rastFile)
-#'
-#' ##make some fake climate change data
-#' futRasts <- envRast
-#' ##reduce winter precipitation by 25%
-#' futRasts[[3]] <- futRasts[[3]]*0.75
-#'
-#' timePred <- predict(gdmMod, envRast, time=TRUE, predRasts=futRasts)
-#' terra::plot(timePred)
-#'
-#' @keywords gdm
-#'
-#' @importFrom methods is
-#'
-#' @export
-old_predict.gdm <- function(object, data, time = FALSE, predRasts = NULL, filename){
-  #################
-  ##lines used to quickly test function
-  ##object = gdm model
-  ##data = a sitepair table
-  #object <- gdm.rastF
-  #data <- envRast
-  #time <- T
-  #predRasts <- futRasts
-  #################
-
-  if (time) {
-    # data <- .check_rast(data, "data")
-    # predRasts <- .check_rast(predRasts, "predRasts")
-    for(i in 1:terra::nlyr(data)){
-      if(names(data)[i]!=names(predRasts)[i]){
-        stop("Layer names do not match the variables used to fit the model.")
-      }
-    }
-    if (object$geo) {
-      if(terra::nlyr(data)!=length(object$predictors)-1 | terra::nlyr(predRasts)!=length(object$predictors)-1){
-        stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
-      }
-    } else {
-      if(terra::nlyr(data)!=length(object$predictors) | terra::nlyr(predRasts)!=length(object$predictors)){
-        stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
-      }
-    }
-
-    # Sets the correct names to the data
-    names(data) <- paste0("s1.", names(data))
-    names(predRasts) <- paste0("s2.", names(predRasts))
-
-    # Stack all the raster layers to for prediction
-    data <- c(data, predRasts)
-  }
-
-  # makes the prediction based on the data object
-  gdm_predict <- function(mod, dat, raster = FALSE, ...) {
-
-    nr <- nrow(dat)
-    predicted <- rep(0, times = nr)
-
-    # convert to matrix once
-    dat <- as.matrix(dat)
-    # if predicting with rasters, get xy from interpolate and add constants
-    if (raster) {
-      const <- matrix(0L, nrow = nr, ncol = 2)
-      colnames(const) <- c("distance", "weights")
-      xy_cols <- dat[, 1:2]
-      colnames(xy_cols) <- c("s1.xCoord", "s1.yCoord")
-      dat <- cbind(const, xy_cols, dat)
-    }
-
-    z <- .C( "GDM_PredictFromTable",
-             dat,
-             as.integer(mod$geo),
-             as.integer(length(mod$predictors)),
-             as.integer(nr),
-             as.double(mod$knots),
-             as.integer(mod$splines),
-             as.double(c(mod$intercept, mod$coefficients)),
-             preddata = as.double(predicted),
-             PACKAGE = "gdm")
-
-    return(
-      z$preddata
-    )
-  }
-
-  # if a time prediction, maps the predicted values to a raster and returns
-  # the layer, otherwise returns a dataframe of the predicted values
-  if (time) {
-    # predict using gdm model and terra package using terra::interpolate to get xy too
-    output <- terra::interpolate(
-      object = data,
-      model = object,
-      fun = gdm_predict,
-      xyNames = c("s2.xCoord", "s2.yCoord"),
-      raster = TRUE,
-      na.rm = TRUE,
-      filename = filename,
-      overwrite = TRUE)
-
-    return(output)
-
-  } else{
-    # predict using a data.frame
-    output <- gdm_predict(
-      mod = object,
-      dat = data,
-      raster = FALSE
-    )
-
-    return(output)
-  }
-}
-
-# GDM package functions (unaltered) -----------------------------------------------
-
 #' @title Predict Biological Dissimilarities Between Sites or Times Using a
 #' Fitted Generalized Dissimilarity Model
 #'
@@ -474,7 +156,6 @@ predict_gdm <- function(object, data, time=FALSE, predRasts=NULL, filename="", .
 
   # makes the prediction based on the data object
   gdm_predict <- function(mod, dat, raster = FALSE, ...) {
-
     nr <- nrow(dat)
     predicted <- rep(0, times = nr)
 
@@ -921,4 +602,322 @@ custom_gdm_map <- function(gdm_model, envlayers, coords, plot_vars = TRUE, scl =
   s <- list(rastTrans, pcaRastRGB, pcaSamp, pcaRast)
   names(s) <- c("rastTrans", "pcaRastRGB", "pcaSamp", "pcaRast")
   return(s)
+}
+
+########## GRAVEYARD
+
+#' @title Predict Biological Dissimilarities Between Sites or Times Using a
+#' Fitted Generalized Dissimilarity Model
+#'
+#' @description This function predicts biological distances between sites or times using a
+#'  model object returned from \code{\link[gdm]{gdm}}. Predictions between site
+#'  pairs require a data frame containing the values of predictors for pairs
+#'  of locations, formatted as follows: distance, weights, s1.X, s1.Y, s2.X,
+#'  s2.Y, s1.Pred1, s1.Pred2, ..., s1.PredN, s2.Pred1, s2.Pred2, ..., s2.PredN, ...,
+#'  Predictions of biological change through time require two raster stacks or
+#'  bricks for environmental conditions at two time periods, each with a
+#'  layer for each environmental predictor in the fitted model.
+#'
+#' @usage \method{predict}{gdm}(object, data, time=FALSE, predRasts=NULL, filename="", ...)
+#'
+#' @param object A gdm model object resulting from a call to \code{\link[gdm]{gdm}}.
+#'
+#' @param data Either a data frame containing the values of predictors for pairs
+#' of sites, in the same format and structure as used to fit the model using
+#' \code{\link[gdm]{gdm}} or a raster stack if a prediction of biological change
+#' through time is needed.
+#'
+#' For a data frame, the first two columns - distance and weights - are required
+#' by the function but are not used in the prediction and can therefore be filled
+#' with dummy data (e.g. all zeros). If geo is TRUE, then the s1.X, s1.Y and s2.X,
+#' s2.Y columns will be used for calculating the geographical distance between
+#' each site for inclusion of the geographic predictor term into the GDM model.
+#' If geo is FALSE, then the s1.X, s1.Y, s2.X and s2.Y data columns are ignored.
+#' However these columns are still REQUIRED and can be filled with dummy data
+#' (e.g. all zeroes). The remaining columns are for N predictors for Site 1 and
+#' followed by N predictors for Site 2. The order of the columns must match those
+#' in the site-pair table used to fit the model.
+#'
+#' A raster stack should be provided only when time=T and should contain one
+#' layer for each environmental predictor in the same order as the columns in
+#' the site-pair table used to fit the model.
+#'
+#' @param time TRUE/FALSE: Is the model prediction for biological change through time?
+#'
+#' @param predRasts A raster stack characterizing environmental conditions for a
+#' different time in the past or future, with the same extent, resolution, and
+#' layer order as the data object. Required only if time=T.
+#'
+#' @param filename character. Output filename for rasters. When provided the raster layers are
+#' written to file directly.
+#'
+#' @param ... additional arguments to pass to terra \code{\link[terra]{predict}} function.
+#'
+#' @return predict returns either a response vector with the same length as the
+#'  number of rows in the input data frame or a raster depicting change through time across the study region.
+#'
+#' @seealso \code{\link[gdm]{gdm.transform}}
+#'
+#' @examples
+#' ##set up site-pair table using the southwest data set
+#' sppData <- southwest[, c(1,2,14,13)]
+#' envTab <- southwest[, c(2:ncol(southwest))]
+#'
+#' # remove soils (no rasters for these)
+#' envTab <- envTab[,-c(2:6)]
+#' sitePairTab <- formatsitepair(sppData, 2, XColumn="Long", YColumn="Lat", sppColumn="species",
+#'                              siteColumn="site", predData=envTab)
+#'
+#' # create GDM
+#' gdmMod <- gdm(sitePairTab, geo=TRUE)
+#'
+#' ##predict GDM
+#' predDiss <- predict(gdmMod, sitePairTab)
+#'
+#' ##time example
+#' rastFile <- system.file("./extdata/swBioclims.grd", package="gdm")
+#' envRast <- terra::rast(rastFile)
+#'
+#' ##make some fake climate change data
+#' futRasts <- envRast
+#' ##reduce winter precipitation by 25%
+#' futRasts[[3]] <- futRasts[[3]]*0.75
+#'
+#' timePred <- predict(gdmMod, envRast, time=TRUE, predRasts=futRasts)
+#' terra::plot(timePred)
+#'
+#' @keywords gdm
+#'
+#' @importFrom methods is
+#'
+#' @export
+old_predict.gdm <- function(object, data, time = FALSE, predRasts = NULL, filename){
+  #################
+  ##lines used to quickly test function
+  ##object = gdm model
+  ##data = a sitepair table
+  #object <- gdm.rastF
+  #data <- envRast
+  #time <- T
+  #predRasts <- futRasts
+  #################
+
+  if (time) {
+    # data <- .check_rast(data, "data")
+    # predRasts <- .check_rast(predRasts, "predRasts")
+    for(i in 1:terra::nlyr(data)){
+      if(names(data)[i]!=names(predRasts)[i]){
+        stop("Layer names do not match the variables used to fit the model.")
+      }
+    }
+    if (object$geo) {
+      if(terra::nlyr(data)!=length(object$predictors)-1 | terra::nlyr(predRasts)!=length(object$predictors)-1){
+        stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
+      }
+    } else {
+      if(terra::nlyr(data)!=length(object$predictors) | terra::nlyr(predRasts)!=length(object$predictors)){
+        stop("Number of variables supplied for prediction does not equal the number used to fit the model.")
+      }
+    }
+
+    # Sets the correct names to the data
+    names(data) <- paste0("s1.", names(data))
+    names(predRasts) <- paste0("s2.", names(predRasts))
+
+    # Stack all the raster layers to for prediction
+    data <- c(data, predRasts)
+  }
+
+  # makes the prediction based on the data object
+  gdm_predict <- function(mod, dat, raster = FALSE, ...) {
+
+    nr <- nrow(dat)
+    predicted <- rep(0, times = nr)
+
+    # convert to matrix once
+    dat <- as.matrix(dat)
+    # if predicting with rasters, get xy from interpolate and add constants
+    if (raster) {
+      const <- matrix(0L, nrow = nr, ncol = 2)
+      colnames(const) <- c("distance", "weights")
+      xy_cols <- dat[, 1:2]
+      colnames(xy_cols) <- c("s1.xCoord", "s1.yCoord")
+      dat <- cbind(const, xy_cols, dat)
+    }
+
+    z <- .C( "GDM_PredictFromTable",
+             dat,
+             as.integer(mod$geo),
+             as.integer(length(mod$predictors)),
+             as.integer(nr),
+             as.double(mod$knots),
+             as.integer(mod$splines),
+             as.double(c(mod$intercept, mod$coefficients)),
+             preddata = as.double(predicted),
+             PACKAGE = "gdm")
+
+    return(
+      z$preddata
+    )
+  }
+
+  # if a time prediction, maps the predicted values to a raster and returns
+  # the layer, otherwise returns a dataframe of the predicted values
+  if (time) {
+    # predict using gdm model and terra package using terra::interpolate to get xy too
+    output <- terra::interpolate(
+      object = data,
+      model = object,
+      fun = gdm_predict,
+      xyNames = c("s2.xCoord", "s2.yCoord"),
+      raster = TRUE,
+      na.rm = TRUE,
+      filename = filename,
+      overwrite = TRUE)
+
+    return(output)
+
+  } else{
+    # predict using a data.frame
+    output <- gdm_predict(
+      mod = object,
+      dat = data,
+      raster = FALSE
+    )
+
+    return(output)
+  }
+}
+
+#' Predict genomic offset from an RDA model
+#' Code adapted from Capblancq & Forester (2021) https://doi.org/10.1111/2041-210X.13722
+#' GitHub repo available here: https://github.com/Capblancq/RDA-landscape-genomics/blob/main/src/genomic_offset.R
+#'
+#' @param loadings loadings from RDA model
+#' @param biplot biplot values from RDA model
+#' @param eig eigenvalues from RDA model
+#' @param K number of RDA axes to retain (defaults to 2)
+#' @param env_pres present env layers
+#' @param env_fut future env layers
+#' @param scale_env attr for scaled env vars
+#' @param center_env attr for centered env vars
+#'
+#' @return list with five elements: projected present, future, offset, global offset, and weights
+#' @export
+genomic_offset <- function(loadings, biplot, eig, K = 2, env_pres, env_fut) {
+  # Extract values from our environmental rasters
+  env <- terra::extract(env_pres, coords)
+  # Standardize environmental variables and make into dataframe
+  env <- scale(env, center = TRUE, scale = TRUE)
+  # Recovering scaling coefficients for extracted env values
+  scale_env <- attr(env, 'scaled:scale')
+  center_env <- attr(env, 'scaled:center')
+
+  # Deal with future layer naming; 1 is RCP2.6 and 2 is RCP8.5
+  env_fut_26 <- terra::subset(env_fut, c(1,3)) # BIO1 ssp126 & NDVI
+  names(env_fut_26) <- names(env_pres)
+  env_fut_85 <- terra::subset(env_fut, 2:3) # BIO ssp585 & NDVI
+  names(env_fut_85) <- names(env_pres)
+
+  var_env_proj_pres <- offset_scaling_helper(env_layer = env_pres, center_env, scale_env, biplot)
+  var_env_proj_fut_26 <- offset_scaling_helper(env_layer = env_fut_26, center_env, scale_env, biplot)
+  var_env_proj_fut_85 <- offset_scaling_helper(env_layer = env_fut_85, center_env, scale_env, biplot)
+
+  Proj_pres <- offset_proj_helper(biplot, var_env_proj = var_env_proj_pres, K, type = "present")
+  Proj_fut_26 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_26, K, type = "future")
+  Proj_fut_85 <- offset_proj_helper(biplot, var_env_proj = var_env_proj_fut_85, K, type = "future")
+
+  # Single axis genetic offset
+  Proj_offset_26 <- list()
+  for(i in 1:K) {
+    Proj_offset_26[[i]] <- abs(Proj_pres[[i]] - Proj_fut_26[[i]])
+    names(Proj_offset_26)[i] <- paste0("RDA", as.character(i))
+  }
+  Proj_offset_85 <- list()
+  for(i in 1:K) {
+    Proj_offset_85[[i]] <- abs(Proj_pres[[i]] - Proj_fut_85[[i]])
+    names(Proj_offset_85)[i] <- paste0("RDA", as.character(i))
+  }
+
+  # Weights based on axis eigenvalues
+  weights <- eig %>% dplyr::mutate(weights = mod.CCA.eig / sum(eig$mod.CCA.eig)) %>% pull(weights)
+
+  # Weighing the current and future adaptive indices based on the eigenvalues of the associated axes
+  # Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_pres[[x]])[,-c(1,2)]))
+  Proj_offset_pres <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_pres[[x]], mat = TRUE)}))
+  Proj_offset_pres <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_pres[,x] * weights[x])))
+
+  # Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_26[[x]])[,-c(1,2)]))
+  Proj_offset_fut_26 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_26[[x]], mat = TRUE)}))
+  Proj_offset_fut_26 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_26[,x] * weights[x])))
+
+  # Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) rasterToPoints(Proj_fut_2[[x]])[,-c(1,2)]))
+  Proj_offset_fut_85 <- do.call(cbind, lapply(1:K, function(x) {terra::values(Proj_fut_85[[x]], mat = TRUE)}))
+  Proj_offset_fut_85 <- as.data.frame(do.call(cbind, lapply(1:K, function(x) Proj_offset_fut_85[,x] * weights[x])))
+
+  # Predict a global genetic offset, incorporating the first K axes weighted by their eigenvalues
+  # TODO in development
+  # ras_26 <- Proj_offset_26[[1]]
+  # ras_26[!is.na(ras_26)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_26[x,]), method = "euclidean")))
+  # names(ras_26) <- "Global_offset_26"
+  # Proj_offset_global_26 <- ras_26
+
+  # ras_85 <- Proj_offset_85[[1]]
+  # ras_85[!is.na(ras_85)] <- unlist(lapply(1:nrow(Proj_offset_pres), function(x) dist(rbind(Proj_offset_pres[x,], Proj_offset_fut_85[x,]), method = "euclidean")))
+  # names(ras_85) <- "Global_offset_85"
+  # Proj_offset_global_85 <- ras_85
+
+  # Return projections for current and future climates for each RDA axis, prediction of genetic offset for each RDA axis and a global genetic offset
+  return(list(Proj_pres = Proj_pres, Proj_fut_RCP26 = Proj_fut_26, Proj_fut_RCP85 = Proj_fut_85,
+              Proj_offset_RCP26 = Proj_offset_26, Proj_offset_RCP85 = Proj_offset_85,
+              Proj_offset_global_RCP26 = NULL, Proj_offset_global_RCP85 = NULL,
+              weights = weights[1:K]))
+}
+
+offset_scaling_helper <- function(env_layer, center_env, scale_env, biplot) {
+  # Matrix with NA values preserved
+  env_vals <- terra::values(env_layer[[row.names(biplot)]], mat = TRUE)
+  # Manually scale the matrix using precomputed center and scale
+  scaled_vals <- sweep(env_vals, 2, center_env[row.names(biplot)], "-")
+  scaled_vals <- sweep(scaled_vals, 2, scale_env[row.names(biplot)], "/")
+  # Convert to df
+  var_env_proj <- as.data.frame(scaled_vals)
+  return(var_env_proj)
+}
+
+#' Helper function for calculating offset
+#'
+#' @param biplot RDA biplot results
+#' @param var_env_proj projected env
+#' @param K number of layers
+#' @param type either "present" or "future"; just for naming
+#'
+#' @return
+#' @export
+offset_proj_helper <- function(biplot, var_env_proj, K, type) {
+  Proj_list <- list()
+  if (type == "present") prefix = "RDA_pres_"
+  if (type == "future") prefix = "RDA_fut_"
+  for(i in 1:K) {
+    vars_i <- rownames(biplot)
+    loadings_i <- biplot[, i]
+  
+    projection_vals <- rowSums(var_env_proj[, vars_i] * matrix(loadings_i, nrow = nrow(var_env_proj), ncol = length(loadings_i), byrow = TRUE))
+    ras <- env_pres[[1]]
+    ras[] <- projection_vals
+
+    names(ras) <- paste0(prefix, as.character(i))
+    Proj_list[[i]] <- ras
+    names(Proj_list)[i] <- paste0("RDA", as.character(i))
+  }
+
+  # Old, uses raster package
+  # for(i in 1:K) {
+  #   ras <- env[[1]]
+  #   ras[!is.na(ras)] <- as.vector(apply(var_env_proj[,rownames(biplot[i])], 1, function(x) sum(x * biplot[,i])))
+  #   names(ras) <- paste0(prefix, as.character(i))
+  #   Proj_list[[i]] <- ras
+  #   names(Proj_list)[i] <- paste0("RDA", as.character(i))
+  # }
+  return(Proj_list)
 }

@@ -28,7 +28,6 @@ source(here("general_functions.R"))
 ## Specify models to examine
 
 ```{r}
-gea_method = "bio1ndvi" # "pca" or "bio1ndvi"
 path = here("analysis", "adaptive", "outputs")
 RCP = "85" # "26"
 ```
