@@ -21,7 +21,7 @@ get_corrected_coords <- function() {
     dplyr::select(SampleID = SequenceID, x = Longitude1, y = Latitude1)
 }
 
-get_coords <- function(sf = FALSE) {
+get_coords <- function(sf = FALSE, all = FALSE) {
   # sample coords
   coords <- read_table(here("data", "ccgp_data", "58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
@@ -69,6 +69,9 @@ get_coords <- function(sf = FALSE) {
   # Filter to samples in vcf
   coords <- coords %>% filter(SampleID %in% fam$X2)
 
+  # If all = TRUE, return coordinates before removing beckki samples, unknown provenance sample, and potentially swapped samples
+  if (all) {return(coords)}
+
   message(
     "Removing: ", length(beckii_samples), " S. beckii samples, ",
     length(unknown_samples), " unknown provenance sample, and ",
@@ -93,8 +96,8 @@ get_coords <- function(sf = FALSE) {
 get_range <- function(){
   range_map <-
     st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>%
-    st_transform(3310) %>%
-    st_intersection(get_ca() %>% st_transform(3310))
+    st_transform(3310)# %>%
+    # st_intersection(get_ca() %>% st_transform(3310))
 }
 
 get_dem <- function(r = FALSE) {
