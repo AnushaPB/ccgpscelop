@@ -6,7 +6,7 @@ get_ca <- function() {
   ca <- states[states$STUSPS == "CA", "STUSPS"]
   #ca <- st_read(here("data", "ca_state", "CA_State.shp"))
   #ca <- sf::st_transform(ca, sf::st_crs(4326))
-  
+
   # Remove islands by taking the largest polygon
   ca_parts <- st_cast(ca, "POLYGON")
   ca_parts$area <- st_area(ca_parts)
@@ -16,12 +16,12 @@ get_ca <- function() {
 }
 
 get_corrected_coords <- function() {
-  cc <- 
-    readxl::read_excel(here("data", "CCGP_SCOC_coordfixes.xlsx")) %>% 
-    dplyr::select(SampleID = SequenceID, x = Longitude1, y = Latitude1) 
+  cc <-
+    readxl::read_excel(here("data", "CCGP_SCOC_coordfixes.xlsx")) %>%
+    dplyr::select(SampleID = SequenceID, x = Longitude1, y = Latitude1)
 }
 
-get_coords <- function(sf = FALSE) {
+get_coords <- function(sf = FALSE, all = FALSE) {
   # sample coords
   coords <- read_table(here("data", "ccgp_data", "58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
@@ -30,20 +30,20 @@ get_coords <- function(sf = FALSE) {
   cc <- get_corrected_coords()
 
   # Add corrected coordinates
-  coords <- 
+  coords <-
     coords %>%
     left_join(cc, by = "SampleID") %>%
     mutate(
       x = ifelse(is.na(x.y), x.x, x.y),
       y = ifelse(is.na(y.y), y.x, y.y)
     ) %>%
-    select(SampleID, x, y)
+    dplyr::select(SampleID, x, y)
 
   # Check that coordinates were correctly replaced
   stopifnot(coords %>% filter(SampleID == "Sceocc_HBS142159") %>% pull(y) == cc %>% filter(SampleID == "Sceocc_HBS142159") %>% pull(y))
 
   # S. beckii samples
-  beckii_samples <- 
+  beckii_samples <-
     c(
       "Scelocci_CCGPMC_MW01-3-14",
       "Scebec_7687",
@@ -62,7 +62,7 @@ get_coords <- function(sf = FALSE) {
 
   # Filter for samples in the VCF
   fam <- read_table(here("data", "ccgp_data", "58-Sceloporus_complete_coords_annotated.fam"), col_names = FALSE)
-  
+
   # Identify samples not in vcf
   ndropped <- length(setdiff(coords$SampleID, fam$X2))
 
@@ -73,12 +73,12 @@ get_coords <- function(sf = FALSE) {
   if (all) {return(coords)}
 
   message(
-    "Removing: ", length(beckii_samples), " S. beckii samples, ", 
-    length(unknown_samples), " unknown provenance sample, and ", 
+    "Removing: ", length(beckii_samples), " S. beckii samples, ",
+    length(unknown_samples), " unknown provenance sample, and ",
     length(swapped_samples), " potentially swapped samples",
     "\nNumber of samples dropped from VCF during QC: ", ndropped
   )
-  
+
   # Remove beckii, unknown provenance sample, and potentially swapped samples
   coords <-
     coords %>%
@@ -87,17 +87,17 @@ get_coords <- function(sf = FALSE) {
   if (sf) {
     coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326)
   }
-  
+
   message(nrow(coords), " samples with coordinates")
 
   return(coords)
 }
 
 get_range <- function(){
-  range_map <- 
-    st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>% 
-    st_transform(3310) %>%
-    st_intersection(get_ca() %>% st_transform(3310)) 
+  range_map <-
+    st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>%
+    st_transform(3310)# %>%
+    # st_intersection(get_ca() %>% st_transform(3310))
 }
 
 get_dem <- function(r = FALSE) {
@@ -118,7 +118,7 @@ get_env <- function() {
 }
 
 get_biokey <- function(){
-  biokey <- 
+  biokey <-
     data.frame(
       bio = paste0("bio_", 1:20),
       description = c(
@@ -145,16 +145,16 @@ get_biokey <- function(){
       )
     ) %>%
     mutate(
-      vartype = 
+      vartype =
         case_when(
-          grepl("temperature", description) ~ "temperature", 
+          grepl("temperature", description) ~ "temperature",
           grepl("precipitation", description) ~ "precipitation",
           grepl("isothermality", description) ~ "temperature",
           grepl("mean diurnal range", description) ~ "temperature",
           TRUE ~ description
           )
         )
-    
+
     return(biokey)
   }
 
@@ -182,7 +182,7 @@ gglm <- function(x, y, df, col = NULL){
     ggpubr::stat_cor(method = "pearson", label.y = min(df[[y]], na.rm = TRUE), label.x = min(df[[x]], na.rm = TRUE)) +
     theme_classic() +
     scale_color_viridis_c(option = "mako") +
-    theme(legend.position = "none") 
+    theme(legend.position = "none")
 }
 
 ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
@@ -210,7 +210,7 @@ ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
   pretty_name_y_lower <- paste0(tolower(substr(pretty_name_y, 1, 1)), substr(pretty_name_y, 2, nchar(pretty_name_y)))
 
 
-  plt <- 
+  plt <-
     ggplot(df, aes(x = predictor_resid, y = response_resid)) +
     #geom_point(aes(fill = color), pch = 21, alpha = alpha, cex = cex, col = NA) +
     geom_point(aes(col = color), alpha = alpha, cex = cex) +
@@ -219,7 +219,7 @@ ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
     ggpubr::stat_cor(method = "pearson", label.y = min(df$response_resid, na.rm = TRUE), label.x = min(df$predictor_resid, na.rm = TRUE)) +
     theme_classic() +
     theme(legend.position = "none")
-  
+
   if (!is.null(col)) {
     plt <- plt + scale_color_viridis_c(option = "mako")
   } else {
@@ -289,8 +289,8 @@ scaffold_theme <- function() {
     theme_classic(),
     facet_wrap(~scaffold, scales = "fixed", ncol = 1),
     theme(
-      axis.text = element_blank(), 
-      axis.title = element_blank(), 
+      axis.text = element_blank(),
+      axis.title = element_blank(),
       axis.line = element_blank(),
       axis.ticks = element_blank(),
       strip.background = element_blank(),
@@ -308,8 +308,8 @@ scaffold_theme_y <- function() {
     theme_classic(),
     facet_wrap(~scaffold, scales = "fixed", ncol = 1),
     theme(
-      axis.text.x = element_blank(), 
-      axis.title.x = element_blank(), 
+      axis.text.x = element_blank(),
+      axis.title.x = element_blank(),
       axis.line.x = element_blank(),
       strip.background = element_blank(),
       strip.text.x = element_text(hjust = 0, size = 10),
