@@ -69,6 +69,9 @@ get_coords <- function(sf = FALSE) {
   # Filter to samples in vcf
   coords <- coords %>% filter(SampleID %in% fam$X2)
 
+  # If all = TRUE, return coordinates before removing beckki samples, unknown provenance sample, and potentially swapped samples
+  if (all) {return(coords)}
+
   message(
     "Removing: ", length(beckii_samples), " S. beckii samples, ", 
     length(unknown_samples), " unknown provenance sample, and ", 
