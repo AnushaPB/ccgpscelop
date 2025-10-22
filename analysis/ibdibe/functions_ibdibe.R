@@ -11,8 +11,8 @@ format_dist_helper <- function(file_name, output_name){
 format_dist <- function(file_name = "58-Sceloporus_annotated_pruned_0.6_chr"){
   message("Formatting ", file_name)
   format_dist_helper(file_name, "58-Sceloporus_dist")
-  message("Formatting genes")
-  format_dist_helper("genes", "genes_dist")
+  message("Formatting non-synonymous SNPs")
+  format_dist_helper("nonsyn", "nonsyn_dist")
 }
 
 get_gendist <- function(){

@@ -7,6 +7,12 @@ library(sf)
 source(here("general_functions.R"))
 source(here("analysis", "ibdibe", "functions_ibdibe.R"))
 
+tp <- function(x){
+  png(here("TEMP.png"))
+  plot(x, col = turbo(100))
+  dev.off()
+}
+
 ca_proj <- get_ca() %>% st_transform(3310)
 plotpath <- here("analysis", "ibdibe", "plots")
 
@@ -15,7 +21,7 @@ plotpath <- here("analysis", "ibdibe", "plots")
 format_dist_helper("nonsyn", "nonsyn_dist")
 
 # Read in distance based on SNPs in genes
-gendist <- read.csv(here("analysis", "ibdibe", "outputs", "nonsyn_dist.csv"), row.names = 1)
+gendist <- read.csv(here("analysis", "ibdibe", "outputs", "genes_dist.csv"), row.names = 1)
 colnames(gendist) <- row.names(gendist) 
 
 # Get coordinates
@@ -55,15 +61,16 @@ names(envstack) <- c("bio1", "ndvi")
 env <- terra::extract(envstack, gendist_coords, ID = FALSE)
 
 # Run GDM
-gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords, env = env, quiet = TRUE)
+env_df <- env %>% dplyr::select(bio1, ndvi)
+gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords, env = env_df, quiet = TRUE)
 
 # Check coefficients
 print(gdm$coeff_df)
 
 # Plot maps (takes a little while)
 pdf(here(plotpath, "temp_gdm_outputs.pdf"), width = 5, height = 5)
-gdm_map(gdm$model, envstack,  gendist_coords, plot_vars = TRUE)
-gdm_plot_isplines(gdm$model, coords = gendist_coords, env = env, scales = "free_x")
+maps <- gdm_map(gdm$model, envstack,  gendist_coords, plot_vars = TRUE)
+gdm_plot_isplines(gdm$model, env = env_df, coords = gendist_coords, scales = "free_x")
 dev.off()
 
 # 3. PREDICT GENOMIC OFFSET ---------------------------------------------------------------
@@ -76,29 +83,42 @@ future <-
 # For this example, use 585 scenario
 future <- future[[c("CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1", "NDVI")]]
 names(future) <- c("bio1", "ndvi")
-future <- c(future[["bio1"]], envstack[["ndvi"]])
 
-# # Crop future layers
-# future_resampled <- resample(future, envstack[[1]], method = "bilinear")
-# future_crop <- crop(future_resampled, envstack)
+# Crop future layers
+future_resampled <- resample(future, envstack[[1]], method = "bilinear")
+future_crop <- crop(future_resampled, envstack)
 
-tp <- function(x){
-  png(here("TEMP.png"))
-  plot(x, col = viridis::turbo(100))
-  dev.off()
-}
+tp(future_crop[["bio1"]] - envstack[["bio1"]])
+
+coord_vals <- terra::extract(envstack, gendist_coords, ID = FALSE)[,1]
+clamped_envstack <- envstack[["bio1"]]
+clamped_envstack[clamped_envstack > max(coord_vals, na.rm = TRUE)] <- NA  # Set values above max to NA
+clamped_envstack[clamped_envstack < min(coord_vals, na.rm = TRUE)] <- NA
+tp(clamped_envstack)
+
+clamped_future <- future_crop[["bio1"]]
+clamped_future[clamped_envstack > max(coord_vals, na.rm = TRUE)] <- NA
+clamped_future[clamped_envstack < min(coord_vals, na.rm = TRUE)] <- NA
 
 # Predict genomic offset using GDM
-gdm_offset_map <- predict(gdm$model, envstack, time = TRUE, predRasts = future)
+gdm_offset_map <- predict(gdm$model, envstack, time = TRUE, predRasts = future_crop)
+
 tp(gdm_offset_map)
+
+# Extract the I-spline for bio1 and its knot locations
+spl <- gdm::isplineExtract(gdm$model)
+# spl$knots is usually a list; find the one for bio1
+bio1_idx <- which(spl$predictors == "bio1")
+kn <- spl$knots[[bio1_idx]]  # numeric vector of knot locations
+
+library(raster)
 
 range_map <- get_range()
 gdm_offset_masked <- mask(gdm_offset_map, range_map)
-tp(gdm_offset_masked)
-
 coord_vals <- terra::extract(gdm_offset_map, gendist_coords, ID = FALSE)[,1]
 gdm_offset_masked[gdm_offset_masked > max(coord_vals, na.rm = TRUE)] <- NA  # Set values above max to NA
 gdm_offset_masked[gdm_offset_masked < min(coord_vals, na.rm = TRUE)] <- NA  # Set values below min to NA
+
 
 coords <- 
   gendist_coords %>% 
