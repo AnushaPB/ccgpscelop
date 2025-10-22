@@ -1,0 +1,420 @@
+---
+title: "Genetic diversity"
+output:
+  github_document:
+    toc: TRUE
+---
+
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(tigris)
+library(raster)
+library(igraph)
+library(sp)
+library(gridExtra)
+library(wingen)
+devtools::load_all()
+
+# Set global options for caching
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+source(here("general_functions.R"))
+plotpath <- here("analysis", "genetic_diversity", "plots")
+```
+
+```{r, echo = FALSE, message = FALSE, include=FALSE}
+# Load the U.S. state boundaries data
+ca <- get_ca()
+coords <- get_coords(sf = TRUE)
+```
+
+# Heterozygosity
+```{r heterozygosity, fig.width = 7, fig.height = 7}
+# get het data
+het <- get_het()
+
+# Combine coords and het data
+coords <- 
+  left_join(coords, het, by = "SampleID") %>% 
+  drop_na(Ho)
+```
+
+# Aggregating
+```{r fig.width = 7, fig.height = 7, eval = FALSE}
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Read in env data
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_sf <- 
+  get_coords(sf = TRUE) %>% 
+  right_join(mod_df) %>% 
+  st_transform(3310)
+
+fit_mod <- function(lyr, df, model = "gls") {
+  # Get cell numbers for each point
+  cell_ids <- cellFromXY(lyr, st_coordinates(df))
+
+  # Assign Ho values to raster cells
+  lyr[] <- NA
+  lyr[cell_ids] <- df$Ho
+  names(lyr) <- "Ho"
+
+  # Get coordinates for each cell in the raster layer
+  cell_coords <- data.frame(xyFromCell(lyr, cell_ids))
+  names(cell_coords) <- c("cell_x", "cell_y")
+
+  # Aggregate by cell
+  # Note: this turns glacier variable into a continuous variable (proportion of glacier in cell)
+  mod_vars <- c("NDVI", "gHM", "csi_past", "glacier", "Q", "tmean_dif", "bio1")
+  mod_sf_unique <- 
+    bind_cols(df, cell_coords) %>%
+    group_by(cell_x, cell_y) %>%
+    summarise_at(c(mod_vars, "Ho"), mean, na.rm = TRUE) %>%
+    ungroup()
+
+  # Scale data
+  mod_sf_unique_scaled <-
+    mod_sf_unique %>%
+    mutate(
+      across(
+        all_of(mod_vars),
+        ~ as.numeric(scale(.x))   # <- drop matrix
+      )
+    )
+
+  # Create formula
+  f <- formula("Ho ~ NDVI + gHM + glacier + csi_past + Q + tmean_dif + bio1")
+
+  # Fit model
+  if (model == "gls"){
+    library(nlme)
+    safe_gls <- purrr::safely(gls)
+    final_model <- safe_gls(f, correlation = corExp(form = ~ cell_x + cell_y, nugget = FALSE), data = mod_sf_unique_scaled)
+    if(!is.null(final_model$error)) {
+      warning(final_model$error)
+      return(NULL)
+    }
+    final_model <- final_model$result
+  } else if (model == "lm"){
+    final_model <- lm(f, data = mod_sf_unique_scaled)
+  } else {
+    stop("Model must be either 'gls' or 'lm'")
+  }
+
+  # Results
+  mod_result <- summary(final_model)
+  mod_result
+
+  # Extract coefficients and stats
+  if (model == "gls") {
+    coef_table <- as.data.frame(mod_result$tTable)
+    # Add variable names as a column
+    coef_table$term <- rownames(coef_table)
+    rownames(coef_table) <- NULL
+  } else if (model == "lm") {
+    coef_table <- broom::tidy(mod_result)
+    names(coef_table)[names(coef_table) == "p.value"] <- "p-value"
+    names(coef_table)[names(coef_table) == "std.error"] <- "Std.Error"
+    names(coef_table)[names(coef_table) == "estimate"] <- "Value"
+  }
+
+  # Print significant variables and resolution of raster
+  sig_vars <- filter(coef_table, `p-value` < 0.05 & term != "(Intercept)") %>% pull(term)
+  message(paste0("Resolution: ", res(lyr)[1], " m"))
+  message("Significant variables: ", paste(sig_vars, collapse = ", "))
+
+  # Calculate confounded variables
+  mod_vars_noglacier <- setdiff(mod_vars, "glacier")
+  cor_df <- mod_sf_unique_scaled %>% dplyr::select(all_of(mod_vars)) %>% st_drop_geometry()
+  cor_result <- 
+    cor(cor_df) %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "var1") %>%
+    pivot_longer(cols = -var1, names_to = "var2", values_to = "cor") %>%
+    filter(var1 != var2) %>%
+    filter(abs(cor) == max(abs(cor))) %>%
+    distinct(cor) %>%
+    pull(cor)
+  
+  coef_table <-
+    coef_table %>%
+    mutate(confounded = abs(cor_result))
+
+  return(list(stats = coef_table, lyr = lyr))
+}
+
+# Create layers with different resolutions
+ress <- c(500, 1000, 5000, 10000, 25000, 30000, 40000, 45000, 50000, 75000, 100000)
+lyrs <- map(ress, ~coords_to_raster(coords_proj, buffer = 100, res = .x), .progress = TRUE)
+names(lyrs) <- as.character(ress)
+
+results_gls <- map(lyrs, ~fit_mod(lyr = .x, df = mod_sf, model = "gls"))
+results_lm <- map(lyrs, ~fit_mod(lyr = .x, df = mod_sf, model = "lm"))
+
+gls_df <- 
+  bind_rows(map(results_gls, "stats"), .id = "resolution") %>% 
+  filter(term != "(Intercept)") %>%
+  mutate(resolution = as.numeric(resolution)) %>%
+  mutate(term = make_pretty_names(term))
+
+lm_df <- 
+  bind_rows(map(results_lm, "stats"), .id = "resolution") %>%
+  filter(term != "(Intercept)") %>%
+  mutate(resolution = as.numeric(resolution)) %>%
+  mutate(term = make_pretty_names(term))
+Ho_lyrs <- map(results_gls, "lyr")
+# Takes a while, but will work
+Ho_kriged_lyrs <- map(Ho_lyrs, ~wingen::wkrig_gd(.x, nmax = 30), .progress = TRUE)
+
+lyr_df <- 
+  map(results_gls, "lyr") %>%
+  map(~as.data.frame(.x, xy = TRUE)) %>%
+  bind_rows(.id = "resolution") %>%
+  mutate(resolution = as.numeric(resolution))
+
+range_map <- get_range()
+kriged_df <- 
+  Ho_kriged_lyrs %>%
+  map(~mask(.x, ca_proj)) %>%
+  map(~mask(.x, range_map)) %>%
+  map(~as.data.frame(.x, xy = TRUE)) %>%
+  bind_rows(.id = "resolution") %>%
+  mutate(resolution = as.numeric(resolution))
+
+scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1) {
+  aesthetic <- match.arg(aesthetic)
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  rng   <- r_max - r_min
+  lims  <- c(r_min - rng*extend_scale, r_max + rng*extend_scale)
+
+  pal <- rev(MetBrewer::met.brewer("Hiroshige", type = "continuous"))
+  if (aesthetic == "fill") {
+    ggplot2::scale_fill_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  } else {
+    ggplot2::scale_colour_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  }
+}
+
+
+# Check range of Ho values using variogram
+library(gstat)
+Ho_vgm <- variogram(Ho ~ 1, data = mod_sf)
+vgm_fit <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(Ho_vgm, model = vgm(.x)))
+names(vgm_fit) <- c("Exp", "Sph", "Gau")
+
+pdf(here("TEMP.pdf"))
+plot(Ho_vgm, vgm_fit[["Exp"]], main = "OLS Residuals Variogram (Exponential)")
+plot(Ho_vgm, vgm_fit[["Sph"]], main = "OLS Residuals Variogram (Spherical)")
+plot(Ho_vgm, vgm_fit[["Gau"]], main = "OLS Residuals Variogram (Gaussian)")
+dev.off()
+
+# Based on visual inspection, the gaussian model seems to fit best
+# Get the range of the variogram 
+vgm_range <- vgm_fit[["Gau"]] %>% filter(model == "Gau") %>% pull(range)
+print(vgm_range)
+
+png(here(plotpath, "scale_test_maps.png"), width = 10, height = 6, units = "in", res = 300)
+ggplot(lyr_df) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_met_cont(lyr_df$Ho, aesthetic = "fill", extend_scale = 0.1) +
+  geom_sf(data = ca_proj, fill = NA, color = "black", size = 0.5) +
+  theme_void() +
+  labs(fill = "Ho") +
+  facet_wrap(~resolution, ncol = 4, labeller = labeller(resolution = function(x) paste0(as.numeric(x)/1000, " km"))) +
+  guides(fill = guide_colorbar(barwidth = 1, barheight = 15))
+dev.off()
+
+png(here(plotpath, "scale_test_maps_kriged.png"), width = 10, height = 6, units = "in", res = 300)
+ggplot(kriged_df) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_met_cont(kriged_df$Ho, aesthetic = "fill", extend_scale = 0.1) +
+  geom_sf(data = ca_proj, fill = NA, color = "black", size = 0.5) +
+  theme_void() +
+  labs(fill = "Ho") +
+  facet_wrap(~resolution, ncol = 4, labeller = labeller(resolution = function(x) paste0(as.numeric(x)/1000, " km"))) +
+  guides(fill = guide_colorbar(barwidth = 1, barheight = 15))
+dev.off()
+
+pdf(here(plotpath, "scale_tests.pdf"), width = 16, height = 8)
+ggplot(gls_df, aes(x = resolution/1000, y = Value, group = term)) +
+  #geom_vline(xintercept = vgm_range, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+  geom_line() +
+  geom_errorbar(aes(ymin = Value - `Std.Error`, ymax = Value + `Std.Error`), width = 2) +
+  geom_point(position = position_dodge(width = 0.5), size = 3, aes(shape = `p-value` < 0.05, col = confounded)) +
+  theme_classic() +
+  labs(x = "Raster resolution (km)", y = "Coefficient estimate", title  = "Spatial GLS", col = "Max cor") +
+  theme(
+    text = element_text(size = 16), 
+    strip.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+  ) +
+  facet_wrap(~term, nrow = 2, scales = "free_x") +
+  scale_shape_manual(values = c(1, 16), labels = c("Not significant", "Significant")) +
+  scale_color_viridis_c(option = "plasma", direction = -1)
+
+ggplot(lm_df, aes(x = resolution/1000, y = Value, group = term)) +
+  #geom_vline(xintercept = vgm_range, linetype = "dashed", color = "red") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+  geom_line() +
+  geom_errorbar(aes(ymin = Value - `Std.Error`, ymax = Value + `Std.Error`), width = 2) +
+  geom_point(position = position_dodge(width = 0.5), size = 3, aes(shape = `p-value` < 0.05, col = confounded)) +
+  theme_classic() +
+  labs(x = "Raster resolution (km)", y = "Coefficient estimate", title = "OLS", col = "Max cor") +
+  theme(
+    text = element_text(size = 16), 
+    strip.background = element_blank(),
+    axis.line.y = element_line(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+  ) +
+  facet_wrap(~term, nrow = 2, scales = "free_x") +
+  scale_shape_manual(values = c(1, 16), labels = c("Not significant", "Significant")) +
+  scale_color_viridis_c(option = "plasma", direction = -1)
+dev.off()
+```
+
+# Moving window
+
+```{r heterozygosity window, fig.width = 7, fig.height = 7, eval = FALSE}
+# Project coordinates and boundary to equal area projection (California Albers)
+coords_proj <- st_transform(coords, 3310)
+ca_proj <- st_transform(ca, 3310)
+
+# Convert coordinates to a raster layer
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 5000)
+
+pdf(here(plotpath, "preview_wingen.pdf"), width = 7, height = 7)
+sc <- preview_gd(lyr, coords_proj, wdim = 5, sample_count = TRUE)
+sc[sc <= 0] <- NA
+plot(sc)
+dev.off()
+
+# Calculate windowed mean of Ho
+custom_mean <- function(x) mean(x, na.rm = TRUE)
+distmat <- get_geodist(coords_proj, lyr = lyr)
+future::plan(future::multisession, workers = 8)
+window_Ho <- map(c(1000, 5000, 10000, 50000), ~circle_general(coords_proj$Ho, coords = coords_proj, lyr = lyr, distmat = distmat, maxdist = .x, min_n = 0, stat = custom_mean), .progress = TRUE)
+future::plan(future::sequential)
+
+pdf(here(plotpath, "preview_wingen_windowed.pdf"), width = 21, height = 7)
+walk(window_Ho, plot_gd)
+dev.off()
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_sf <- 
+  get_coords(sf = TRUE) %>% 
+  right_join(mod_df) %>% 
+  st_transform(3310)
+
+# GLS can't handle 0 distances, so take the average of the coordinates
+mod_vars <- c("NDVI", "gHM", "csi_past", "glacier", "Q", "tmean_dif", "bio1")
+mod_sf_unique <- 
+  mod_sf %>%
+  group_by(x, y) %>%
+  summarise_at(c(mod_vars, "Ho"), mean, na.rm = TRUE) %>%
+  ungroup()
+
+# Scale data
+mod_sf_unique_scaled <-
+  mod_sf_unique %>%
+  mutate(
+    across(
+      all_of(setdiff(mod_vars, "glacier")),
+      ~ as.numeric(scale(.x))   # <- drop matrix
+    )
+  )
+
+# Confirm that all glacier values are 0 and 1
+stopifnot(all(mod_sf_unique_scaled$glacier %in% c(0, 1)))
+
+# Convert glacier to factor
+mod_sf_unique_scaled$glacier_factor <- as.factor(mod_sf_unique$glacier)
+mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
+
+f <- formula("Ho ~ NDVI + gHM + glacier_factor + csi_past + Q + tmean_dif + bio1")
+final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
+summary(final_model)$tTable %>% 
+  as.data.frame() %>% 
+  mutate(term = rownames(.)) %>% 
+  filter(`p-value` < 0.05 & term != "(Intercept)")
+
+fit_lm <- function(x, mod_sf_unique_scaled){
+  vals <- extract(x, mod_sf_unique_scaled)[,"custom"]
+  mod_sf_unique_scaled$Ho_wingen <- vals
+
+  # Create formula
+  f <- formula("Ho_wingen ~ NDVI + gHM + glacier_factor + csi_past + Q + tmean_dif + bio1")
+
+  # Fit model
+  library(nlme)
+  final_model <-  lm(f, data = mod_sf_unique_scaled)
+
+  # Results
+  mod_result <- summary(final_model)
+  mod_result
+
+  # Extract coefficients and stats
+  coef_table <- broom::tidy(mod_result)
+
+  return(coef_table)
+}
+
+fit_gls <- function(x, mod_sf_unique_scaled){
+  vals <- extract(x, mod_sf_unique_scaled)[,"custom"]
+  mod_sf_unique_scaled$Ho_wingen <- vals
+
+  # Create formula
+  # NOTE: adding glacier makes ghm ns
+  f <- formula("Ho_wingen ~ NDVI + gHM + glacier_factor + csi_past + Q + tmean_dif + bio1")
+
+  # Fit model
+  library(nlme)
+  safe_gls <- purrr::safely(gls)
+  final_model <- safe_gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
+  if(!is.null(final_model$error)) {
+    warning("GLS model failed to converge. Returning NULL.")
+    return(NULL)
+  }
+  final_model <- final_model$result
+
+  # Results
+  mod_result <- summary(final_model)
+  mod_result
+
+  # Extract coefficients and stats
+  coef_table <- as.data.frame(mod_result$tTable)
+
+  # Add variable names as a column
+  coef_table$term <- rownames(coef_table)
+  rownames(coef_table) <- NULL
+
+  return(coef_table)
+}
+
+results_lm <- map(window_Ho, ~fit_lm(.x, mod_sf_unique_scaled = mod_sf_unique_scaled))
+
+sig_vars <- map(results_lm, ~filter(.x, `p.value` < 0.05 & term != "(Intercept)"))
+sig_vars
+
+results_gls <- map(window_Ho, ~fit_gls(.x, mod_sf_unique_scaled = mod_sf_unique_scaled))
+
+sig_vars_gls <- map(compact(results_gls), ~filter(.x, `p-value` < 0.05 & term != "(Intercept)"))
+sig_vars_gls
+
+```

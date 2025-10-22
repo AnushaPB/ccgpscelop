@@ -40,12 +40,7 @@ stopifnot(nrow(het) == 259)
 # Count number of sites used to calculate heterozygosity
 mean(het$`N(NM)`, na.rm = TRUE) # 59955192
 
-# Get adaptive heterozygosity
-genes <- 
-  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
-  mutate(Ho_gea = 1 - `O(HOM)`/`N(NM)`) %>%
-  rename(SampleID = IID) %>%
-  dplyr::select(SampleID, Ho_gea) 
+# Ge
 ```
 
 # Hypothesis 1: Genetic diversity explained by paleoclimate stability

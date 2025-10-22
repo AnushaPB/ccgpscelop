@@ -38,10 +38,8 @@ plotpath <- here("analysis", "genetic_diversity", "plots")
 ```{r, echo = FALSE, message = FALSE, include=FALSE}
 # Load the U.S. state boundaries data
 ca <- get_ca()
-dem <- get_dem()
 coords <- get_coords(sf = TRUE)
 ```
-
 
 # Heterozygosity
 ```{r heterozygosity, fig.width = 7, fig.height = 7}
