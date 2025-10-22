@@ -23,15 +23,29 @@ genes_org <-
   all_genes %>% 
   # TODO: this shouldn't reall need to be two steps
   filter(full_name %in% genes_nonsyn$full_name) %>%
-  drop_na(gene_name)
+  drop_na(uniprot_id)
 
 # Check the number of unique genes
-print(paste("Number of GEA genes with unique gene names:", nrow(genes_org %>% distinct(gene_name)))) # 3521
-print(paste("Number of all genes with names or descriptions:", nrow(all_genes))) # 18670
+print(paste("Number of GEA genes with unique UniprotIDs:", nrow(genes_org %>% distinct(uniprot_id)))) # 4958
+print(paste("Number of all genes with UniprotIDs:", nrow(all_genes))) # 20638
+print(paste("Number of all genes with unique UniprotIDs:", nrow(all_genes %>% distinct(uniprot_id)))) # 20638
 
 #https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
 #install.packages("gprofiler2")
 library(gprofiler2)
+```
+
+# Find gene orthologs
+Note: warnings are normal, they are just saying that some genes don't have orthologs in the other species
+```{r}
+all_genes_hsapiens <- get_ortho(all_genes, "hsapiens", file_prefix = "hsapiens_all", cache = TRUE)
+all_genes_ggallus <- get_ortho(all_genes, "ggallus", file_prefix = "ggallus_all", cache = TRUE)
+genes_hsapiens <- all_genes_hsapiens %>% filter(uniprot_id %in% genes_org$uniprot_id)
+genes_ggallus <- all_genes_ggallus %>% filter(uniprot_id %in% genes_org$uniprot_id)
+# genes_hsapiens <- genes_org %>% mutate(query = uniprot_id)
+# genes_ggallus <- genes_org %>% mutate(query = uniprot_id)
+# all_genes_hsapiens <- all_genes %>% mutate(query = uniprot_id)
+# all_genes_ggallus <- all_genes %>% mutate(query = uniprot_id)
 ```
 
 # Run GO 
@@ -87,36 +101,36 @@ parents: The parent terms of the GO term or other ontology term. This provides h
 highlighted: A logical value (TRUE or FALSE) indicating whether the term is highlighted in the results. This can be used for visualization or emphasis in the output.
 Run GO analysis for hsapiens genes
 
-## Prepare queries and background
+## Human reference
+
 ```{r}
 # Link genes and snps
-rda_genes <-
+rda_hsapiens_genes <-
   # file from csq.R
   genes_nonsyn %>%
   dplyr::select(locus, full_name) %>%
   # Join with genes
-  left_join(dplyr::select(genes_org, full_name, gene_name)) %>%
-  # !Drop rows without a gene name - note that this drops genes without a description too
-  drop_na(gene_name) %>%
+  left_join(dplyr::select(genes_org, full_name, uniprot_id)) %>%
+  drop_na(uniprot_id) %>%
+  # Join with orthologs
+  left_join(genes_hsapiens, by = "uniprot_id") %>%
+  # Some genes don't have hsapiens orthologs/query names, so drop them
+  drop_na(query) %>%
   # Join with the correlation results 
   # DISTINCT IS TEMPORARY TO DEAL WITH DUPLICATES (LUCKILY GROUPS ARE SAME FOR DUPLICATES)
   # Drop group NA to remove loci without significant correlations with NDVI or BIO1
   left_join(cors, by = "locus") 
+  
+bio1_query_hsapiens <- rda_hsapiens_genes %>% filter(grepl("bio1", group)) %>% pull(query)
+length(bio1_query_hsapiens)
+ndvi_query_hsapiens <- rda_hsapiens_genes %>% filter(grepl("ndvi", group)) %>% pull(query)
+length(ndvi_query_hsapiens)
+both_query_hsapiens <- rda_hsapiens_genes %>% pull(query)
 
-bio1_query <- rda_genes %>% filter(grepl("bio1", group)) %>% pull(gene_name)
-length(bio1_query)
-ndvi_query <- rda_genes %>% filter(grepl("ndvi", group)) %>% pull(gene_name)
-length(ndvi_query)
-both_query <- rda_genes %>% pull(gene_name)
-
-background <- unique(all_genes$gene_name)
-```
-
-## Human reference
-```{r}
-go_both_hsapiens <- run_go(both_query, custom_bg = background, organism = "hsapiens")
-go_bio1_hsapiens <- run_go(bio1_query, custom_bg = background, organism = "hsapiens")
-go_ndvi_hsapiens <- run_go(ndvi_query, custom_bg = background, organism = "hsapiens")
+hsapiens_bg <- unique(all_genes_hsapiens$query)
+go_bio1_hsapiens <- run_go(bio1_query_hsapiens, custom_bg = hsapiens_bg, organism = "hsapiens")
+go_ndvi_hsapiens <- run_go(ndvi_query_hsapiens, custom_bg = hsapiens_bg, organism = "hsapiens")
+go_both_hsapiens <- run_go(both_query_hsapiens, custom_bg = hsapiens_bg, organism = "hsapiens")
 
 write_csv(go_both_hsapiens$result, here(outpath, "hsapiens_custom_go_both.csv"))
 write_csv(go_bio1_hsapiens$result, here(outpath, "hsapiens_custom_go_bio1.csv"))
@@ -133,66 +147,88 @@ go_both_hsapiens_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, 
 go_bio1_hsapiens_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, source, precision, intersection_size) %>% arrange(desc(precision))
 go_ndvi_hsapiens_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, source, precision, intersection_size) %>% arrange(desc(precision))
 
-go_sigbp(go_both_hsapiens_result) 
-go_sigmf(go_both_hsapiens_result) 
+go_sigbp(go_both_hsapiens_result) # 0 significant GO:BP terms
+go_sigmf(go_both_hsapiens_result) # 2 significant GO:MF terms (ATP-dependent activity and ATP hydrolysisq activity)
 
-go_sigbp(go_bio1_hsapiens_result) 
-go_sigmf(go_bio1_hsapiens_result) 
+go_sigbp(go_bio1_hsapiens_result) # 0 significant GO:BP terms
+go_sigmf(go_bio1_hsapiens_result) # 0 significant GO:MF terms
 
-go_sigbp(go_ndvi_hsapiens_result)
-go_sigmf(go_ndvi_hsapiens_result) 
+go_sigbp(go_ndvi_hsapiens_result) # 5 significant GO:BP terms 
+#                              term_name term_size query_size intersection_size
+# 1                    response to dsRNA        27       1037                12
+# 2           cellular response to dsRNA        15       1037                 9
+# 3          icosanoid metabolic process        61       1037                18
+# 4          response to exogenous dsRNA        22       1037                10
+# 5 cellular response to exogenous dsRNA        11       1037                 7
+go_sigmf(go_ndvi_hsapiens_result) # 0 significant GO:MF terms
 ```
 
 ```{r}
 # Check for significant terms
-go_sigbp(go_both_hsapiens_result) 
-go_sigmf(go_both_hsapiens_result) 
+hsapiens_result <- go_both_hsapiens_result
+go_sigbp(hsapiens_result) # 0 significant GO:BP terms
+go_sigmf(hsapiens_result) # 2 significant GO:MF terms (ATP-dependent activity and ATP hydrolysisq activity)
+
+go_sigbp(hsapiens_result, p = 0.10) # 0 significant GO:BP terms
+go_sigmf(hsapiens_result, p = 0.10) # 4 significant GO:MF terms (ATP-dependent activity, ATP hydrolysisq activity, dipaptidyl-peptidase activity, carbohydrate binding)
 
 # Check top 10 GO:BP terms based on precision (categories where at least 10% of the genes in the query are associated with the term)
-go_topbp(go_both_hsapiens_result, precision_cutoff = 0.10) 
-go_topmf(go_both_hsapiens_result, precision_cutoff = 0.10) 
+go_topbp(hsapiens_result, precision_cutoff = 0.10) 
+go_topmf(hsapiens_result, precision_cutoff = 0.10) 
 
 # Check what genes are associated with the significant GO terms
-sig_go <- go_both_hsapiens_result %>% filter(p_value < 0.05)
-result_genes <- 
-  go_both_hsapiens_result %>%
-  filter(term_name %in% sig_go$term_name) %>%
+hsapiens_result_genes <- 
+  hsapiens_result %>% 
+  filter(term_name == "ATP-dependent activity") %>%
   pull(intersection) %>% 
   strsplit(",") %>% 
   unlist()
 
+# Get original uniprot IDs for the genes
+# Necessary step because orthologs were used for running GO
+hsapiens_result_uniprot_ids <- genes_hsapiens %>% filter(query %in% hsapiens_result_genes) %>% pull(uniprot_id)
+
 # Get gene information
-go_gea_genes <- genes_org %>% filter(gene_name %in% result_genes)
+hsapiens_go_gea_genes <- genes_org %>% filter(uniprot_id %in% hsapiens_result_uniprot_ids)
+hsapiens_go_gea_genes %>% distinct(gene_name) %>% write_csv(here(outpath, "hsapiens_atp_dependent_activity_genes.csv"))
 
 # Get genes of interest
-source(here("analysis", "gea", "functions_selection_stats.R"))
 goi <- get_goi_names()
 
 # Filter GO genes for genes of interest
-go_goi <- go_gea_genes %>% filter(grepl(paste(goi, collapse = "|"), full_name)) %>% distinct(gene_name)
-go_goi 
-
-heat_shock <- go_gea_genes %>% filter(grepl("heat shock", full_name)) %>% distinct(gene_name)
-
-# Check what GO terms HSPA2 (hsp70) and heat shock proteins is associated with
-go_both_hsapiens_result %>% 
-  filter(p_value < 0.05) %>% 
-  filter(grepl("HSPA2", intersection)) %>% 
-  distinct(term_name, source)
-
-go_both_hsapiens_result %>% 
-  filter(p_value < 0.05) %>% 
-  filter(grepl(paste0(heat_shock, "|"), intersection)) %>% 
-  filter(source %in% c("GO:BP", "GO:MF")) %>%
-  distinct(term_name, source)
+hsapiens_go_goi <- hsapiens_go_gea_genes %>% filter(grepl(paste(goi, collapse = "|"), full_name)) %>% distinct(gene_name)
+hsapiens_go_goi # Heat shock 70 kDa protein 13 and Heat shock 70 kDa protein 1A
 ```
 
 ## Chicken reference
 ```{r}
-# CHECK IF THIS IS DIFFERENT 
-go_both_ggallus <- run_go(both_query, custom_bg = background, organism = "ggallus")
-go_bio1_ggallus <- run_go(bio1_query, custom_bg = background, organism = "ggallus")
-go_ndvi_ggallus <- run_go(ndvi_query, custom_bg = background, organism = "ggallus")
+# Link genes and snps
+rda_ggallus_genes <-
+  # file from csq.R
+  genes_nonsyn %>%
+  dplyr::select(locus, full_name) %>%
+  # Join with genes
+  left_join(dplyr::select(genes_org, full_name, uniprot_id)) %>%
+  drop_na(uniprot_id) %>%
+  # Join with orthologs
+  left_join(genes_ggallus, by = "uniprot_id") %>%
+  # Some genes don't have ggallus orthologs/query names, so drop them
+  drop_na(query) %>%
+  # Join with the correlation results 
+  # DISTINCT IS TEMPORARY TO DEAL WITH DUPLICATES (LUCKILY GROUPS ARE SAME FOR DUPLICATES)
+  # Drop group NA to remove loci without significant correlations with NDVI or BIO1
+  left_join(cors, by = "locus") 
+  
+bio1_query_ggallus <- rda_ggallus_genes %>% filter(grepl("bio1", group)) %>% pull(query)
+length(bio1_query_ggallus)
+ndvi_query_ggallus <- rda_ggallus_genes %>% filter(grepl("ndvi", group)) %>% pull(query)
+length(ndvi_query_ggallus)
+both_query_ggallus <- rda_ggallus_genes %>% pull(query)
+
+ggallus_bg <- unique(all_genes_ggallus$query)
+go_bio1_ggallus <- run_go(bio1_query_ggallus, custom_bg = ggallus_bg, organism = "ggallus")
+go_ndvi_ggallus <- run_go(ndvi_query_ggallus, custom_bg = ggallus_bg, organism = "ggallus")
+go_both_ggallus <- run_go(both_query_ggallus, custom_bg = ggallus_bg, organism = "ggallus")
 
 write_csv(go_both_ggallus$result, here(outpath, "ggallus_custom_go_both.csv"))
 write_csv(go_bio1_ggallus$result, here(outpath, "ggallus_custom_go_bio1.csv"))
@@ -203,27 +239,30 @@ go_bio1_ggallus_result <- read_csv(here(outpath, "ggallus_custom_go_bio1.csv"))
 go_ndvi_ggallus_result <- read_csv(here(outpath, "ggallus_custom_go_ndvi.csv"))
 ```
 
+
 ```{r}
 # Compare variables
+
 go_both_ggallus_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, source, precision) %>% arrange(desc(precision))
 go_bio1_ggallus_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, source, precision) %>% arrange(desc(precision))
 go_ndvi_ggallus_result %>% filter(p_value < 0.05) %>% dplyr::select(term_name, source, precision) %>% arrange(desc(precision))
 
-go_sigbp(go_both_ggallus_result) 
-go_sigmf(go_both_ggallus_result) 
 
-go_sigbp(go_bio1_ggallus_result) 
-go_sigmf(go_bio1_ggallus_result) 
+go_sigbp(go_both_ggallus_result) # 0 significant GO:BP terms
+go_sigmf(go_both_ggallus_result) # 1 significant GO:MF terms (ATP-dependent activity)
 
-go_sigbp(go_ndvi_ggallus_result) 
-go_sigmf(go_ndvi_ggallus_result) 
+go_sigbp(go_bio1_ggallus_result) # 0 significant GO:BP terms
+go_sigmf(go_bio1_ggallus_result) # 0 significant GO:MF terms
+
+go_sigbp(go_ndvi_ggallus_result) # 0 significant GO:BP terms
+go_sigmf(go_ndvi_ggallus_result) # 0 significant GO:MF terms
 ```
 
 ```{r}
 # Check for significant terms
-ggallus_result <- go_both_ggallus_result
+ggallus_result <- ggallus_custom_bg$result 
 go_sigbp(ggallus_result) # 0 significant GO:BP terms
-go_sigmf(ggallus_result) 
+go_sigmf(ggallus_result) # 1 significant GO:MF terms (ATP-dependent activity)
 
 # Check top 10 GO:BP terms based on precision (categories where at least 10% of the genes in the query are associated with the term)
 go_topbp(ggallus_result, precision_cutoff = 0.10) 
@@ -237,32 +276,19 @@ ggallus_result_genes <-
   strsplit(",") %>% 
   unlist()
 
+# Get original uniprot IDs for the genes
+# Necessary step because orthologs were used for running GO
+ggallus_result_uniprot_ids <- genes_ggallus %>% filter(query %in% ggallus_result_genes) %>% pull(uniprot_id)
+
 # Get gene information
-go_gea_genes <- genes_org %>% filter(gene_name %in% result_genes)
-go_gea_genes %>% distinct(gene_name) %>% write_csv(here(outpath, "hsapiens_atp_dependent_activity_genes.csv"))
+ggallus_go_gea_genes <- genes_org %>% filter(uniprot_id %in% ggallus_result_uniprot_ids)
 
 # Get genes of interest
-source(here("analysis", "gea", "functions_selection_stats.R"))
 goi <- get_goi_names()
 
 # Filter GO genes for genes of interest
-go_goi <- go_gea_genes %>% filter(grepl(paste(goi, collapse = "|"), full_name)) %>% distinct(full_name)
-go_goi 
-
-go_gea_genes %>% filter(grepl("heat", full_name))
-
-
-# Check what GO terms HSPA2 (hsp70) and heat shock proteins is associated with
-go_both_ggallus_result %>% 
-  filter(p_value < 0.05) %>% 
-  filter(grepl("HSPA2", intersection)) %>% 
-  distinct(term_name, source)
-
-go_both_ggallus_result %>% 
-  filter(p_value < 0.05) %>% 
-  filter(grepl(paste0(heat_shock, "|"), intersection)) %>% 
-  filter(source %in% c("GO:BP", "GO:MF")) %>%
-  distinct(term_name, source)
+ggallus_go_goi <- ggallus_go_gea_genes %>% filter(grepl(paste(goi, collapse = "|"), full_name)) %>% distinct(gene_name)
+ggallus_go_goi # Heat shock 70 kDa protein 13 and Heat shock 70 kDa protein 1A
 ```
 
 # Looking into NDVI for H. sapiends
@@ -274,6 +300,7 @@ go_ndvi_genes <-
   pull(intersection) %>% 
   strsplit(",") %>% 
   unlist()
+
 
 # Get original uniprot IDs for the genes
 ndvi_uniprot_ids <- genes_hsapiens %>% filter(query %in% go_ndvi_genes) %>% pull(uniprot_id)

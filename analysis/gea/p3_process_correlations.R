@@ -1,70 +1,87 @@
 library(here)
 library(tidyverse)
-process_outputs <- function(input, outprefix, r){ 
+
+process_outputs <- function(input, outprefix, r) {
+  options(scipen = 999)  # disable scientific notation for writes
+  
   # Output dir
   outpath <- here("analysis", "gea", "outputs")
+  dir.create(outpath, showWarnings = FALSE, recursive = TRUE)
 
-  # Get the SNPs correlated with the RDA SNPs
-  rda_r <- 
-    r %>% 
+  # --- 1) Get pairs in LD with outlier SNPs (rda-linked) ---
+  rda_r <- r %>%
     filter(SNP_A %in% input$locus | SNP_B %in% input$locus) %>%
     select(SNP_A, SNP_B, R2)
 
-  # Create dataframe that includes which linked SNPs are correlated with which outliers
-  rda_r_out <-
-    bind_rows(
-      left_join(input, rda_r, by = c("locus" = "SNP_A")) %>% rename(linked_locus = SNP_B, outlier_locus = locus),
-      left_join(input, rda_r, by = c("locus" = "SNP_B")) %>% rename(linked_locus = SNP_A, outlier_locus = locus)
-    ) %>%
+  rda_r_out <- bind_rows(
+    left_join(input, rda_r, by = c("locus" = "SNP_A")) %>%
+      rename(linked_locus = SNP_B, outlier_locus = locus),
+    left_join(input, rda_r, by = c("locus" = "SNP_B")) %>%
+      rename(linked_locus = SNP_A, outlier_locus = locus)
+  ) %>%
     distinct()
 
-  write_csv(rda_r_out, here(outpath, paste0(outprefix, "_rda_linked_snps_info.csv")))
+  write_csv(rda_r_out, file.path(outpath, paste0(outprefix, "_rda_linked_snps_info.csv")))
 
-  # Pull out distinct SNPs
-  snps_r <- 
-    rda_r %>%
+  # --- 2) Collect the union of outlier SNPs + linked SNPs ---
+  snps_r <- rda_r %>%
     select(SNP_A, SNP_B) %>%
-    pivot_longer(c(SNP_A, SNP_B)) %>%
-    distinct(value) %>%
-    pull(value)
+    pivot_longer(c(SNP_A, SNP_B), values_to = "locus") %>%
+    distinct(locus) %>%
+    pull(locus)
 
-  # Combine with original SNPs
   all_snps <- unique(c(input$locus, snps_r))
+  all_snps <- all_snps[!is.na(all_snps)]
 
-  # Calculate number of added SNPs
-  print(paste("Original number of SNPs (unique):", length(unique(input$locus))))
-  print(paste("Number of added SNPs (unique):", length(all_snps) - length(unique(input$locus))))
+  message("Original number of SNPs (unique): ", length(unique(input$locus)))
+  message("Number of added SNPs (unique): ", length(all_snps) - length(unique(input$locus)))
 
-  # Make into df
-  snp_df <- 
-    tibble(locus = all_snps) %>% 
+  # --- 3) Parse locus into scaffold + position robustly ---
+  # Assumes locus format contains "..._<position>_<allele>_<allele>"
+  # Works with scaffold names that themselves contain underscores (e.g., SCAF_13, Scaffold_99__...).
+  snp_df <- tibble(locus = all_snps) %>%
     mutate(
-      # Pull out the digit in ...[digit]_[bp]_[bp] pattern
-      position = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),
-      scaffold = str_extract(locus, "^(Scaffold_[0-9]+__[0-9]+_contigs__length_[0-9]+|chr[0-9]+)")
+      position = str_extract(locus, "(?<=_)\\d+(?=_[A-Za-z]+_[A-Za-z]+)"),
+      position = suppressWarnings(as.integer(position)),
+      scaffold = str_remove(locus, "_\\d+_[A-Za-z]+_[A-Za-z]+$")  # keep everything before _<pos>_<allele>_<allele>
     )
 
-  # Write out txt file with just ids
-  write.table(snp_df$locus, here(outpath, paste0(outprefix, "_rda_ids.txt")), quote = FALSE, row.names = FALSE, col.names = FALSE)
+  # sanity check with helpful error
+  bad_rows <- which(!complete.cases(snp_df))
+  if (length(bad_rows) > 0) {
+    stop(
+      "Failed to parse locus → (scaffold, position) for ",
+      length(bad_rows), " record(s). Example:\n",
+      paste0(utils::capture.output(print(head(snp_df[bad_rows, ], 10))), collapse = "\n"),
+      "\nCheck locus naming; expected pattern: <scaffold>_<pos>_<allele>_<allele>"
+    )
+  }
 
-  # Confirm that all loci have been formatted correctly
-  stopifnot(all(complete.cases(snp_df)))
+  # --- 4) Write ID lists ---
+  write.table(
+    snp_df$locus,
+    file = file.path(outpath, paste0(outprefix, "_rda_ids.txt")),
+    quote = FALSE, row.names = FALSE, col.names = FALSE
+  )
+  write_csv(snp_df, file.path(outpath, paste0(outprefix, "_rda_ids.csv")))
 
-  # Write out csv file with more information
-  write_csv(snp_df, here(outpath,  paste0(outprefix, "_rda_ids.csv")))
+  # --- 5) Make BED (0-based, half-open, width 1) ---
+  rda_bed <- snp_df %>%
+    transmute(
+      scaffold = scaffold,
+      start = as.integer(position - 1L),
+      end   = as.integer(position)
+    )
 
-  # Create bed file
-  rda_bed <- 
-    snp_df %>%
-    # IMPORTANT: BED file must be 0-based so subtract 1 from start
-    mutate(
-      start = position - 1,
-      end = position
-    ) %>%
-    select(scaffold, start, end) 
+  # final safety: ensure no NA and start < end
+  stopifnot(all(complete.cases(rda_bed)))
+  stopifnot(all(rda_bed$start < rda_bed$end))
 
-  # Write to table with no header
-  write.table(rda_bed, here(outpath, paste0(outprefix, "_gea.bed")), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
+  write.table(
+    rda_bed,
+    file = file.path(outpath, paste0(outprefix, "_gea.bed")),
+    quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t"
+  )
 }
 
 # Get SNP correlations
@@ -75,6 +92,8 @@ bio1_ndvi <-  read_csv(here("analysis", "gea", "outputs", "bio1ndvi_significant_
 
 #process_outputs(input = pca, outprefix = "pca")
 process_outputs(input = bio1_ndvi, outprefix = "bio1ndvi", r = r)
+# [1] "Original number of SNPs (unique): 1449874"                               
+# [1] "Number of added SNPs (unique): 421577"
  
 # Check for pairs where both SNP_A and SNP_B are in rdasig$locus
 # Filter pairs where both SNP_A and SNP_B are in rdasig$locus
@@ -84,10 +103,10 @@ filtered_r <-
   filter(SNP_A %in% bio1_ndvi$locus & SNP_B %in% bio1_ndvi$locus)
 
 # Count number of pairs
-nrow(filtered_r) # 61
+nrow(filtered_r) # 4869 # COME BACK TO THIS
 
 # Count number of SNPs
-length(unique(c(filtered_r$SNP_A, filtered_r$SNP_B)))
+length(unique(c(filtered_r$SNP_A, filtered_r$SNP_B))) #9647
 
 # Calculate summary stats on R2
 mean(filtered_r$R2)

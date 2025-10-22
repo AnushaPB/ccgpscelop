@@ -2,12 +2,15 @@ library(here)
 library(tidyverse)
 
 # BIO1 + NDVI
-rda_results <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_RDA_outliers_full_Zscores.csv"))
+chrs <- paste0("chr", 1:10)
+names(chrs) <- chrs
+rda_results <- 
+  map(chrs, ~read_csv(here("analysis", "gea", "outputs", "RDA_results", .x, "58-Sceloporus_RDA_outliers_full_Zscores.csv"))) %>%
+  bind_rows(.id = "chr")
 
 rda_results <- 
   rda_results %>% 
-  dplyr::select(-path) %>%
-  dplyr::rename(scaffold = scaff, locus = rda_snps) %>%
+  dplyr::rename(scaffold = chr, locus = rda_snps) %>%
   mutate(
     # Pull out the digit in ...[digit]_[bp]_[bp] pattern
     position = as.integer(str_extract(locus, "(?<=_)[0-9]+(?=_[A-Z]+_[A-Z]+)")),

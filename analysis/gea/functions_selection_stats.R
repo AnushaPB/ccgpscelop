@@ -73,51 +73,80 @@ get_all_genes_bed <- function(){
 
 get_gene_structure <- function(){
   genes_bed <- get_all_genes_bed()
-  genes <- 
+  
+  # --- GENES ---
+  genes <-
     genes_bed %>%
     rename(gene_start = start, gene_end = end) %>%
-    mutate(gene_name = str_extract(full_name, "Name=([^;]+)")) %>%
-    mutate(gene_name = str_replace(gene_name, "Name=", "")) %>%
-    mutate(locus_tag = str_extract(full_name, "locus_tag=([^;]+)")) %>%
-    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", "")) 
+    mutate(
+      # attributes are in `full_name` from your get_all_genes_bed()
+      gene_name = str_match(full_name, "(?:^|;)Name=([^;]+)")[,2],
+      locus_tag = str_match(full_name, "(?:^|;)locus_tag=([^;]+)")[,2],
+      description = str_extract(full_name, "(?<=description=)[^;]+")
+    ) 
 
+  # --- EXONS ---
   path <- here("analysis", "gea", "outputs", "all_exons.bed")
   message("Reading in ", path)
+
+  exons_raw <- read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE, comment.char = "")
+  colnames(exons_raw) <- paste0("V", seq_len(ncol(exons_raw)))
+  attr_col_exon <- paste0("V", ncol(exons_raw))  # last column holds attributes
+
   exons <-
-    read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE)  %>%
-    dplyr::rename(scaffold = V1, exon_start = V2, exon_end = V3, type = V8, info = V10) %>%
-    mutate(locus_tag = str_extract(info, "locus_tag=([^;]+)")) %>%
-    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", ""))  %>%
-    dplyr::select(scaffold, exon_start, exon_end, locus_tag) %>%
+    exons_raw %>%
+    transmute(
+      scaffold  = V1,
+      exon_start = as.integer(V2),
+      exon_end   = as.integer(V3),
+      info       = .data[[attr_col_exon]]
+    ) %>%
+    mutate(
+      locus_tag = str_match(info, "(?:^|;)locus_tag=([^;]+)")[,2]
+    ) %>%
+    select(scaffold, exon_start, exon_end, locus_tag) %>%
     left_join(genes, by = c("scaffold", "locus_tag"))
 
+  # --- CDS ---
   path <- here("analysis", "gea", "outputs", "all_cds.bed")
   message("Reading in ", path)
 
-  cds <-
-    read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE) %>%
-    rename(scaffold = V1, cds_start = V2, cds_end = V3, info = V10) %>%
-    mutate(locus_tag = str_extract(info, "locus_tag=([^;]+)")) %>%
-    mutate(locus_tag = str_replace(locus_tag, "locus_tag=", ""))  %>%
-    dplyr::select(scaffold, cds_start, cds_end, locus_tag) %>%
-    # Relationship is many to many because exons can have multiple CDS
-    left_join(exons, by = c("scaffold", "locus_tag"), relationship = "many-to-many") 
+  cds_raw <- read.table(path, sep = "\t", quote = "", fill = TRUE, stringsAsFactors = FALSE, comment.char = "")
+  colnames(cds_raw) <- paste0("V", seq_len(ncol(cds_raw)))
+  attr_col_cds <- paste0("V", ncol(cds_raw))     # last column holds attributes
 
+  cds <-
+    cds_raw %>%
+    transmute(
+      scaffold  = V1,
+      cds_start = as.integer(V2),
+      cds_end   = as.integer(V3),
+      info      = .data[[attr_col_cds]]
+    ) %>%
+    mutate(
+      locus_tag = str_match(info, "(?:^|;)locus_tag=([^;]+)")[,2]
+    ) %>%
+    select(scaffold, cds_start, cds_end, locus_tag) %>%
+    # many-to-many is intended here
+    left_join(exons, by = c("scaffold", "locus_tag"), relationship = "many-to-many")
+
+  # quick check
   head(cds)
 
-  # Check that matching worked
+  # ensure joins worked
   stopifnot(all(complete.cases(cds$full_name)))
 
-  # Only keep gene names from database
-  cds_formatted <- 
+  # keep only database gene symbols (drop temporary egapxtmp-like names)
+  cds_formatted <-
     cds %>%
-    mutate(gene_name = case_when(
-      grepl("egapxtmp", gene_name) ~ NA_character_,  # Remove temporary gene names
+    mutate(gene_name = dplyr::case_when(
+      is.na(gene_name) ~ NA_character_,
+      grepl("egapxtmp", gene_name, ignore.case = TRUE) ~ NA_character_,
       TRUE ~ gene_name
     ))
 
-  message("Number of unique gene IDs: ", length(unique(cds_formatted$gene_name)))
-  message("Number of unique gene IDs: ", length(genes$gene_name))
+  message("Number of unique gene IDs (post-filter): ", dplyr::n_distinct(na.omit(cds_formatted$gene_name)))
+  message("Number of unique gene IDs (genes table, pre-filter): ", dplyr::n_distinct(na.omit(genes$gene_name)))
 
   return(cds_formatted)
 }

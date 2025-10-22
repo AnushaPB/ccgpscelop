@@ -3,12 +3,19 @@ library(here)
 outpath <- here("analysis", "gea", "outputs")
 genes <- read_csv(here(outpath, "bio1ndvi_gea_genes_snp.csv"))
 
+chrs <- paste0("chr", 1:10)
+names(chrs) <- chrs
+
 cortest <- 
-  read_csv(here(outpath, "58-Sceloporus_RDA_cortest_full.csv")) %>% 
+  map(chrs, ~ read_csv(here(outpath, "RDA_results", .x, "58-Sceloporus_RDA_cortest_full.csv"))) %>%
+  bind_rows(.id = "chr") %>%
   dplyr::rename(locus = snp) %>%
   filter(locus %in% genes$locus) %>%
-  filter(outlier_method == "p") %>%
+  filter(outlier_method == "z") %>%
   dplyr::select(r, p, var, locus)
+
+# NOTE FOR Z-SCORES ROWS ARE DUPLICATED (MAYBE BECAUSE TWO RDA AXES? ASK ANNE)
+cortest <- distinct(cortest)
 
 # Note: some loci in genes will not be in cortest because they are the linked loci
 # Conversely, some loci in cortest will not be in genes because they are not in genes
@@ -44,7 +51,7 @@ joined <-
 
 write_csv(joined, here(outpath, "bio1ndvi_genes_cortest.csv"))
 
-# FIGURING OUT MYSTERY
+# FIGURING OUT MYSTERY (MIGHT BE RESOLVED COME BACK TO THIS LATER)
 library(here)
 library(tidyverse)
 r <- read_table(here("analysis", "gea", "outputs", "snp_r2.ld"))

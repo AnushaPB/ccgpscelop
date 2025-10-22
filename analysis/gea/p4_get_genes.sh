@@ -15,6 +15,8 @@ GFF=../../data/genome/annotation/complete.genomic.gff
 grep -P "\tgene\t" $GFF > outputs/all_genes.gff
 gff2bed < outputs/all_genes.gff > outputs/all_genes.bed
 
+wc -l outputs/all_genes.gff #20,638 genes
+
 # 2. Extract all exon (coding region + UTR) entries and convert to BED
 grep -P "\texon\t" $GFF > outputs/all_exons.gff
 gff2bed < outputs/all_exons.gff > outputs/all_exons.bed
@@ -24,6 +26,7 @@ grep -P "\tCDS\t" $GFF > outputs/all_cds.gff
 gff2bed < outputs/all_cds.gff > outputs/all_cds.bed
 
 # Note: make sure start and end are 1 SNP apart in created bed file (bed is 0-based)
+head -n 5 outputs/all_cds.bed 
 head -n 5 outputs/bio1ndvi_gea.bed 
 
 # Get the GEA genes from the environmental PCs
@@ -32,4 +35,7 @@ head -n 5 outputs/bio1ndvi_gea.bed
 bedtools intersect -wo -a outputs/bio1ndvi_gea.bed -b outputs/all_cds.bed > outputs/bio1ndvi_gea_genes.bed
 
 # Check number of SNPs in genes
-wc -l outputs/bio1ndvi_gea_genes.bed #34,410 
+wc -l outputs/bio1ndvi_gea_genes.bed #31,633
+
+# Note: make sure start and end are 1 SNP apart in created bed file (bed is 0-based)
+head -n 5 outputs/bio1ndvi_gea.bed

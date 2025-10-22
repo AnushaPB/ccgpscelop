@@ -265,23 +265,17 @@ tp <- function(x) {
   dev.off()
 }
 
-library(randomForest)
-# GO OVER MAP1/2 thing (maybe change ot A/B for clarity)
 predict_allele <- function(snp, coords, current, future, maxdist = 50000, admix_thresh = 0.1) {
   current_vals <- extract(current, coords, ID = FALSE, method = "bilinear")
   future_vals <- extract(future, coords, ID = FALSE, method = "bilinear")
 
   # Model current allele presence/absence
   current_df <- data.frame(allele_ref = snp %in% c(0, 1), allele_alt = snp %in% c(1, 2), current_vals)
-
-  # Remove NA values (caused by some samples near coast, come back to this)
-  current_df <- current_df %>% drop_na(bio1)
-  
   # mod_ref <- glm(allele_ref ~ bio1, data = current_df, family = binomial)
   # mod_alt <- glm(allele_alt ~ bio1, data = current_df, family = binomial)
   
-  mod_ref <- randomForest(allele_ref ~ bio1, data = current_df, ntree = 500, mtry = 1)
-  mod_alt <- randomForest(allele_alt ~ bio1, data = current_df, ntree = 500, mtry = 1)
+  mod_ref <- randomForest(as.factor(allele_ref) ~ bio1, data = current_df)
+  mod_alt <- randomForest(as.factor(allele_alt) ~ bio1, data = current_df)
 
   # Predict current distribution
   current_map_ref <- terra::predict(current, mod_ref, type = "response")
@@ -362,6 +356,31 @@ predict_allele <- function(snp, coords, current, future, maxdist = 50000, admix_
       # In other words: if future needs ref (0), then get the distance in the current to 0. The else just means that if future needs alt (1), get the distance in the current to 1
       ifel(future_map_bin == 0, d_current_ref, d_current_alt))
   adapt_met <- adapt_distance <= maxdist
+
+  # Get sources
+  find_source <- function(fut_targets, cur_targets) {
+    # Identify cells of type
+    type <- unique(values(cur_targets, na.rm = TRUE))[1]
+    cur_targets[cur_targets == fut_targets | cur_targets == 0.5 | fut_targets == 0.5] <- NA
+    fut_targets[fut_targets == cur_targets | fut_targets == 0.5 | cur_targets == 0.5] <- NA
+    cells_current <- which(values(cur_targets) == 1)
+    cells_future <- which(values(fut_targets) == type)
+
+    # Get coordinates of those cells
+    coords_current <- xyFromCell(cur_targets, cells_current)
+    coords_future <- xyFromCell(fut_targets, cells_future)
+
+    # Convert to SpatVector
+    v_current <- vect(coords_current, type = "points", crs = crs(cur_targets))
+    v_future  <- vect(coords_future,  type = "points", crs = crs(future_map_bin))
+
+    # Find nearest type cell in current for each type cell in future
+    # (using fast nearest-neighbor search)
+    nn_index <- terra::nearest(v_current, v_future)
+
+    # Get the corresponding cell IDs in r2
+    nearest_cell_ids <- cells_r2[nn_index]
+  }
 
   # MOVING
   # Future targets: where each allele will exist in the FUTURE

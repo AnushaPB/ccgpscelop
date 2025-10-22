@@ -51,8 +51,8 @@ gea_genes_nonsyn_snp <- gea_genes_nonsyn %>% distinct(locus) %>%  pull(locus)
 # Write out non-syn information
 write_csv(gea_genes_nonsyn, here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 gea_genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
-message("Number of non-synonymous SNPs in genes: ", length(gea_genes_nonsyn_snp)) #17731
-message("Number of unique genes with non-synonymous SNPs: ", length(unique(gea_genes_nonsyn$full_name))) #11671
+message("Number of non-synonymous SNPs in genes: ", length(gea_genes_nonsyn_snp)) #8860
+message("Number of unique genes with non-synonymous SNPs: ", length(unique(gea_genes_nonsyn$full_name))) #4958
 
 # Write out the gene IDs for the synonymous and non-synonymous variants to separate files
 writeLines(gea_genes_syn_snp, here(outpath, "bio1ndvi_gea_genes_syn_ids.txt"))
@@ -113,8 +113,6 @@ linked_syn <-
 writeLines(linked_syn, here(outpath, "bio1ndvi_gea_gene_unlinked_syn_ids.txt"))
 
 # GET NON-SYNONYMOUS SNPs IN GENES NOT IN GEA -------------------------------------------------------------
-
-# NEED TO RUN IS CRASHING
 nonsyn <- read_csv(here(outpath, "nonsynonymous.csv"))
 notgeagenes <- read_csv(here(outpath, "all_genes_not_in_gea.csv"))
 head(notgeagenes)

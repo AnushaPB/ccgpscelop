@@ -97,7 +97,7 @@ convert_to_orgcode <- function(organism) {
 }
 
 
-run_go <- function(query, custom_bg, organism, correction_method = "fdr") {
+run_go <- function(query, custom_bg, organism = "hsapiens", correction_method = "fdr") {
   gost(
     query = query, 
     organism = organism, 
@@ -113,8 +113,7 @@ run_go <- function(query, custom_bg, organism, correction_method = "fdr") {
     custom_bg = custom_bg, 
     numeric_ns = "", 
     sources = NULL, 
-    as_short_link = FALSE, 
-    highlight = FALSE
+    as_short_link = FALSE
   )
 }
 

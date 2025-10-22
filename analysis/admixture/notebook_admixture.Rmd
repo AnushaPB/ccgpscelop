@@ -47,7 +47,7 @@ theme_custom <-
 
 ```{r, include = FALSE}
 # get coordinates 
-coords <- get_coords()
+coords <- get_coords(all = TRUE)
 ```
 
 # 2. ADMIXTURE
@@ -347,7 +347,7 @@ k8_filter %>%
 # Check population locations
 # Read in files and bind with coords 
 pop_files <- list.files(here(outpath), full.names = TRUE, pattern = "k8")
-coords <- get_coords()
+coords <- get_coords(all = TRUE)
 pop_df <- 
   map(pop_files, ~{
     pop <- read_lines(.x)

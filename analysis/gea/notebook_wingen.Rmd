@@ -15,7 +15,6 @@ plotpath <- here("analysis", "gea", "plots")
 ```
 
 ```{r}
-
 dos <- read_table(here("analysis", "gea", "outputs", "nonsyn.raw"))
 # Load coords and model dataframe
 coords <- 

@@ -6,7 +6,7 @@ library(vcfR)
 
 source(here("general_functions.R"))
 source(here("analysis", "gea", "functions_selection_stats.R"))
-outpath <- here("analysis", "gea", "outputs")
+outpath <- here("analysis", "gea", "outputs_contaminated_genome")
 plotpath <- here("analysis", "gea", "plots")
 ca <- get_ca()
 ```
@@ -16,15 +16,13 @@ ca <- get_ca()
 df <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 
 # Load dosage data
-dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+dos <- read_table(here(outpath, "genes.raw"))
 
 # Load coords and model dataframe
 coords <- 
   get_coords(sf = TRUE) %>% 
   filter(SampleID %in% dos$IID) %>% 
-  st_transform(3310) %>%
-  # REMOVE CHANNEL ISLAND
-  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+  st_transform(3310) 
 
 # Subset to only samples in coords
 dos <- dos[dos$IID %in% coords$SampleID, ]
@@ -115,96 +113,8 @@ pdf(here(plotpath, "maps_of_gea_genes.pdf"), width = 8, height = 8)
 plt_dos
 dev.off()
 
-pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 18, height = 18)
+pdf(here(plotpath, "maps_of_gea_gene_pcas.pdf"), width = 11, height = 14)
 cowplot::plot_grid(plotlist = plt_pca, nrow = 3)
-dev.off()
-
-```
-
-```{r}
-dfs <- map(plt_list, pluck, "pc_df") %>% compact()
-loadings <- map(plt_list, pluck, "loadings") %>% compact()
-
-hsp70df <- dfs[[1]] 
-hsp70loadings <- loadings[[1]] %>% mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus))
-
-# Make PCA plot
-pdf(here(plotpath, "hsp70_pca.pdf"), width = 6, height = 5)
-
-ggplot(hsp70df) +
-  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
-  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
-  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
-  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
-  geom_point(aes(x = PC1, y = PC2, col = PC1)) +
-  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
-         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
-  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
-        hjust = 0.5, vjust = -0.5, color = "black") +
-  scale_color_viridis_c(option = "turbo") +
-  coord_cartesian(clip = "off") +
-  theme_void() +
-  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
-dev.off()
-
-gene_str <- get_gene_structure()
-chr9_loci <- hsp70loadings %>% filter(grepl("chr9", locus)) %>% pull(locus)
-
-dos[, gene_loci] %>% distinct()
-
-hsp70_str <- gene_str %>% filter(full_name %in% hsp70_chr9$full_name)
-hsp70_chr9 <- 
-  df %>% 
-  filter(locus %in% chr9_loci) %>% 
-  mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus)) %>% 
-  left_join(distinct(hsp70_str, gene_start, gene_end, full_name, gene_name))
-
-hsp70_chr9 %>% dplyr::select(full_name, locus)
-
-
-pdf(here(plotpath, "hsp70_pca.pdf"), width = 10, height = 2)
-ggplot(hsp70_chr9) +
-  geom_rect(data = hsp70_str, aes(xmin = gene_start, xmax = gene_end, ymin = 0, ymax = 0.5), fill = "lightgray") +
-  geom_rect(data = hsp70_str, aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 0.5), fill = "gray") +
-  geom_rect(data = hsp70_str, aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 0.5), fill = "darkgray") +
-  geom_text(data = distinct(hsp70_chr9, gene_start, gene_end, gene_name), aes(x = (gene_start + gene_end) / 2, y = 0.5, label = gene_name), 
-        color = "black", size = 3, vjust = -1) +
-  # geom_rect(aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 1, fill = "exon")) +
-  # geom_rect(aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 1, fill = "CDS")) +
-  # Lollipop stems: lines from y = 1 to y = 1.15 (height of stick)
-  geom_segment(aes(x = position, xend = position, y = 0, yend = 1, col = clean_locus), linewidth = 0.6) +
-  # Lollipop heads: points at the end of each stick
-  geom_point( aes(x = position, y = 1, col = clean_locus), size = 2, alpha = 0.5) +
-  # Styling
-  theme_classic() +
-  labs(x = "", fill = "", col = "") +
-  theme(legend.position = "bottom") 
-
-ggplot(hsp70_chr9) +
-  geom_segment(aes(x = gene_start, xend = gene_end, y = 1, yend = full_name),
-               color = "gray40", size = 1.5) +
-  geom_segment(aes(x = position, xend = position,
-                   y = 1, yend = as.numeric(as.factor(full_name)) + 0.3),
-               color = "black") +
-  geom_point(aes(x = position,
-                 y = 1.5,
-                 color = csq),
-             size = 3) 
-
-ggplot(hsp70df) +
-  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
-  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
-  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
-  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
-  geom_point(aes(x = PC1, y = PC2, col = PC1)) +
-  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
-         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
-  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
-        hjust = 0.5, vjust = -0.5, color = "black") +
-  scale_color_viridis_c(option = "turbo") +
-  coord_cartesian(clip = "off") +
-  theme_void() +
-  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
 dev.off()
 
 ```
@@ -321,6 +231,107 @@ cor_results %>% arrange(desc(abs(r)))
 # 3 -0.227  0.00442    Scaffold_138__1_contigs__length_2391489_2298866_T_C
 # 4 -0.0724 0.369      Scaffold_138__1_contigs__length_2391489_2298855_C_T
 ```
+
+
+```{r}
+dfs <- map(plt_list, pluck, "pc_df") %>% compact()
+loadings <- map(plt_list, pluck, "loadings") %>% compact()
+
+hsp70df <- dfs[["AllHSP70"]] 
+hsp70loadings <- loadings[[1]] %>% mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus))
+
+# TEMP: write out hsp70df and hsp70loadings for later use as Robjects
+write_rds(hsp70df, here(outpath, "hsp70df.rds"))
+write_rds(hsp70loadings, here(outpath, "hsp70loadings.rds"))
+
+# Make PCA plot
+pdf(here(plotpath, "hsp70_pca.pdf"), width = 10, height = 5)
+plt1 <- 
+  ggplot(hsp70df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = PC1), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = -1)) +
+  theme_void() 
+plt2 <- 
+  ggplot(hsp70df) +
+  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
+  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
+  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
+  geom_point(aes(x = PC1, y = PC2, fill = PC1), pch = 21) +
+  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
+         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
+        hjust = 0.5, vjust = -0.5, color = "black") +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = -1)) +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+```
+```{r}
+gene_str <- get_gene_structure()
+chr9_loci <- hsp70loadings %>% filter(grepl("chr9", locus)) %>% pull(locus)
+
+dos[, gene_loci] %>% distinct()
+
+hsp70_str <- gene_str %>% filter(full_name %in% hsp70_chr9$full_name)
+hsp70_chr9 <- 
+  df %>% 
+  filter(locus %in% chr9_loci) %>% 
+  mutate(clean_locus = sub("_[^_]*_[^_]*$", "", locus)) %>% 
+  left_join(distinct(hsp70_str, gene_start, gene_end, full_name, gene_name))
+
+hsp70_chr9 %>% dplyr::select(full_name, locus)
+
+pdf(here(plotpath, "hsp70_pca.pdf"), width = 10, height = 2)
+ggplot(hsp70_chr9) +
+  geom_rect(data = hsp70_str, aes(xmin = gene_start, xmax = gene_end, ymin = 0, ymax = 0.5), fill = "lightgray") +
+  geom_rect(data = hsp70_str, aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 0.5), fill = "gray") +
+  geom_rect(data = hsp70_str, aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 0.5), fill = "darkgray") +
+  geom_text(data = distinct(hsp70_chr9, gene_start, gene_end, gene_name), aes(x = (gene_start + gene_end) / 2, y = 0.5, label = gene_name), 
+        color = "black", size = 3, vjust = -1) +
+  # geom_rect(aes(xmin = exon_start, xmax = exon_end, ymin = 0, ymax = 1, fill = "exon")) +
+  # geom_rect(aes(xmin = cds_start, xmax = cds_end, ymin = 0, ymax = 1, fill = "CDS")) +
+  # Lollipop stems: lines from y = 1 to y = 1.15 (height of stick)
+  geom_segment(aes(x = position, xend = position, y = 0, yend = 1, col = clean_locus), linewidth = 0.6) +
+  # Lollipop heads: points at the end of each stick
+  geom_point( aes(x = position, y = 1, col = clean_locus), size = 2, alpha = 0.5) +
+  # Styling
+  theme_classic() +
+  labs(x = "", fill = "", col = "") +
+  theme(legend.position = "bottom") 
+
+ggplot(hsp70_chr9) +
+  geom_segment(aes(x = gene_start, xend = gene_end, y = 1, yend = full_name),
+               color = "gray40", size = 1.5) +
+  geom_segment(aes(x = position, xend = position,
+                   y = 1, yend = as.numeric(as.factor(full_name)) + 0.3),
+               color = "black") +
+  geom_point(aes(x = position,
+                 y = 1.5,
+                 color = csq),
+             size = 3) 
+
+ggplot(hsp70df) +
+  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
+  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
+  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
+  geom_point(aes(x = PC1, y = PC2, col = PC1)) +
+  geom_segment(data = hsp70loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
+         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text(data = hsp70loadings, aes(x = PC1 * 5, y = PC2 * 5, label = clean_locus), 
+        hjust = 0.5, vjust = -0.5, color = "black") +
+  scale_color_viridis_c(option = "turbo") +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+dev.off()
+
+```
+
 
 # Similarity to core map
 

@@ -1,93 +1,117 @@
 ```{r}
 library(tidyverse)
 library(here)
+source(here("analysis", "gea", "functions_go.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
 outpath <- here("analysis", "gea", "outputs")
 plotpath <- here("analysis", "gea", "plots")
 ```
-
 
 # Check for genes of interest
 # Proteins of interest
 ```{r}
 genes_nonsyn <- get_gea_genes(nonsyn = TRUE)
 
-search <- function(x, y = NULL) {
+search <- function(x, y = NULL, strict = FALSE) {
   if (is.null(y)) y <- genes_nonsyn
+  # Create different case versions of x
+  x_variants <- unique(c(
+    x,
+    tolower(x),
+    toupper(x),
+    str_to_title(x),
+    str_to_sentence(x)
+  ))
+
+  if (strict) x_variants <- x
+
   y %>%
-    filter(str_detect(full_name, x)) %>%
+    filter(reduce(x_variants, ~ .x | str_detect(full_name, .y), .init = FALSE)) %>%
     distinct(full_name) %>%
     pull(full_name) %>%
-    str_extract("Name=([^\\[]+)\\[.*?:([^\\(]+)") %>%
-    str_remove("^Name=") %>%
-    str_replace("\\[.*?:", " (") %>%
-    str_remove("\\s+$") %>%
-    str_c(")")
+    str_extract("description=([^;]+)") %>%
+    str_remove("^description=") %>%
+    writeLines()
 }
 
 #Humans
 #HSP70 (Heat Shock Protein 70): This protein helps protect cells from stress-induced damage, including heat stress. It plays a crucial role in protein folding and repair.
-search("HSP70")
-search("HSP")
-search("Heat shock") # many of these! Heat shock 70 kDA is included in the list
-search("Heat shock 70") # found!
-length(search("Heat shock"))
-search("heat shock")
+search("HSP") # many of these! Heat shock 70 kDA is included in the list
+search("heat shock")  # many of these! Heat shock 70 kDA is included in the list
+search("Heat shock 70") 
 
 #UCP1 (Uncoupling Protein 1): Found in brown adipose tissue, UCP1 is involved in thermogenesis, helping humans generate heat in cold environments.
 search("UCP1")
-search("UCP")
+search("UCP") # Uncoupling protein 2
 search("Uncoupling")
-search("uncoupling")
 
 #MC1R (Melanocortin 1 Receptor): This receptor is involved in pigmentation and can affect skin's response to UV radiation, which is a crucial adaptation in different climates.
 search("MC1R") 
-search("Melanocortin") #"Melanocortin-2 receptor accessory protein 2 [Q96G30.2:Homo sapiens (Human)]"
-search("melanocortin")
+search("Melanocortin") # melanocortin 2 receptor 
+
 #EPAS1 (Endothelial PAS Domain Protein 1): This gene, also known as HIF-2α, is involved in the response to hypoxia and is associated with high-altitude adaptation.
 search("EPAS1") 
-search("PAS")# a hit! "Neuronal PAS domain-containing protein 4 [Q8IUM7.1:Homo sapiens (Human)]"
+search("PAS", strict = TRUE)# "neuronal PAS domain protein 2"                 "neuronal PAS domain protein 4"  
 search("Endothelial") 
 
 #Mice
 #FGF21 (Fibroblast Growth Factor 21): This protein helps regulate metabolism and energy expenditure, playing a role in cold adaptation by promoting brown fat activity.
 search("FGF21")
-search("FGF") 
 search("Fibroblast growth factor 21")
 search("Fibroblast growth factor") #several
 
 #PRDM16 (PR Domain Containing 16): Important in the development of brown adipose tissue, which is crucial for thermoregulation in cold environments.
 search("PRDM16")
-search("PRDM")
+search("PRDM", strict = TRUE)
 
 #HIF1A (Hypoxia-Inducible Factor 1 Alpha): Similar to humans, this protein helps mice adapt to low oxygen levels by regulating genes involved in oxygen homeostasis.
 search("HIF1A")
 search("HIF")
-search("Hypoxia") # [1] "Hypoxia up-regulated protein 1 [Q5ZLK7.1:Gallus gallus (Chicken)]"
+search("Hypoxia") # [1] "egl-9 family hypoxia inducible factor 3"        [2] "hypoxia up-regulated protein 1-like" [3] "HIG1 hypoxia inducible domain family member 1A"
 
 # ADRB3 (Beta-3 Adrenergic Receptor): This receptor is involved in the regulation of lipolysis and thermogenesis in brown fat, aiding in cold adaptation.
-search("ADRB3")
-search("Adrenergic")
-search("ADR")
+search("ADRB3") # Found! "adrenoceptor beta 3"
 
 #Chickens
 #UCP (Uncoupling Protein): Chickens also have uncoupling proteins that play a role in thermogenesis, helping them cope with temperature fluctuations.
-search("UCP") 
+search("UCP") # Uncoupling protein 2 found
 
 #TRPV4 (Transient Receptor Potential Vanilloid 4): This protein is involved in temperature sensation and regulation.
 #TRP in general is associated with thermosensation
 # https://www.sciencedirect.com/science/article/abs/pii/S0959438815000306
 search("TRPV4")
-search("TRPV")
+search("TRPV") #transient receptor potential cation channel subfamily V member 1
 search("Transient receptor potential")
-# [1] "Transient receptor potential cation channel subfamily M member 6 [Q9BX84.2:Homo sapiens (Human)]"
-# [2] "Transient receptor potential cation channel subfamily A member 1 [Q8BLA8.1:Mus musculus (Mouse)]"
-# [3] "Transient receptor potential cation channel subfamily M member 4 [Q8TD43.1:Homo sapiens (Human)]"
-# [4] "Transient receptor potential cation channel subfamily M member 1 [Q7Z4N2.2:Homo sapiens (Human)]"
-# [5] "Transient receptor potential cation channel subfamily V member 2 [Q9WTR1.2:Mus musculus (Mouse)]"
-# [6] "Transient receptor potential cation channel subfamily V member 3 [Q8K424.2:Mus musculus (Mouse)]"
-search("TRP")
-# [1] "TRPM8 channel-associated factor homolog [Q5XHI4.1:Xenopus laevis (African clawed frog)]"
-# [2] "TRPM8 channel-associated factor 2 [A6NFQ2.2:Homo sapiens (Human)]"   
+# transient receptor potential cation channel subfamily M member 5
+# transient receptor potential cation channel subfamily M member 6
+# polycystin 2 like 2%2C transient receptor potential cation channel
+# transient receptor potential cation channel subfamily C member 4
+# polycystin 2 like 1%2C transient receptor potential cation channel
+# transient receptor potential cation channel subfamily C member 6
+# short transient receptor potential channel 2-like
+# transient receptor potential cation channel subfamily A member 1
+# polycystin 2%2C transient receptor potential cation channel
+# transient receptor potential cation channel subfamily M member 4
+# transient receptor potential cation channel subfamily M member 7
+# transient receptor potential cation channel subfamily M member 1
+# polycystin 1%2C transient receptor potential channel interacting
+# transient receptor potential cation channel subfamily V member 2-like
+# transient receptor potential cation channel subfamily V member 1
+# transient receptor potential cation channel subfamily C member 3
+search("TRP", strict = TRUE)
+# transient receptor potential cation channel subfamily M member 5
+# transient receptor potential cation channel subfamily M member 6
+# transient receptor potential cation channel subfamily C member 4
+# transient receptor potential cation channel subfamily C member 6
+# transient receptor potential cation channel subfamily A member 1
+# TRPM8 channel associated factor 2
+# TRPM8 channel-associated factor homolog
+# transient receptor potential cation channel subfamily M member 4
+# transient receptor potential cation channel subfamily M member 7
+# transient receptor potential cation channel subfamily M member 1
+# tRNA phosphotransferase 1
+# transient receptor potential cation channel subfamily V member 1
+# transient receptor potential cation channel subfamily C member 3
 
 #ADRB2 (Beta-2 Adrenergic Receptor): This receptor plays a role in the regulation of metabolic processes and is involved in the adaptation to cold stress.
 search("ADRB2")
@@ -95,21 +119,26 @@ search("ADRB2")
 #Additional 
 #Aquaporins (AQPs): These proteins are involved in water transport across cell membranes and play a role in osmoregulation, which can be crucial in adapting to varying humidity levels.
 search("Aquaporin")
-# [1] "Aquaporin-2 [P79099.2:Bos taurus (Bovine)]"  
-# [2] "Aquaporin-11 [Q8NBQ7.1:Homo sapiens (Human)]"
+# aquaporin 11
+# aquaporin 4
+# aquaporin 1 (Colton blood group)
+# aquaporin 8
+# aquaporin 10
 
 #Leptin: This hormone, involved in regulating energy balance, can influence how organisms respond to different climatic conditions, especially in terms of energy storage and expenditure.
-search("Leptin")
+search("Leptin") # leptin receptor overlapping transcript
 search("leptin")
 
 # From this paper on mammals: https://www.nature.com/articles/s41598-021-95816-8
 # specific candidate variants and genes are related to the neuronal system (ITPR1, ITPR2, and GRIA4) and neuroactive ligand–receptor interaction functions for heat tolerance (NPFFR2, CALCR, and GHR), providing a novel insight that can help to develop genetic and management approaches to combat heat stress.
 search("Inositol 1,4,5-trisphosphate receptor type 1") 
 search("Inositol 1,4,5-trisphosphate receptor type 2") # found! (ITPR2)
-search("Glutamate receptor ionotropic") # Found Glutamate receptor ionotropic but not type 4 (only GRIK and GRIN, not GRIA)
-search("Neuropeptide FF receptor 1") # Found NFFR1 but not 2
+search("Glutamate receptor ionotropic")
+search("Neuropeptide FF receptor 1") 
+search("NFFR")
 search("Calcitonin receptor") 
-search("Growth hormone receptor") # Found! (GHR)
+search("Growth hormone receptor") 
+search("growth hormone") #growth hormone 1
 
 # From this paper on sticklebacks: https://www.nature.com/articles/s41598-021-95816-8
 # We determined maximum critical thermal limits (CTmax) and the associated gene expression responses in three heat shock (hsp60, hsp70, hsp90) and two key metabolic (idh2, fbp2) genes at ecologically relevant moderate heat stress (26 °C) as well as at the critical thermal limit (CTmax)
@@ -117,19 +146,20 @@ search("Heat shock 70") # found!
 search("Heat shock 90")
 search("Heat shock 60")
 search("Isocitrate dehydrogenase") # Found IDH but not IDH2
-search("bisphosphatase") # Found FBP 
+search("bisphosphatase")
 
 # From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
 #TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
 search("TRPP1L2")
 search("TRPP1L3")
 search("TRPV1")
-search("Transient receptor potential cation channel subfamily V member 1")
+search("Transient receptor potential cation channel subfamily V member 1") # found transient receptor potential cation channel subfamily V member 1
+
 #TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
 search("TRPV3")
-search("Transient receptor potential cation channel subfamily V member 3") # Found!
-search("TRPA1")
-search("Transient receptor potential cation channel subfamily A member 1") # Found!
+search("Transient receptor potential cation channel subfamily V member 3") 
+search("TRPA1") # transient receptor potential cation channel subfamily A member 1
+search("Transient receptor potential cation channel subfamily A member 1") 
 search("TRPM8") # Found!
 
 # # From this paper on bees/thermal stress/gene expression: 
@@ -137,27 +167,38 @@ search("TRPM8") # Found!
 # https://www.frontiersin.org/journals/ecology-and-evolution/articles/10.3389/fevo.2022.873791/full
 # CHatGPT summary: DNAJB6 is a molecular chaperone belonging to the Hsp40 family, known for assisting in protein folding and preventing aggregation, especially under stress conditions. In the eastern honeybee (Apis cerana cerana), studies have shown that DNAJB6 expression is upregulated in response to elevated temperatures. Specifically, when exposed to temperatures of 40°C, 43°C, and 46°C for durations up to 5 hours, there was a notable increase in DNAJB6 mRNA levels, indicating its role in the heat stress response
 # DnaJ homolog subfamily B member 6 
-search("DnaJ homolog subfamily B member 6") # found! (DNAJB6)
+search("DnaJ homolog subfamily B member 6") 
+search("DnaJ")
 ```
 ```{r}
 # Tick related for sceloporus clearing parasite
-search("Factor B")
+search("Factor B") # maybe? non specific
 search("Properdin") 
-# [1] "Properdin  (Mus musculus)"
 search("Complement")
-# [1] "Complement C4-B  (Homo sapiens)"                                       
-# [2] "Complement factor B  (Bos taurus)"                                     
-# [3] "Complement C1s subcomponent  (Sus scrofa)"                             
-# [4] "Complement component C9  (Homo sapiens)"                               
-# [5] "Complement C1q subcomponent subunit A  (Sus scrofa)"                   
-# [6] "Complement C5  (Homo sapiens)"                                         
-# [7] "Complement C1q tumor necrosis factor-related protein 1  (Mus musculus)"
-# [8] "Complement C1q subcomponent subunit C  (Rattus norvegicus)"            
-
+# FA complementation group M
+# complement component C6-like
+# FA complementation group C
+# complement C1s
+# complement C3
+# complement factor B
+# complement C4-B-like
+# X-ray repair cross complementing 4
+# complement component receptor 1-like protein
+# complement decay-accelerating factor transmembrane isoform-like
+# complement C8 alpha chain
+# complement factor H
+# complement factor H-related protein 5-like
+# complement factor H-like
+# complement factor I
+# complement C3a receptor 1
+# X-ray repair cross complementing 2
+# FA complementation group I
+# FA complementation group A
+# X-ray repair cross complementing 1
+# complement component receptor 1-like protein
 ```
 
 ```{r}
-
 # I manually curated a list of genes of interest based on the above searches
 source(here("analysis", "gea", "get_selection_stats.R"))
 goi <- get_goi_names()

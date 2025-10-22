@@ -17,46 +17,45 @@ genes_org <-
   filter(full_name %in% genes_nonsyn$full_name) %>%
   drop_na(uniprot_id)
 
-print(paste("Number of GEA SNPs in genes:", nrow(genes_nonsyn))) # 17,731
-print(paste("Number of unique genes with GEA SNPs:", length(unique(genes_nonsyn$full_name)))) # 11,671
+print(paste("Number of GEA SNPs in genes:", nrow(genes_nonsyn))) # 8,860
+print(paste("Number of unique genes with GEA SNPs:", length(unique(genes_nonsyn$full_name)))) # 4,958
 print(paste("Number of unique GEA UniprotIDs:", nrow(genes_org %>% distinct(uniprot_id)))) # 3,442
-print(paste("Number of all genes with UniprotIDs:", nrow(all_genes))) # 30,349
-print(paste("Number of all unique UniprotIDs:", nrow(all_genes %>% distinct(uniprot_id)))) # 18,357
+print(paste("Number of all genes with UniprotIDs:", nrow(all_genes))) # 20,638
+print(paste("Number of all unique UniprotIDs:", nrow(all_genes %>% distinct(uniprot_id)))) # 20,638
 
 
 # PLOTTING RDA
 # IMPORTANT: NEED TO DO BY SCAFFOLD!!!!!!
-rda_z <- read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_unscaledloadings.csv"))
-# Filter to just locus scores
-rda_z <- rda_z %>% filter(score == "species") %>% rename(locus = label)
-rda_varloadings <- 
-  read_csv(here("analysis", "gea", "outputs", "58-Sceloporus_biplot.csv")) %>% 
-  mutate(var = make_pretty_names(var)) %>%
-  mutate(var = gsub("Contemporary t", "T", var))
+chrs <- paste0("chr", 1:10)
+names(chrs) <- chrs
+rda_z <- 
+  map(chrs, ~read_csv(here("analysis", "gea", "outputs", "RDA_results", .x, "58-Sceloporus_unscaledloadings.csv"))) %>% bind_rows(.id = "chr")
 
-# Filter to just chromosomes 
-rda_z_chr <- 
+# Filter to just locus scores
+rda_z <- 
   rda_z %>% 
-  filter(grepl("chr", scaff)) %>%
-  #filter(scaff %in% paste0("chr", 1:5)) %>%
-  mutate(scaff = factor(scaff, levels = paste0("chr", 1:11))) %>%
+  filter(score == "species") %>% 
+  rename(locus = label) %>%
   # RESCALING FOR PLOTTING
-  group_by(scaff) %>%
+  group_by(chr) %>%
   mutate(across(starts_with("RDA"),  ~ as.vector(scale(.))))
 
 rda_varloadings <- 
-  rda_varloadings %>% 
-  filter(grepl("chr", scaff))%>%
-  #filter(scaff %in% paste0("chr", 1:5)) %>%
-  mutate(scaff = factor(scaff, levels = paste0("chr", 1:11))) 
+  map(chrs, ~ read_csv(here("analysis", "gea", "outputs", "RDA_results", .x, "58-Sceloporus_biplot.csv"))) %>%
+  bind_rows(.id = "chr") %>%
+  mutate(var = make_pretty_names(var)) %>%
+  mutate(var = gsub("Contemporary t", "T", var)) %>%
+  mutate(chr = factor(chr, levels = paste0("chr", 1:10))) 
 
 # Get RDA loadings for significant loci
+# TO DO FIGURE OUT DIFFERENCE BETWEEN THESE TWO:
+gea_sig1 <- read_csv(here(outpath, "bio1ndvi_rda_ids.csv"))
+gea_sig2 <- read_csv(here(outpath, "bio1ndvi_significant_snps_unlinked.csv"))
+
+gea <- gea_sig2
 rda_sig_z <- 
-  # DONT USE LOADINGS FROM HERE (they are from adaptive rda)
-  read_csv(here("analysis", "adaptive", "outputs", "RDA_unscaledloadings_58-Sceloporus_bio1ndvi_gea_mod.csv")) %>%
-  dplyr::select(locus = label) %>%
-  distinct(locus) %>%
-  left_join(rda_z_chr, by = "locus") 
+  rda_z %>%
+  filter(locus %in% gea$locus) 
 
 # Get loadings for SNPs of interest
 # This loads SNPs that are non-synonymous in genes of interest, but gives only original outlier loci + any genes associated with that outlier loci AND any linked snps
@@ -82,8 +81,8 @@ goi_gg_df <- gg_df %>% filter(!is.na(goi_name))
 
 # Calculate 3 SD cutoffs
 cutoffs <-
-  rda_z_chr %>%
-  group_by(scaff) %>%
+  rda_z %>%
+  group_by(chr) %>%
   summarise(
     mean_RDA1 = mean(RDA1, na.rm = TRUE),
     mean_RDA2 = mean(RDA2, na.rm = TRUE),
@@ -99,13 +98,13 @@ cutoffs <-
 
 # Top 5 RDA loadings for each chromosome and each RDA axis
 top_rda1 <- 
-  rda_z_chr %>% 
-  group_by(scaff) %>% 
+  rda_z %>% 
+  group_by(chr) %>% 
   slice_max(RDA1, n = 100, with_ties = FALSE) %>% 
   ungroup()
 top_rda2 <- 
-  rda_z_chr %>% 
-  group_by(scaff) %>% 
+  rda_z %>% 
+  group_by(chr) %>% 
   slice_max(RDA2, n = 100, with_ties = FALSE) %>% 
   ungroup()
 top_rda <- bind_rows(top_rda1, top_rda2) %>% distinct()
@@ -114,13 +113,13 @@ genes_nonsyn %>% filter(locus %in% top_rda$locus) %>% drop_na(gene_name) %>% dpl
 
 # Top 5 for plotting
 top_rda1 <- 
-  rda_z_chr %>% 
-  group_by(scaff) %>% 
+  rda_z %>% 
+  group_by(chr) %>% 
   slice_max(RDA1, n = 5, with_ties = FALSE) %>% 
   ungroup()
 top_rda2 <- 
-  rda_z_chr %>% 
-  group_by(scaff) %>% 
+  rda_z %>% 
+  group_by(chr) %>% 
   slice_max(RDA2, n = 5, with_ties = FALSE) %>% 
   ungroup()
 top_rda <- bind_rows(top_rda1, top_rda2) %>% distinct()
@@ -133,12 +132,13 @@ rda_varloadings_mean <-
     RDA2 = mean(RDA2, na.rm = TRUE)
   )
 
+plotpath <- here("analysis", "gea", "plots")
 pdf(here(plotpath, "goi_rda.pdf"), width = 6, height = 5)
 zscale = 8
 
 ggplot() +
   #geom_point(data = rda_sample, aes(x = RDA1, y = RDA2), col = "gray", alpha = 0.5) +
-  geom_hex(data = rda_z_chr, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
+  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
   geom_text(data = rda_varloadings_mean, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 4, vjust = 1, hjust = 1) +
   geom_segment(data = rda_varloadings_mean, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
                arrow = arrow(length = unit(0.2, "cm"))) +
@@ -155,9 +155,10 @@ ggplot() +
   ) +
   labs(col = "Genes of interest", fill = "SNP\ncount") +
   theme_void() 
+
 ggplot() +
   #geom_point(data = rda_sample, aes(x = RDA1, y = RDA2), col = "gray", alpha = 0.5) +
-  geom_hex(data = rda_z_chr, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
+  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
   geom_text(data = rda_varloadings_mean, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 4, vjust = 1, hjust = 1) +
   geom_segment(data = rda_varloadings_mean, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
                arrow = arrow(length = unit(0.2, "cm"))) +
@@ -178,8 +179,8 @@ dev.off()
 pdf(here(plotpath, "goi_rda_by_chr.pdf"), width = 14, height = 5)
 zscale = 8
 ggplot() +
-  geom_hex(data = rda_z_chr, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
-  stat_ellipse(data = rda_z_chr, aes(x = RDA1, y = RDA2), level = 0.99, linetype = "dashed", size = 0.5) +
+  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
+  stat_ellipse(data = rda_z, aes(x = RDA1, y = RDA2), level = 0.99, linetype = "dashed", size = 0.5) +
   geom_text(data = rda_varloadings, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 3, vjust = 1) +
   geom_segment(data = rda_varloadings, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
                arrow = arrow(length = unit(0.2, "cm"))) +
@@ -198,7 +199,7 @@ ggplot() +
   ) +
   labs(fill = "SNP count") +
   theme_void() +
-  facet_wrap(~scaff, scales = "free", nrow = 2) +
+  facet_wrap(~chr, scales = "free", nrow = 2) +
   theme(
     panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5), 
     plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
@@ -206,7 +207,7 @@ ggplot() +
 
 
 ggplot() +
-  geom_hex(data = rda_sample, aes(x = RDA1, y = RDA2), bins = 50, alpha = 0.5) +
+  #geom_hex(data = rda_sample, aes(x = RDA1, y = RDA2), bins = 50, alpha = 0.5) +
   geom_text(data = rda_varloadings, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 3, vjust = 1) +
   geom_segment(data = rda_varloadings, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
                arrow = arrow(length = unit(0.2, "cm"))) +
@@ -229,7 +230,7 @@ ggplot() +
   ) +
   labs(fill = "SNP count") +
   theme_void() +
-  facet_wrap(~scaff, scales = "free", nrow = 2) +
+  facet_wrap(~chr, scales = "free", nrow = 2) +
   theme(
     panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5), 
     plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
