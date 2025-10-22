@@ -20,3 +20,9 @@ wget --no-host-directories --force-directories --input-file=chelsa_trace21k.txt
 mkdir -p ../../data/env/chelsa_trace21k
 mv chelsav1/chelsa_trace/bio/* ../../data/env/chelsa_trace21k
 rm -rf chelsav1
+
+# Download CHELSA future bioclimatic variables -----------------------------------------------------------------------
+wget --no-host-directories --force-directories --input-file=chelsa_future.txt
+mkdir -p ../../data/env/chelsa_future
+mv chelsav2/GLOBAL/climatologies/2071-2100/GFDL-ESM4/ssp585/bio/* ../../data/env/chelsa_future
+#rm -rf chelsav2

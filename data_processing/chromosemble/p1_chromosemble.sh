@@ -14,13 +14,13 @@ cd ../../../
 export SATSUMA2_PATH=satsuma2/build/bin
 
 # Gunzip the genome files
-gunzip ../../data/new_genome/rSceOcc1.20250428.a_ctg.fasta.gz
-gunzip ../../data/new_genome/rSceOcc1.20250428.p_ctg.fasta.gz
+gunzip ../../data/genome/rSceOcc1.20250428.a_ctg.fasta.gz
+gunzip ../../data/genome/rSceOcc1.20250428.p_ctg.fasta.gz
 
 # Define the paths to the genomes
-OCC_GENOME_A=../../data/new_genome/rSceOcc1.20250428.a_ctg.fasta
-OCC_GENOME_P=../../data/new_genome/rSceOcc1.20250428.p_ctg.fasta
-OLD_OCC_GENOME=../../data/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta
+OCC_GENOME_A=../../data/genome/rSceOcc1.20250428.a_ctg.fasta
+OCC_GENOME_P=../../data/genome/rSceOcc1.20250428.p_ctg.fasta
+OLD_OCC_GENOME=../../data/spea_contaminated_genome/contaminated_annotated_genome/annotated_genome/jordan-uni4378-mb-hirise-65qvq__12-23-2023__final_assembly_relabelled.fasta
 UND_GENOME=../../data/genome_undulatus/ncbi_dataset/data/GCF_019175285.1/GCF_019175285.1_SceUnd_v1.1_genomic.fna
 
 # Map scaffolds or contigs onto chromosome coordinates via synteny
@@ -49,8 +49,6 @@ seqkit grep -n -f top12_occ.txt $OCC_GENOME_P > occ_top12.fasta
 mummer-4.0.0rc1/nucmer -p sceloporus -t 12 und_top12.fasta occ_top12.fasta
 delta-filter -1 sceloporus.delta > sceloporus.filter
 mummerplot --fat --layout --filter --size large --png -p sceloporus sceloporus.filter
-
-
 
 # MUMMER
 # Get top 20 scaffolds >1Mb from UND genome

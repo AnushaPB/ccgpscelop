@@ -36,3 +36,10 @@ rsync -avz ccgp-download.gi.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sc
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sceloporus_biplot.csv ../analysis/gea/outputs
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sceloporus_RDA_outliers_full_Zscores.csv ../analysis/gea/outputs
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/algatr/58-Sceloporus/RDA_no_pca/58-Sceloporus_RDA_cortest_full.csv  ../analysis/gea/outputs
+
+# Other data sources:
+# Genome:
+# https://drive.google.com/drive/folders/1bEsZPvrzxAkwjGJHOdhUchtIr7yTT5hs
+
+# Annotated genome:
+# https://drive.google.com/drive/folders/1wHUzbCK9Ep-cCRcqVcGhYKIjfeIZ008q?usp=share_link
