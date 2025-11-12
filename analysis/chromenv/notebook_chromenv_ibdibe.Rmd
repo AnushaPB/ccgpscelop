@@ -1,0 +1,143 @@
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(tigris)
+library(raster)
+library(igraph)
+library(sp)
+library(gridExtra)
+library(wingen)
+library(nlme)
+library(furrr)
+source(here("analysis", "chromenv", "functions_chromenv.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
+source(here("analysis", "admixture", "functions_admixture.R"))
+source(here("general_functions.R"))
+outpath <- here("analysis", "chromenv", "outputs")
+plotpath <- here("analysis", "chromenv", "plots")
+
+library(gstat)
+library(spatialreg)
+library(spdep)
+
+# SPATIAL
+fit_vgm <- function(data, mod_vars){
+  f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+  ols_model <- lm(f, data = data)
+  data$ols_resids <- residuals(ols_model)
+  ols_variogram <- variogram(ols_resids ~ 1, data = data)
+  ols_vgm <- fit.variogram(ols_variogram, model = vgm("Exp"))
+  range <- ols_vgm %>% filter(model == "Exp") %>% pull(range)
+}
+
+fit_spmod <- function(data, mod_vars, moran_test = TRUE){
+  f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+
+  # Fit variogram
+  vgm_range <- fit_vgm(data, mod_vars)
+
+  # Fit spatial model
+  gls_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = data)
+  
+  return(list(mod = gls_model, range = vgm_range))
+}
+
+# Get all annotated genes
+all_genes <- get_genes()
+
+# Get model data.frame
+mod_df <- get_moddf()
+```
+
+```{r}
+# Read in the data
+library(furrr)
+files <- list.files(outpath, pattern = ".mdist$", full.names = TRUE)
+names(files) <- basename(files)
+
+# Read in genetic distance matrices
+gendist <- 
+  map(files, ~{
+    dist_file <- read_table(.x, col_names = FALSE) %>% as.matrix()
+    id_file <- read_table(paste0(.x, ".id"), col_names = c("FID", "SampleID"))
+    colnames(dist_file) <- rownames(dist_file) <- id_file$SampleID
+    return(dist_file)
+  }, .progress = TRUE)
+
+# Get geographic distances
+gendist_coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% rownames(gendist[[1]])) %>%
+  arrange(match(SampleID, rownames(gendist[[1]])))
+geodist <- geo_dist(gendist_coords)
+
+# Get environmental distances
+gendist_env <-
+  mod_df %>%
+  filter(SampleID %in% rownames(gendist[[1]])) %>%
+  arrange(match(SampleID, rownames(gendist[[1]])))
+envdist <- mod_df %>% dplyr::select(bio1, NDVI) %>% env_dist()
+
+# Create model inputs
+Y_list <- map(gendist, ~.x[gendist_env$SampleID, gendist_env$SampleID])
+X <- c(envdist, list(geodist = geodist))
+
+Y <- Y_list[[1]]
+run_mmrr <- function(Y, X){
+  mod <- mmrr_run(Y, X, nperm = 99, stdz = TRUE, model = "full")
+  coeff_df <- mod$coeff_df
+  return(coeff_df)
+}
+
+plan(multisession, workers = 10)
+mmrr_results <- 
+  future_map(
+    Y_list,
+    ~run_mmrr(.x, X),
+    .progress = TRUE,
+    .options = furrr_options(seed = TRUE)
+  )
+plan(sequential)
+
+mmrr_results_df <- 
+  bind_rows(mmrr_results, .id = "filename") %>%
+  tidyr::extract(
+    filename, into = c("scaffold","BIN_START","BIN_END"),
+    regex = "(chr[^_]+)_([0-9]+)_([0-9]+)\\.mdist"
+  ) %>%
+  mutate_at(vars(BIN_START, BIN_END), as.integer) %>%
+  filter(var != "Intercept")
+
+summary_df <-
+  mmrr_results_df %>%
+  mutate(p_adj = p.adjust(p, method = "fdr")) %>%
+  mutate(estimate = ifelse(p_adj < 0.05, estimate, NA)) %>%
+  dplyr::select(scaffold, BIN_START, BIN_END, var, estimate) %>%
+  pivot_wider(names_from = var, values_from = estimate) 
+names(summary_df)
+```
+
+```{r}
+scaff_rect <- get_scaff_rect(mmrr_results_df)
+ymin <- 0
+ymax <- 1
+
+ibdibe_chr_plot <- function(x){
+  ggplot(summary_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[x]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma", na.value = "white") 
+}
+
+pdf(here(plotpath, "chromenv_ibdibe_mmrr.pdf"), width = 10, height = 3 * 2 * length(unique(summary_df$scaffold)))
+plts <- map(unique(mmrr_results_df$var), ibdibe_chr_plot)
+cowplot::plot_grid(plotlist = plts, ncol = 1)
+dev.off()
+```

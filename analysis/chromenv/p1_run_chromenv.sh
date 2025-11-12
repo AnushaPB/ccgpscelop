@@ -3,8 +3,9 @@
 source activate ccgpscelop
 BASE_PATH=../../data/ccgp_data
 BFILE=$BASE_PATH/58-Sceloporus_complete_coords_annotated_chr
+NONSYNBFILE=../genetic_diversity/outputs/allnonsyn
 
-# For each chromosome 
+# For each chromosome calc diversity
 for chr in {1..6}; do
   # Determine chromosome length 
   CHR_LENGTH=$(awk -v chr=$chr '$1==chr { if($4 > max) max=$4 } END { print max }' ${BFILE}.bim)
@@ -26,6 +27,51 @@ for chr in {1..6}; do
   done
 done
 
+
+# For each chromosome calc non-synonymous diversity
+for chr in {1..6}; do
+  # Determine chromosome length 
+  CHR_LENGTH=$(awk -v chr=$chr '$1==chr { if($4 > max) max=$4 } END { print max }' ${BFILE}.bim)
+
+  # Make sure CHR_LENGTH and BFILE are set appropriately before running the loop
+  for (( start=0; start<CHR_LENGTH; start+=500000 )); do
+    end=$(( start + 500000 ))
+    
+    echo "Processing: chr $chr, from $start to $end"
+    
+    # Subset the data for the current bin and calculate heterozygosity
+    plink --bfile $NONSYNBFILE \
+          --chr $chr \
+          --from-bp $start \
+          --to-bp $end \
+          --het \
+          --out outputs/output_nonsyn_chr${chr}_${start}_${end} \
+          --allow-extra-chr
+  done
+done
+
+
+# For each chromosome calc gendist
+for chr in {1..6}; do
+  # Determine chromosome length
+  CHR_LENGTH=$(awk -v chr=$chr '$1==chr { if($4 > max) max=$4 } END { print max }' ${BFILE}.bim)
+  
+  for (( start=0; start<CHR_LENGTH; start+=500000 )); do
+    end=$(( start + 500000 ))
+    
+    echo "Processing genetic distance: chr $chr, from $start to $end"
+    
+    # 
+    plink --bfile $BFILE \
+          --chr $chr \
+          --from-bp $start \
+          --to-bp $end \
+          --allow-extra-chr \
+          --distance square 1-ibs \
+          --const-fid \
+          --out outputs/gendist_chr${chr}_${start}_${end}
+  done
+done
 
 # For each chromosome 
 for chr in {1..6}; do

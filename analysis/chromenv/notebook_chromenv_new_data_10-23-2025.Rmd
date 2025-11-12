@@ -1,0 +1,679 @@
+```{r}
+library(here)
+library(tidyverse)
+library(sf)
+library(terra)
+library(ggpubr)
+library(algatr)
+library(viridis)
+library(tigris)
+library(raster)
+library(igraph)
+library(sp)
+library(gridExtra)
+library(wingen)
+library(nlme)
+library(furrr)
+source(here("analysis", "chromenv", "functions_chromenv.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
+source(here("analysis", "admixture", "functions_admixture.R"))
+source(here("general_functions.R"))
+outpath <- here("analysis", "chromenv", "outputs")
+plotpath <- here("analysis", "chromenv", "plots")
+
+library(gstat)
+library(spatialreg)
+library(spdep)
+
+# SPATIAL
+fit_vgm <- function(data, mod_vars){
+  f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+  ols_model <- lm(f, data = data)
+  data$ols_resids <- residuals(ols_model)
+  ols_variogram <- variogram(ols_resids ~ 1, data = data)
+  ols_vgm <- fit.variogram(ols_variogram, model = vgm("Exp"))
+  range <- ols_vgm %>% filter(model == "Exp") %>% pull(range)
+}
+
+fit_spmod <- function(data, mod_vars, moran_test = TRUE){
+  f <- as.formula(paste("Ho ~", paste(mod_vars, collapse = " + ")))
+
+  # Fit variogram
+  vgm_range <- fit_vgm(data, mod_vars)
+
+  # Fit spatial model
+  gls_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = data)
+  
+  return(list(mod = gls_model, range = vgm_range))
+}
+
+# Get all annotated genes
+all_genes <- get_genes()
+
+# Get model data.frame
+mod_df <- get_moddf()
+
+# Get populations 
+pop_df <- get_pop()
+```
+
+```{r}
+# Read in the data
+library(furrr)
+plan(multisession, workers = 10)
+files <- list.files(outpath, pattern = ".het", full.names = TRUE)
+names(files) <- basename(files)
+files <- files[!grepl("all_bins_het.txt", files)]
+
+ls <- future_map(files, ~read_table(.x), .progress = TRUE)
+ls_format <- future_map(ls, ~mutate_all(.x, as.character))
+plan(sequential)
+
+df <- 
+  ls_format %>%
+  bind_rows(.id = "file") %>%
+  filter(file != "all_bins_het.txt") %>%
+  mutate_at(c("O(HOM)", "E(HOM)", "N(NM)",  "F"), as.numeric) %>%
+  mutate(file = str_remove(str_remove(file, ".het"), "output_")) %>%
+  separate(col = file, into = c("scaffold", "BIN_START", "BIN_END"), sep = "_") %>%
+  rename(SampleID = IID) %>%
+  left_join(dplyr::select(mod_df, -Ho)) %>%
+  mutate(Ho = ( `N(NM)` - `O(HOM)`)/ `N(NM)`) %>%
+  mutate(BIN_START = as.numeric(BIN_START)) %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  mutate(scaffold = factor(scaffold, levels = paste0("chr", 1:11))) 
+
+avg_het <- 
+  df %>%
+  group_by(scaffold, BIN_START, BIN_END) %>%
+  # CHROM 3 has some weird stuff with a negative HO because N(NM) is 0 (TEMP FILTER OUT)
+  filter(round(`N(NM)`, 0) > 1) %>%
+  summarise(Ho = mean(Ho, na.rm = TRUE), Ho_sd = sd(Ho, na.rm = TRUE))
+
+avg_het_by_pop <- 
+  df %>%
+  left_join(pop_df) %>%
+  group_by(scaffold, BIN_START, BIN_END, pop) %>%
+  # CHROM 3 has some weird stuff with a negative HO because N(NM) is 0 (TEMP FILTER OUT)
+  filter(round(`N(NM)`, 0) > 1) %>%
+  summarise(Ho = mean(Ho, na.rm = TRUE), Ho_sd = sd(Ho, na.rm = TRUE))
+
+bin_stats <- 
+  df %>%
+  group_by(scaffold, BIN_START, BIN_END) %>%
+  summarise(across(c("N(NM)", "O(HOM)"), \(x) mean(x, na.rm = TRUE))) 
+```
+
+```{r}
+vars <- c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past")
+scaled_sf <- 
+  df %>%
+  group_by(scaffold, BIN_START, BIN_END) %>%
+  mutate_at(c(vars, "Ho", "Q"), scale) %>%
+  ungroup() %>%
+  drop_na(all_of(vars), Ho) %>%
+  # Can't have 0 distances/duplicates in sp model
+  group_by(scaffold, BIN_START, x, y) %>%
+  summarize(across(all_of(c(vars, "Ho", "Q")), \(x) mean(x, na.rm = TRUE)), .groups = "drop") %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310) %>%
+  bind_cols(st_coordinates(.)) %>%
+  rename(x = X, y = Y) 
+
+plan(multisession, workers = 10)
+sp_ls <-
+  scaled_sf %>%
+  group_by(scaffold, BIN_START) %>%
+  group_split() %>%
+  future_map(~{
+    if (all(is.na(.x$csi_past))) return(NULL)
+    result <- fit_spmod(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past", "Q"))
+    mod <- result$mod
+    psuedo_rsq <- cor.test(mod$fitted, .x$Ho, use = "pairwise.complete.obs")$estimate^2
+    mod_result <- summary(mod)$tTable %>% as_tibble(rownames = "term") %>% rename(p.value = `p-value`, t.value = `t-value`)
+    result <- 
+      mod_result %>% 
+      mutate(
+        BIN_START = .x$BIN_START[1], 
+        scaffold = .x$scaffold[1], 
+        rsq = psuedo_rsq, 
+        range = result$range
+      )
+    return(result)
+  }, .progress = TRUE) 
+
+sp_df <-
+  sp_ls %>%
+  compact() %>%
+  bind_rows() %>%
+  rename(estimate = Value, var = term) %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  mutate(sig = ifelse(p_adj < 0.05, estimate, NA)) %>%
+  mutate(BIN_START = as.numeric(BIN_START)) %>%
+  filter(var != "(Intercept)") %>%
+  mutate(BIN_END = BIN_START + 500000)
+
+plan(sequential)
+
+write_csv(sp_df, here(outpath, "chromenv_spmod.csv"))
+
+summary_tb <-
+  sp_df %>%
+  group_by(var) %>%
+  summarize(`Prop. Sig.` = round(mean(p_adj < 0.05), 2), `Mean effect` = round(mean(estimate), 2)) %>%
+  arrange(desc(abs(`Mean effect`)), desc(`Prop. Sig.`)) %>%
+  mutate(var = make_pretty_names(var)) %>%
+  rename(Variable = var) %>%
+  pivot_longer(-Variable) %>%
+  mutate(Variable = factor(Variable, levels = rev(unique(Variable))))
+
+colors <- get_colors()
+names(colors) <- make_pretty_names(names(colors))
+scaff_rect <- get_scaff_rect(sp_df)
+pdf(here(plotpath, "spmod_summary.pdf"), width = 4, height = 2.5)
+ggplot(summary_tb, aes(x = name, y = Variable)) +
+  geom_tile(aes(fill = Variable), color = "white", lwd = 1) +
+  geom_text(aes(label = value)) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  scale_x_discrete(position = "top") +
+  labs(x = "", y = "") +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank()
+  )
+dev.off()
+
+
+pdf(here(plotpath, "spmod.pdf"), width = 12, height = 2)
+# ggplot(avg_het_by_pop) +
+#   geom_line(aes(x = BIN_START, y = Ho, col = pop), lwd = 0.5) +
+#   scaffold_theme() + 
+#   facet_wrap(~scaffold, ncol = 1, scales = "fixed") +
+#   ggtitle("Fixed y-axis")
+
+# ggplot(avg_het_by_pop) +
+#   geom_line(aes(x = BIN_START, y = Ho, col = pop), lwd = 0.5) +
+#   scaffold_theme() + 
+#   facet_wrap(~scaffold, ncol = 1, scales = "free_y") +
+#   ggtitle("Free y-axis")
+
+# plotchrom_c(sem_df, "rsq", ymin = 0, ymax = max(avg_het_by_pop$Ho, na.rm = TRUE)) + 
+#   ggtitle("Ho") + 
+#   geom_line(data = avg_het_by_pop, aes(x = BIN_START, y = Ho, col = pop), lwd = 0.5) +
+#   facet_wrap(~scaffold, ncol = 1, scales = "free_y") +
+#   ggtitle("Free y-axis")
+
+plotchrom_top(sp_df) + theme(strip.text = element_text(size = 12), legend.position = "right")
+
+plotchrom_c(sp_df, "rsq", ymin = 0, ymax = max(avg_het$Ho, na.rm = TRUE)) + 
+  ggtitle("Ho") + 
+  geom_line(data = avg_het, aes(x = BIN_START, y = Ho), col = "white", lwd = 0.5) 
+
+plotchrom_c(sp_df, "rsq", ymin = 0, ymax = max(bin_stats$`N(NM)`, na.rm = TRUE)) + 
+  geom_line(data = bin_stats, aes(x = BIN_START, y = `N(NM)`), col = "white", lwd = 0.5) +
+  ggtitle("N(NM)")
+
+plotchrom_c(sp_df, "rsq", ymin = 0, ymax = max(bin_stats$`O(HOM)`, na.rm = TRUE)) + 
+  geom_line(data = bin_stats, aes(x = BIN_START, y = `O(HOM)`), col = "white", lwd = 0.5) +
+  ggtitle("O(HOM)")
+
+plotchrom_top(sp_df, ymin = 0, ymax = max(bin_stats$`N(NM)`, na.rm = TRUE)) + 
+  geom_line(data = bin_stats, aes(x = BIN_START, y = `N(NM)`), col = "black", lwd = 0.5) +
+  ggtitle("N(NM)")
+
+plotchrom_top(sp_df, ymin = 0, ymax = max(bin_stats$`O(HOM)`, na.rm = TRUE)) + 
+  geom_line(data = bin_stats, aes(x = BIN_START, y = `O(HOM)`), col = "black", lwd = 0.5) +
+  ggtitle("O(HOM)") 
+dev.off()
+
+pdf(here(plotpath, "spmod.pdf"), width = 12, height = 9)
+plotchrom_top(sp_df) + theme(strip.text = element_text(size = 12), legend.position = "right") + labs(fill = "Variable")
+
+ggplot(sp_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = log(range))) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("log(variogram range)") +
+  scale_fill_viridis_c(option = "magma")
+
+plotchrom_all(sp_df)
+dev.off()
+```
+
+```{r}
+top_csi_past <- sem_df %>% filter(var == "csi_past") %>% filter(abs(estimate) == max(abs(estimate), na.rm = TRUE))
+top_csi_past_df <- scaled_sf %>% filter(BIN_START == top_csi_past$BIN_START, scaffold == top_csi_past$scaffold) 
+stopifnot(nrow(top_csi_past_df) == 160)
+
+top_tmean_dif <- sem_df %>% filter(var == "tmean_dif") %>% filter(abs(estimate) == max(abs(estimate), na.rm = TRUE))
+top_tmean_dif_df <- scaled_sf %>% filter(BIN_START == top_tmean_dif$BIN_START, scaffold == top_tmean_dif$scaffold)
+stopifnot(nrow(top_tmean_dif_df) == 160)
+
+sem_df %>% filter(p_adj < 0.05) %>% filter(var == "csi_past" | var == "tmean_dif")
+
+sem_df %>% filter(p_adj < 0.05) %>% filter(BIN_START == 500000, scaffold == "chr1")
+top_pdf <- scaled_sf %>% filter(BIN_START == 500000, scaffold == "chr1")
+# sem_df %>% filter(p_adj < 0.05) %>% filter(BIN_START == 3000000, scaffold == "chr5")
+# top_pdf <- scaled_sf %>% filter(BIN_START == 3000000, scaffold == "chr5")
+
+colors <- get_colors()
+pdf(here(plotpath, "sem_examples.pdf"), width = 6, height = 3)
+plt1 <- gglm("csi_past", "Ho", top_pdf) + scale_color_continuous(low = colors["csi_past"], high = colors["csi_past"])+ ylab("Heterozygosity")
+plt2 <- gglm("tmean_dif", "Ho", top_pdf) + scale_color_continuous(low = colors["tmean_dif"], high = colors["tmean_dif"]) + ylab("Heterozygosity")
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+```
+# CALCULATE GENE DENSITY IN BINS
+```{r}
+source(here("analysis", "gea", "functions_selection_stats.R"))
+gene_struc <- get_gene_structure()
+gene_struc <- gene_struc %>% group_by(scaffold, gene_start, gene_end) %>% distinct()
+
+bin_size = 500000
+gene_density <- gene_struc %>%
+  mutate(BIN_START = floor(gene_start / bin_size) * bin_size) %>%
+  group_by(scaffold, BIN_START) %>%
+  summarise(gene_density = sum(gene_end - gene_start + 1) / bin_size) %>%
+  filter(scaffold %in% unique(sp_df$scaffold)) 
+
+scaff_rect <- get_scaff_rect(data)
+colors <- get_colors()
+names(colors) <- make_pretty_names(names(colors))
+
+scaff_rect <- get_scaff_rect(data)
+colors <- get_colors()
+names(colors) <- make_pretty_names(names(colors))
+
+data <- sp_df %>% mutate(var = make_pretty_names(var))
+summary_data <- get_top(data)
+ymin = min(gene_density$gene_density, na.rm = TRUE); ymax = max(gene_density$gene_density, na.rm = TRUE)
+fill = "var"
+pdf(here(plotpath, "spmod_gene_density.pdf"), width = 12, height = 2)
+ggplot(summary_data) +
+  geom_rect(data = data, aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  #geom_line(data = gene_density, aes(x = BIN_START, y = gene_density), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  scale_fill_manual(values = colors)
+
+ymin = min(avg_het$Ho, na.rm = TRUE); ymax = max(avg_het$Ho, na.rm = TRUE)
+ggplot(summary_data) +
+  geom_rect(data = data, aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  geom_line(data = avg_het, aes(x = BIN_START, y = Ho), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  scale_fill_manual(values = colors)
+
+fill = "estimate"
+sub_data <- data %>% filter(var == "Paleoclimate stability")
+ggplot(sub_data) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma") + labs(fill = unique(sub_data$var))
+
+sub_data <- data %>% filter(var == "Contemporary temperature change")
+ggplot(sub_data) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma") + labs(fill = unique(sub_data$var))
+
+sub_data <- data %>% filter(var == "Contemporary temperature")
+ggplot(sub_data) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma") + labs(fill = unique(sub_data$var))
+
+sub_data <- data %>% filter(var == "Admixture")
+ggplot(sub_data) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[[fill]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma") + labs(fill = unique(sub_data$var))
+
+
+sub_data <- data %>% distinct(scaffold, BIN_START, BIN_END, rsq)
+ggplot(sub_data) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax), fill = "#e6e6e6") +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = ymin, ymax = ymax, fill = .data[["rsq"]]), col = rgb(0,0,0,0)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = ymin, ymax = ymax, col = "black", fill = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "plasma") + labs(fill = "RSQ")
+dev.off()
+
+mod_gene <- 
+  sp_df %>%
+  left_join(gene_density, by = c("scaffold", "BIN_START")) %>%
+  filter(!is.na(gene_density)) %>%
+  dplyr::select(rsq, var, estimate, gene_density) %>%
+  pivot_wider(names_from = var, values_from = estimate)
+summary(lm(rsq ~ gene_density, data = mod_gene))
+
+```
+# STOPPED HERE
+```{r}
+# NOW WITH Q
+plan(multisession, workers = 3)
+sem_lsQ <-
+  scaled_sf %>%
+  group_by(scaffold, BIN_START) %>%
+  group_split() 
+
+sem_dfQ <- 
+  sem_lsQ %>%
+  future_map(~{
+    if (all(is.na(.x$csi_past))) return(NULL)
+    result <- fit_spmod(.x, c("tmean_dif", "gHM", "bio1", "NDVI", "glacier", "csi_past", "Q"))
+    mod <- result$mod
+    psuedo_rsq <- cor.test(mod$fitted, .x$Ho, use = "pairwise.complete.obs")$estimate^2
+    result <- 
+      broom::tidy(mod) %>% 
+      mutate(
+        BIN_START = .x$BIN_START[1], 
+        scaffold = .x$scaffold[1], 
+        rsq = psuedo_rsq, 
+        range = result$range,
+        moran = result$moran$estimate,
+        moran.p = result$moran$p.value
+      )
+    return(result)
+  }, .progress = TRUE)
+  
+sem_dfQ2 <- 
+  sem_dfQ %>%
+  compact() %>%
+  bind_rows() %>%
+  mutate(p_adj = p.adjust(p.value, method = "fdr")) %>%
+  mutate(sig = ifelse(p_adj < 0.05, estimate, NA)) %>%
+  mutate(BIN_START = as.numeric(BIN_START)) %>%
+  filter(term != "(Intercept)", term != "lambda") %>%
+  rename(var = term) %>% 
+  mutate(BIN_END = BIN_START + 500000)
+plan(sequential)
+
+summary_tb <-
+  sem_dfQ %>%
+  group_by(var) %>%
+  summarize(`Prop(p < 0.05)` = round(mean(p_adj < 0.05), 2), `Mean effect` = round(mean(estimate), 2)) %>%
+  arrange(desc(abs(`Mean effect`)), desc(`Prop(p < 0.05)`)) %>%
+  mutate(var = make_pretty_names(var)) %>%
+  rename(Variable = var) %>%
+  pivot_longer(-Variable) %>%
+  mutate(Variable = factor(Variable, levels = rev(unique(Variable))))
+
+colors <- get_colors()
+names(colors) <- make_pretty_names(names(colors))
+scaff_rect <- get_scaff_rect(sem_df)
+pdf(here(plotpath, "sem_summary_Q.pdf"), width = 5, height = 3)
+ggplot(summary_tb, aes(x = name, y = Variable)) +
+  geom_tile(aes(fill = Variable), color = "white", lwd = 1) +
+  geom_text(aes(label = value)) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  scale_x_discrete(position = "top") +
+  labs(x = "", y = "") +
+  theme(
+    legend.position = "none",
+    panel.grid = element_blank()
+  )
+dev.off()
+
+pdf(here(plotpath, "sem_Q.pdf"), width = 12, height = 9)
+ggplot(sem_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = log(range))) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("log(variogram range)") +
+  scale_fill_viridis_c(option = "magma")
+
+ggplot(sem_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = moran)) +
+  geom_rect(data = scaff_rect, aes(xmin = BIN_START, xmax = BIN_END), ymin = 0, ymax = 1, col = "black", fill = NA) +
+  scaffold_theme() +
+  ggtitle("Moran's I") +
+  scale_fill_viridis_c(option = "magma")
+
+plotchrom_all(sem_df)
+dev.off()
+
+```
+
+```{r}
+nonsyn <- 
+  get_nonsyn() %>% 
+  filter(scaffold %in% unique(sem_df$scaffold))
+
+# Get genes
+genes <- 
+  get_genes() %>%
+  mutate(BIN_START = floor(start / 500000) * 500000) %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+genes_bin <-
+  genes %>%
+  group_by(scaffold, BIN_START, BIN_END) %>%
+  summarise(ngenes = n()) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Create bins for BIN_START
+nonsyn <- 
+  get_nonsyn() %>%
+  mutate(BIN_START = floor(position / 500000) * 500000)  %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Calculate number of nonsynonymous mutations per bin of 100k
+nonsyn_bin <- 
+  nonsyn %>% 
+  group_by(scaffold, BIN_START, BIN_END) %>% 
+  summarise(nonsyn = n()) %>%
+  filter(scaffold %in% unique(sem_df$scaffold))
+
+# Create bins for BIN_START
+syn <- 
+  get_syn() %>%
+  mutate(BIN_START = floor(position / 500000) * 500000)  %>%
+  mutate(BIN_END = BIN_START + 500000) %>%
+  filter(scaffold %in% unique(sem_df$scaffold)) %>%
+  mutate(scaffold = factor(scaffold, levels = unique(sem_df$scaffold)))
+
+# Calculate number of nonsynonymous mutations per bin of 100k
+syn_bin <- 
+  syn %>% 
+  group_by(scaffold, BIN_START, BIN_END) %>% 
+  summarise(syn = n()) %>%
+  filter(scaffold %in% unique(sem_df$scaffold))
+
+syn_nonsyn <-
+  full_join(syn_bin, nonsyn_bin, by = c("scaffold", "BIN_START", "BIN_END")) %>%
+  # DON"T MAKE SYN 0 OR YOU WILL GET INFINITY
+ # mutate(syn = ifelse(is.na(syn), 0, syn)) %>%
+  mutate(nonsyn = ifelse(is.na(nonsyn), 0, nonsyn)) %>%
+  mutate(ratio = nonsyn / syn)
+
+pdf(here(plotpath, "nonsyn.pdf"), width = 12, height = 10)
+ggplot(sem_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = max(syn_nonsyn$ratio, na.rm = TRUE), fill = rsq), color = NA) +
+  geom_line(data = syn_nonsyn, aes(x = BIN_START, y = ratio), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  ggtitle("RSQ vs NONSYN:SYN") +
+  scale_fill_viridis_c(option = "inferno")
+
+ggplot(sem_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = max((genes_bin$ngenes)), fill = rsq), color = NA) +
+  geom_line(data = genes_bin, aes(x = BIN_START, y = (ngenes)), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  ggtitle("RSQ vs gene counts") +
+  scale_fill_viridis_c(option = "inferno")
+  
+ggplot(sem_df) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = max(log(nonsyn_bin$nonsyn)), fill = rsq), color = NA) +
+  geom_line(data = nonsyn_bin, aes(x = BIN_START, y = log(nonsyn)), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  ggtitle("RSQ vs non-synonymous counts") +
+  scale_fill_viridis_c(option = "inferno")
+
+ggplot(nonsyn_bin) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = (nonsyn)), color = NA) +
+  scaffold_theme() +
+  ggtitle("Non-synonymous counts") +
+  scale_fill_viridis_c(option = "inferno")
+
+ggplot(nonsyn_bin) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = log(nonsyn)), color = NA) +
+  scaffold_theme() +
+  ggtitle("Non-synonymous counts") +
+  scale_fill_viridis_c(option = "inferno")
+
+ggplot(genes_bin) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = log(ngenes)), color = NA) +
+  scaffold_theme() +
+  ggtitle("Gene counts") +
+  scale_fill_viridis_c(option = "inferno")
+
+ggplot(genes_bin) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = (ngenes)), color = NA) +
+  scaffold_theme() +
+  ggtitle("Gene counts") +
+  scale_fill_viridis_c(option = "inferno")
+  
+dev.off()
+
+test <-
+  syn_nonsyn %>% 
+  filter(scaffold == "chr5") %>% 
+  ungroup() %>%
+  filter(ratio == max(ratio, na.rm = TRUE))
+
+nonsyn %>% 
+  filter(scaffold == "chr5", position > test$BIN_START, position < test$BIN_END)
+
+genes %>%
+  filter(grepl("\\[", full_name)) %>%
+  filter(scaffold == "chr5", start > test$BIN_START, start < test$BIN_END)
+
+csi_past_df <-
+  df %>%
+  group_by(scaffold, BIN_START) %>%
+  group_split() %>%
+  map(~{
+    if (all(is.na(.x$csi_past))) return(NULL)
+    result <- cor.test(.x$csi_past, .x$Ho, use = "pairwise.complete.obs")
+    tibble(BIN_START = .x$BIN_START[1], scaffold = .x$scaffold[1], r = result$estimate, p = result$p.value, var = "csi_past")
+  }, .progress = TRUE) %>%
+  compact() %>%
+  bind_rows() %>%
+  mutate(p_adj = p.adjust(p, method = "fdr")) %>%
+  mutate(r_sig = ifelse(p_adj < 0.05, r, NA)) %>%
+  mutate(BIN_START = as.numeric(BIN_START))
+
+tmean_dif_df <-
+  df %>%
+  group_by(scaffold, BIN_START) %>%
+  group_split() %>%
+  map(~{
+    if (all(is.na(.x$csi_past))) return(NULL)
+    result <- cor.test(.x$tmean_dif, .x$Ho, use = "pairwise.complete.obs")
+    tibble(BIN_START = .x$BIN_START[1], scaffold = .x$scaffold[1], r = result$estimate, p = result$p.value, var = "tmean_dif")
+  }, .progress = TRUE) %>%
+  compact() %>%
+  bind_rows() %>%
+  mutate(r_sig = ifelse(p < 0.05, r, NA)) %>%
+  mutate(BIN_START = as.numeric(BIN_START))
+
+  
+pdf(here(plotpath, "windowed_env.pdf"), width = 12, height = 8)
+ggplot(csi_past_df) +
+  geom_vline(aes(xintercept = BIN_START, col = r_sig), alpha = 1) +
+  scaffold_theme() +
+  scale_color_gradient2(midpoint = 0, low = "cyan3", mid = "white", high = "orange2", limits = c(-0.3, 0.3))
+
+ggplot(tmean_dif_df) +
+  geom_vline(aes(xintercept = BIN_START, col = r_sig), alpha = 1) +
+  scaffold_theme() +
+  scale_color_gradient2(midpoint = 0, low = "cyan3", mid = "white", high = "orange2", limits = c(-0.3, 0.3))
+dev.off()
+
+```
+
+
+```{r}
+# CHROMOSOME 7
+chr7 <- 
+  sem_df %>% 
+  left_join(rename(avg_het, avg_Ho = Ho)) %>%
+  filter(scaffold == "chr7") %>%
+  filter(rsq < 0.1, avg_Ho > 0.1)
+
+start_end <- range(chr7$BIN_START)
+genes <- get_genes()
+chr7_genes <- 
+  genes %>% 
+  filter(scaffold == "chr7", start > start_end[1], start < start_end[2]) %>%
+  # Drop genes with no ID
+  filter(grepl("\\[", full_name)) %>%
+  mutate(gene_size = end - start) %>%
+  as_tibble()
+chr7_genes %>% arrange(desc(gene_size)) %>% pull(full_name)
+
+chr7_nonsyn <- get_nonsyn() %>% filter(scaffold == "chr7", position > start_end[1], position < start_end[2])
+chr7_nonsyn %>% count(csq)
+
+# Count the number of nonsynonymous mutations per gene
+
+library(fuzzyjoin)
+chr7_nonsyn_gene <- fuzzy_inner_join(
+  chr7_genes,
+  chr7_nonsyn,
+  by = c("start" = "position", "end" = "position"),
+  match_fun = list(`<=`, `>=`)
+) %>%
+  group_by(full_name, start, end) %>%
+  summarise(nonsyn_count = n(), .groups = "drop") %>%
+  arrange(desc(nonsyn_count))
+
+chr7_nonsyn_gene %>% dplyr::select(full_name, nonsyn_count) %>% arrange(desc(nonsyn_count))
+
+pdf(here(plotpath, "chr7.pdf"), width = 12, height = 8)
+ggplot(lm_df) +
+  #geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = max(avg_het$Ho, na.rm = TRUE), fill = rsq)) +
+  #geom_rect(aes(xmin = start_end[1], xmax = start_end[2], ymin = 0, ymax = max(avg_het$Ho, na.rm = TRUE)), fill = "red", alpha = 0.5) +
+  geom_vline(aes(xintercept = BIN_START, col = rsq)) +
+  geom_line(data = avg_het, aes(x = BIN_START, y = Ho), col = "white", lwd = 0.5) +
+  scaffold_theme() +
+  ggtitle("RSQ") +
+  scale_fill_viridis_c(option = "magma")
+dev.off()
+```
+
+```{r}
+# LD window
+ld_chr5 <- read_table(here("analysis", "chromenv", "ld_chr5.ld"))
+ld_bin <- 
+  ld_chr5 %>% 
+  mutate(BIN_START = floor(BP_A / 500000) * 500000) %>% 
+  mutate(BIN_END = BIN_START + 500000) %>%
+  group_by(BIN_START, BIN_END) %>% 
+  summarise(mean = mean(R2, na.rm = TRUE)) %>%
+  mutate(scaffold = "chr5")
+
+pdf(here(plotpath, "ld.pdf"), width = 12, height = 2)
+ggplot(ld_bin) +
+  geom_rect(aes(xmin = BIN_START, xmax = BIN_END, ymin = 0, ymax = 1, fill = mean), color = NA) +
+  scaffold_theme() +
+  scale_fill_viridis_c(option = "magma") +
+  ggtitle("LD")
+dev.off()
+```
