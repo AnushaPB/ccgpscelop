@@ -23,18 +23,6 @@ nonsyn <- csq %>% filter(grepl("missense|stop_gained|start_lost", csq))
 syn <- csq %>% filter(csq == "synonymous")
 exons <- csq %>% filter(csq != "intron")
 
-# Write out the nonsynonymous and synonymous variants to separate files
-write_csv(nonsyn, here(outpath, "nonsynonymous.csv"))
-write_csv(syn, here(outpath, "synonymous.csv"))
-
-# Create non-synonymous bed file
-nonsyn %>%
-  # Convert to 0-based start/end to join with bed files
-  mutate(start = position - 1, end = position) %>%
-  select(scaffold, start, end, csq) %>%
-  distinct() %>%
-  write.table(here(outpath, "all_nonsynonymous.bed"), quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
-
 # GET CSQ OF GEA SNPS --------------------------------------------------------------------------------
 
 # Read in the gene information from the GEA analysis

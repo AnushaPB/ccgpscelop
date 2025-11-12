@@ -68,7 +68,7 @@ rm outputs/notgeagenes_nonsyn_fixed.bed
 plink --bfile $PLINK \
       --extract range $ALLNONSYN \
       --make-bed \
-      --out outputs/allnonsyn --allow-extra-chr
+      --out outputs/allnonsyn_DELETE --allow-extra-chr
    
 # Subset nogeanogenes plink file to the same number of snps as non-synonymous genes plink file
 plink --bfile outputs/nonsyn --write-snplist --out outputs/nonsyn_snplist --allow-extra-chr

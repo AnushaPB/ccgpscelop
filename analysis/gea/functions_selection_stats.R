@@ -104,7 +104,7 @@ get_gene_structure <- function(){
     mutate(
       locus_tag = str_match(info, "(?:^|;)locus_tag=([^;]+)")[,2]
     ) %>%
-    select(scaffold, exon_start, exon_end, locus_tag) %>%
+    dplyr::select(scaffold, exon_start, exon_end, locus_tag) %>%
     left_join(genes, by = c("scaffold", "locus_tag"))
 
   # --- CDS ---
@@ -126,7 +126,7 @@ get_gene_structure <- function(){
     mutate(
       locus_tag = str_match(info, "(?:^|;)locus_tag=([^;]+)")[,2]
     ) %>%
-    select(scaffold, cds_start, cds_end, locus_tag) %>%
+    dplyr::select(scaffold, cds_start, cds_end, locus_tag) %>%
     # many-to-many is intended here
     left_join(exons, by = c("scaffold", "locus_tag"), relationship = "many-to-many")
 
