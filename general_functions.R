@@ -57,7 +57,7 @@ get_coords <- function(sf = FALSE, all = FALSE) {
   # Unknown provenance
   unknown_samples <- "Scelocci_CHI1382_DAW5-46-21"
 
-  # Potenitally swapped samples
+  # Potentially swapped samples
   swapped_samples <- c("Scelocci_CAS213197", "Scelocci_CAS214858")
 
   # Filter for samples in the VCF
@@ -69,7 +69,7 @@ get_coords <- function(sf = FALSE, all = FALSE) {
   # Filter to samples in vcf
   coords <- coords %>% filter(SampleID %in% fam$X2)
 
-  # If all = TRUE, return coordinates before removing beckki samples, unknown provenance sample, and potentially swapped samples
+  # If all = TRUE, return coordinates before removing beckii samples, unknown provenance sample, and potentially swapped samples
   if (all) {return(coords)}
 
   message(
@@ -275,8 +275,11 @@ make_pretty_names <- function(vars){
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
     if (grepl("Q", x)) return("Admixture")
     if (grepl("tmean_dif", x)) return("Contemporary temperature change")
+    if (grepl("fire", x)) return("Wildland fire frequency")
     if (grepl("resid", x)) return("Residuals")
     if (grepl("genes_ho", x) | grepl("Ho_gea", x)| grepl("gea_Ho", x)) return("Adaptive heterozygosity")
+    if (grepl("Ho_syn", x)) return("Synonymous heterozygosity")
+    if (grepl("Ho_nonsyn", x)) return("Non-synonymous heterozygosity")
     if (grepl("Ho", x)) return("Genome-wide heterozygosity")
     return(x)
   })
