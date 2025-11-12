@@ -24,6 +24,10 @@ plink --bfile $PLINK_CHR --het --out outputs/58-Sceloporus_chr --allow-extra-chr
 # Calculate heterozygosity from pruned data
 plink --bfile $PLINK_PRUNED --het --out outputs/58-Sceloporus_pruned --allow-extra-chr
 
+# Calculate heterozygosity from GEA data
+plink --bfile ../gea/outputs/nonsyn --het --out outputs/nonsyn --allow-extra-chr
+
+
 # DOSAGE FILES ------------------------------------------------------------------------
 plink --bfile ../../data/ccgp_data/58-Sceloporus_pruned_0.6_thinned_10kb_chr --recode A --allow-extra-chr --out outputs/thinned # creates thinned.raw
 

@@ -264,7 +264,25 @@ tmean_mod_df %>%
   summarise(across(everything(), ~sum(is.na(.))))
 ```
 
+# Hypothesis 6: Genetic diversity explained by wildland fire frequency
+USGS Combined wildland fire datasets for the United States and certain territories, 1800s-Present (summary rasters): https://www.sciencebase.gov/catalog/item/61aa5483d34eb622f699df85
+```{r}
+# Load wildfire frequency raster created using data_processing/get_wildfire.R
+fire <- rast(here("data", "env", "california_fire_frequency.tif"))
+names(fire) <- "fire"
+
+# Extract fire values at sample locations
+fire_mod_df <- data.frame(
+  SampleID = coords$SampleID,
+  fire = terra::extract(fire, coords, ID = FALSE)[, "fire"]
+)
+
+# Check NA values
+print(colSums(is.na(fire_mod_df)))
+```
+
 # Combine rasters into a raster stack
+This can take a while because of the fire raster
 ```{r}
 env_list <- 
   list(
@@ -273,7 +291,8 @@ env_list <-
     gHM = ghm,
     tmean_dif = tmean_dif,
     csi_past = csi_past, 
-    Q = q_r
+    Q = q_r,
+    fire = fire
   )
 
 # Project all rasters to EPSG:3310 and mask with CA
@@ -311,7 +330,7 @@ env_stack <-
 # Create model data
 ```{r}
 # Model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "fire", "x", "y")
 
 # Combine dataframes
 mod_df <- 
@@ -322,6 +341,7 @@ mod_df <-
   left_join(q_mod_df) %>%
   left_join(glacier_mod_df) %>%
   left_join(tmean_mod_df) %>%
+  left_join(fire_mod_df) %>%
   dplyr::select(Ho, SampleID, all_of(mod_vars))
 
 # Check sample number
@@ -369,7 +389,7 @@ high_corr_pairs
 
 ```{r}
 #Make nice correlation plot
-r <- stats::cor(mod_df_scaled[, setdiff(mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
+r <- stats::cor(mod_df[, setdiff(mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
 rownames(r) <- colnames(r) <- make_pretty_names(rownames(r))
 r[lower.tri(r, diag = TRUE)] <- NA
 
@@ -383,7 +403,7 @@ dev.off()
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "Q")
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "fire", "Q")
 
 # GLS can't handle 0 distances, so take the average of the coordinates
 mod_sf_unique <- 
@@ -410,7 +430,7 @@ mod_sf_unique_scaled$glacier_factor <- as.factor(mod_sf_unique$glacier)
 mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
 
 # Run OLS and get residuals
-f <- formula("Ho ~ NDVI + gHM +  csi_past + glacier_factor + Q + tmean_dif + bio1")
+f <- formula(paste0("Ho ~", paste(mod_vars, collapse = " + ")))
 ols_model <- lm(f, data = mod_sf_unique)
 summary(ols_model)
 AIC(ols_model)
@@ -430,7 +450,7 @@ dev.off()
 # Based on visual inspection, the exponential model seems to fit best
 
 # Fit a GLS model
-# Note: nugget=FALSE assumes residuals at the same location are perfectly correlated, which aligns with expectations for heterozygosity, since you don't expect to have much microscale variation in heterozygosity.
+# Note: nugget=FALSE assumes residuals at the same location are perfectly correlated, which should align with heterozygosity, since you don't expect to have much microscale variation in heterozygosity.
 # nugget=TRUE allows unstructured microscale variance (random noise at zero distance), which can absorb spatial signal and cause predictor effects to appear insignificant. 
 gls_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique)
 summary(gls_model)
@@ -475,19 +495,19 @@ sig_vars_by_model <- map(models, ~ broom::tidy(.x) %>%
   pull(term))
 print(sig_vars_by_model)
 # $OLS
-# [1] "csi_past"  "Q"         "tmean_dif" "bio1"     
+# [1] "bio1"      "csi_past"  "tmean_dif" "fire"      "Q"        
 
 # $GLS
-# [1] "csi_past"  "Q"         "tmean_dif" "bio1"     
+# [1] "bio1"      "csi_past"  "tmean_dif" "fire"      "Q"       
 ```
 
 # Fit final model 
 ```{r}
-# Create formula
-f <- formula("Ho ~ NDVI + gHM +  csi_past + glacier_factor + Q + tmean_dif + bio1")
+# Create final formula
+f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + fire + Q")
 
 # Fit model
-final_model <-  gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
+final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
 
 # Results
 mod_result <- broom::tidy(final_model)
@@ -499,8 +519,8 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.42
-cor(predict(final_model), mod_sf_unique$Ho) # 0.65
+cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.46
+cor(predict(final_model), mod_sf_unique$Ho) # 0.68
 ```
 
 # Figures
@@ -523,8 +543,8 @@ scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale
 
 # Make residual plots for model
 plot_mod <- function(x, y, df, model, 
-                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif","Q"),
-                     color_var = c("x","y")) {
+                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif","fire","Q"),
+                     color_var = "x") {
 
   # Calculate residuals for y variable given x variable
   df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
@@ -536,13 +556,13 @@ plot_mod <- function(x, y, df, model,
     geom_point(aes(col = .data[[col_var]])) +
     geom_smooth(method = "lm", colour = "black") +
     scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) +
-    ggpubr::stat_cor() +
+    #ggpubr::stat_cor() +
     labs(x = stringr::str_to_sentence(make_pretty_names(x)), 
       y = stringr::str_to_sentence("Residual heterozygosity")) +
     theme_classic() +
     theme(legend.position = "none",
           axis.title = element_text(size = 14),
-          axis.text  = element_text(size = 10))
+          axis.text  = element_text(size = 12))
 
 }
 
@@ -554,21 +574,22 @@ range_map <- get_range() # Sceloporus range map
 wingen_r <- 
   terra::rast(here(outpath, "Ho_kriged_masked.tif")) %>% 
   mask(range_map) %>% 
+  mask(ca_proj) %>%
   as.data.frame(xy = TRUE, na.rm = TRUE) 
 names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 
 # Isolate significant vs all variables
-sig_vars <- c("csi_past", "tmean_dif", "bio1", "Q")
-mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "Q")
+sig_vars <- c("csi_past", "tmean_dif", "bio1", "fire", "Q")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "fire", "Q")
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
-  geom_sf(data = ca_proj, fill = "gray90", colour = NA) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
   geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
   scale_met_cont(wingen_r$layer, aesthetic = "fill", extend_scale = 0.1) +
   labs(fill = "Heterozygosity") +
   theme_void() +
-  geom_sf(data = mod_sf_unique, shape = 21, aes(fill = Ho), colour = "#00000087", size = 1.3) +
+  geom_sf(data = mod_sf_unique, shape = 21, aes(fill = Ho), colour = "#00000087", size = 2) +
   theme(
     plot.margin = margin(1, 1, 1, 1, unit = "mm"),
     legend.position = "inside",              # turn on "inside" mode
@@ -596,22 +617,18 @@ pred_vs_obs <-
   scale_met_cont(c(mod_sf_unique$Ho, wingen_r$layer), aesthetic = "colour", extend_scale = 0.1) +
   theme_classic() +
   labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
-  ggpubr::stat_cor() +
+  ggpubr::stat_cor(size = 5) +
   theme(legend.position = "none",
-        axis.title = element_text(size = 13),
-        axis.text  = element_text(size = 10))
+        axis.title = element_text(size = 14),
+        axis.text  = element_text(size = 12))
 
 pred_vs_obs_adj <- cowplot::plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = c(0.9, 0.1))
 
-plt1 <- cowplot::plot_grid(plotlist = plts_residual_y, nrow = 2)
+plt1 <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 2)
 plt2 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
-                           labels = c("A", "C"), rel_heights = c(0.6, 0.4))
+                           labels = c("A", "C"), rel_heights = c(0.6, 0.4), label_size = 18)
 
-pdf(here(plotpath, "figure_Ho.pdf"), height = 8, width = 12)
-cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 0.67), labels = c("", "B"))
-dev.off()
-
-png(here(plotpath, "figure_Ho.png"), height = 8*300, width = 12*300, res = 300)
-cowplot::plot_grid(plt2, plt1, ncol = 2, rel_widths = c(0.33, 0.67), labels = c("", "B"))
+png(here(plotpath, "figure_Ho.png"), height = 2.95*4*300*0.9, width = 3.55*4*300*0.9, res = 300)
+cowplot::plot_grid(plt2, plt1, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
 dev.off()
 ```
