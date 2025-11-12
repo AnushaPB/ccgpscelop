@@ -1,6 +1,15 @@
-wget -O fire241gdb.ash "\
-https://34c031f8-c9fd-4018-8c5a-4159cdff6b0d-cdn-endpoint.azureedge.net/-/media/calfire-website/what-we-do/fire-resource-assessment-program---frap/gis-data/2025/fire241gdb.ash'?rev=51177a999fe84e83a7c03b7d5a66b93b"
+# Combined wildland fire datasets for the United States and certain territories, 1800s-Present (summary rasters)
+# Link from: https://www.sciencebase.gov/catalog/item/61aa5483d34eb622f699df85
+wget -c -O ../data/env/Fire_Summary_Rasters_GeoTiffs.zip \
+'https://prod-is-usgs-sb-prod-content.s3.amazonaws.com/61aa5483d34eb622f699df85/Fire_Summary_Rasters_GeoTiffs.zip?AWSAccessKeyId=AKIAI7K4IX6D4QLARINA&Expires=1762898372&Signature=LjGRFScbgELdnI8q7KppjMWyREo%3D'
+unzip ../data/env/Fire_Summary_Rasters_GeoTiffs.zip
 
-mv fire241gdb.ash fire241gdb.zip
-unzip fire241gdb.zip
-
+# Load wildfire data
+Rscript -e '
+library(terra)
+library(here)
+library(sf)
+source(here("general_functions.R
+fire <- rast(here("analysis", "wildfire", "Fire_Summary_Rasters_GeoTiffs", "USGS_Wildland_Fire_Frequency_Raster.tif"))
+ca <- get_ca() %>% st_transform(crs(fire))
+fire_ca <- crop(fire, ca)
