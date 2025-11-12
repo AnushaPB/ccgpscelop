@@ -10,6 +10,9 @@ mkdir -p ../data/ccgp_data
 
 # Download specific files to the data directory
 
+# LIst files
+rsync --list-only ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/
+
 # Callable sites:
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/58-Sceloporus/58-Sceloporus_callable_sites.bed ../data/ccgp_data
 
@@ -22,6 +25,9 @@ rsync -avz ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/58-Scelopor
 
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/58-Sceloporus_annotated_pruned_0.6.vcf.gz ../data/ccgp_data
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/58-Sceloporus_annotated_pruned_0.6.vcf.gz.csi ../data/ccgp_data
+
+rsync -avz ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/58-Sceloporus_clean_snps.vcf.gz ../data/ccgp_data
+rsync -avz ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/58-Sceloporus_clean_snps.vcf.gz.tbi ../data/ccgp_data
 
 # Depth and missingness:
 rsync -avz ccgp-download.gi.ucsc.edu::ccgp/58-Sceloporus/QC/58-Sceloporus.idepth ../data/ccgp_data
