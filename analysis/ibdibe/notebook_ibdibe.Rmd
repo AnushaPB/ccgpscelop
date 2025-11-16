@@ -75,8 +75,11 @@ coords_proj <-
 
 env <- terra::extract(envstack, coords_proj, ID = FALSE)
 
-gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE)
-
+gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE, model = "best")
+# Percent deviance explained by final model = 53.608
+# Final set of predictors returned: 
+# Temperature
+# matrix_1
 print(gdm$coeff_df)
 
 pdf(here("gdm_out.pdf"))
