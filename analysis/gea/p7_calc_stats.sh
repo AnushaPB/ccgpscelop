@@ -8,9 +8,7 @@ VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
 RDASNPS=outputs/bio1ndvi_rda_ids.txt
 GENESNPS=outputs/bio1ndvi_gea_genes_ids.txt
 NONSYNGENESNPS=outputs/bio1ndvi_gea_genes_nonsyn_ids.txt
-NONSYNNOTGEAGENESNPS=outputs/notgeagenes_nonsyn.bed
 ALLGENES=outputs/all_genes.bed
-ALLNONSYN=outputs/all_nonsynonymous.bed
 
 # Subset plink file with GEA snps (created using p1_process_rda.R)
 plink --bfile $PLINK \

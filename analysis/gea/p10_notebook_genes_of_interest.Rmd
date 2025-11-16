@@ -25,20 +25,30 @@ search <- function(x, y = NULL, strict = FALSE) {
 
   if (strict) x_variants <- x
 
-  y %>%
+  gene_descrip <- 
+    y %>%
     filter(reduce(x_variants, ~ .x | str_detect(full_name, .y), .init = FALSE)) %>%
     distinct(full_name) %>%
     pull(full_name) %>%
     str_extract("description=([^;]+)") %>%
-    str_remove("^description=") %>%
-    writeLines()
+    str_remove("^description=")
+
+  gene_id <-
+    y %>%
+    filter(reduce(x_variants, ~ .x | str_detect(full_name, .y), .init = FALSE)) %>%
+    distinct(full_name) %>%
+    pull(full_name) %>%
+    str_extract("Name=([^;]+)") %>%
+    str_remove("^Name=") 
+
+  writeLines(paste(gene_id, gene_descrip, sep = ": "))
 }
 
 #Humans
 #HSP70 (Heat Shock Protein 70): This protein helps protect cells from stress-induced damage, including heat stress. It plays a crucial role in protein folding and repair.
 search("HSP") # many of these! Heat shock 70 kDA is included in the list
 search("heat shock")  # many of these! Heat shock 70 kDA is included in the list
-search("Heat shock 70") 
+search("Hsp70") 
 
 #UCP1 (Uncoupling Protein 1): Found in brown adipose tissue, UCP1 is involved in thermogenesis, helping humans generate heat in cold environments.
 search("UCP1")
@@ -132,10 +142,12 @@ search("leptin")
 # From this paper on mammals: https://www.nature.com/articles/s41598-021-95816-8
 # specific candidate variants and genes are related to the neuronal system (ITPR1, ITPR2, and GRIA4) and neuroactive ligand–receptor interaction functions for heat tolerance (NPFFR2, CALCR, and GHR), providing a novel insight that can help to develop genetic and management approaches to combat heat stress.
 search("Inositol 1,4,5-trisphosphate receptor type 1") 
-search("Inositol 1,4,5-trisphosphate receptor type 2") # found! (ITPR2)
+search("Inositol 1,4,5-trisphosphate receptor type 2") 
+search("ITPR2") # found!
+search("ITPR1") 
 search("Glutamate receptor ionotropic")
-search("Neuropeptide FF receptor 1") 
-search("NFFR")
+search("NPFFR2") # found!
+search("Neuropeptide")
 search("Calcitonin receptor") 
 search("Growth hormone receptor") 
 search("growth hormone") #growth hormone 1
@@ -143,24 +155,13 @@ search("growth hormone") #growth hormone 1
 # From this paper on sticklebacks: https://www.nature.com/articles/s41598-021-95816-8
 # We determined maximum critical thermal limits (CTmax) and the associated gene expression responses in three heat shock (hsp60, hsp70, hsp90) and two key metabolic (idh2, fbp2) genes at ecologically relevant moderate heat stress (26 °C) as well as at the critical thermal limit (CTmax)
 search("Heat shock 70") # found!
+search("Hsp70") # found!
 search("Heat shock 90")
+search("Hsp90") # Found!
 search("Heat shock 60")
+search("Hsp60") # Found!
 search("Isocitrate dehydrogenase") # Found IDH but not IDH2
 search("bisphosphatase")
-
-# From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
-#TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
-search("TRPP1L2")
-search("TRPP1L3")
-search("TRPV1")
-search("Transient receptor potential cation channel subfamily V member 1") # found transient receptor potential cation channel subfamily V member 1
-
-#TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
-search("TRPV3")
-search("Transient receptor potential cation channel subfamily V member 3") 
-search("TRPA1") # transient receptor potential cation channel subfamily A member 1
-search("Transient receptor potential cation channel subfamily A member 1") 
-search("TRPM8") # Found!
 
 # # From this paper on bees/thermal stress/gene expression: 
 # https://www.researchgate.net/figure/The-expression-levels-of-DnaJB6-DnaJshv-DnaJB13-and-DnaJB14-under-heat-stress-The_fig4_360260597
@@ -169,80 +170,23 @@ search("TRPM8") # Found!
 # DnaJ homolog subfamily B member 6 
 search("DnaJ homolog subfamily B member 6") 
 search("DnaJ")
+search("DNAJB6") 
+# From this paper on reptiles/thermosensation: https://www.sciencedirect.com/science/article/pii/S1744117X25000061 
+#TRPP1L2, TRPP1L3, and TRPV1 were involved in heat-sensitive responses (> 36°C).
+search("TRPP1L2")
+search("TRPP1L3")
+search("TRPV1") # Found!
+
+#TRPV3, TRPA1, and TRPM8 were involved in cold-sensitive responses (< 20°C).
+search("TRPV3")
+search("Transient receptor potential cation channel subfamily V member 3") 
+search("TRPA1") # transient receptor potential cation channel subfamily A member 1
+search("Transient receptor potential cation channel subfamily A member 1") 
+search("TRPM8") 
 ```
 ```{r}
 # Tick related for sceloporus clearing parasite
-search("Factor B") # maybe? non specific
+search("Factor B") c
 search("Properdin") 
 search("Complement")
-# FA complementation group M
-# complement component C6-like
-# FA complementation group C
-# complement C1s
-# complement C3
-# complement factor B
-# complement C4-B-like
-# X-ray repair cross complementing 4
-# complement component receptor 1-like protein
-# complement decay-accelerating factor transmembrane isoform-like
-# complement C8 alpha chain
-# complement factor H
-# complement factor H-related protein 5-like
-# complement factor H-like
-# complement factor I
-# complement C3a receptor 1
-# X-ray repair cross complementing 2
-# FA complementation group I
-# FA complementation group A
-# X-ray repair cross complementing 1
-# complement component receptor 1-like protein
-```
-
-```{r}
-# I manually curated a list of genes of interest based on the above searches
-source(here("analysis", "gea", "get_selection_stats.R"))
-goi <- get_goi_names()
-
-# Z-scores
-# NOTE: only has score along axis it was significant on
-rda_z <- read_csv(here(outpath, "bio1ndvi_zscores.csv")) %>% filter(locus %in% genes_nonsyn$locus)
-rda_genes <-
-  genes_nonsyn %>%
-  right_join(rda_z) 
-
-# Look at HSP 70
-hsp70 <- rda_genes %>% filter(grepl("Heat shock 70", full_name)) %>% dplyr::select(loading, axis, full_name)
-nrow(hsp70)
-
-rda_genes$HSP70 <- grepl("Heat shock 70", rda_genes$full_name)
-rda_genes$goi <- rowSums(bind_cols(map(goi, ~grepl(.x, rda_genes$full_name)))) > 0
-rda_genes$goi_name <- map_chr(rda_genes$full_name, function(name) {
-  match <- keep(goi, ~ str_detect(name, .x))
-  if (length(match) > 0) match[[1]] else NA_character_
-}, .progress = TRUE)
-
-
-gg_df <- 
-  rda_genes %>% 
-  distinct(locus, loading, axis, HSP70, goi, goi_name) %>% 
-  pivot_wider(names_from = "axis", values_from = "loading")
-
-pdf(here(plotpath, "goi_hist.pdf"), width = 10, height = 3)
-ggplot(gg_df) +
-  geom_histogram(aes(x = `1`)) +
-  geom_vline(data = filter(gg_df, HSP70), aes(xintercept = `1`))
-ggplot(gg_df) +
-  geom_histogram(aes(x = `2`)) +
-  geom_vline(data = filter(gg_df, HSP70), aes(xintercept = `2`))
-ggplot(gg_df) +
-  geom_histogram(aes(x = `1`)) +
-  geom_vline(data = filter(gg_df, goi), aes(xintercept = `1`, col = goi_name)) + 
-  theme_classic() +
-  labs(col = "Genes of interest")
-ggplot(gg_df) +
-  geom_histogram(aes(x = `2`)) +
-  geom_vline(data = filter(gg_df, goi), aes(xintercept = `2`, col = goi_name))+ 
-  theme_classic() +
-  labs(col = "Genes of interest")
-dev.off()
 ```

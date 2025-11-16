@@ -14,15 +14,13 @@ all_genes <-read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv"))
 genes_org <- 
   all_genes %>% 
   # TODO: this shouldn't reall need to be two steps
-  filter(full_name %in% genes_nonsyn$full_name) %>%
-  drop_na(uniprot_id)
+  filter(full_name %in% genes_nonsyn$full_name) 
 
 print(paste("Number of GEA SNPs in genes:", nrow(genes_nonsyn))) # 8,860
 print(paste("Number of unique genes with GEA SNPs:", length(unique(genes_nonsyn$full_name)))) # 4,958
-print(paste("Number of unique GEA UniprotIDs:", nrow(genes_org %>% distinct(uniprot_id)))) # 3,442
-print(paste("Number of all genes with UniprotIDs:", nrow(all_genes))) # 20,638
-print(paste("Number of all unique UniprotIDs:", nrow(all_genes %>% distinct(uniprot_id)))) # 20,638
-
+print(paste("Number of unique GEA gene names:", nrow(genes_org %>% distinct(gene_name)))) # 3,442
+print(paste("Number of all genes:", nrow(all_genes))) # 18,670
+print(paste("Number of all unique gene names:", nrow(all_genes %>% distinct(gene_name)))) # 13,136
 
 # PLOTTING RDA
 # IMPORTANT: NEED TO DO BY SCAFFOLD!!!!!!
