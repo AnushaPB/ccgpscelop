@@ -38,3 +38,4 @@ unique_df <-
 library(nlme)
 gls(Ho ~ tmean_dif + bio1 + csi_past + Q + gHM + NDVI + glacier, data = unique_df,
     correlation = corExp(form = ~ X + Y, nugget = FALSE)) %>% summary()
+

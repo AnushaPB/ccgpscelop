@@ -41,6 +41,7 @@ simple_plot <- function(x, y, data) {
     )
 }
 pdf(here(plotpath, "het_check.pdf"), width=4, height=4)
+simple_plot("Ho", "Ho_nonsyn", het)
 simple_plot("tmean_dif", "Ho_nonsyn", het)
 simple_plot("tmean_dif", "Ho_syn", het) 
 simple_plot("tmean_dif", "Ho_nonsyn_resid", het) + ylab("Residuals(non-synonymous ~ genome-wide Ho)")
@@ -73,7 +74,6 @@ ggplot(het_long, aes(x = tmean_dif, y = residuals, color = type)) +
   theme(
     axis.title = element_text(size = 14)
   )
-
 dev.off()
 
 pdf(here(plotpath, "het_check_clean.pdf"), width=3*5, height=5)
@@ -98,6 +98,7 @@ het <- het %>%
       TRUE ~ "Other"
     )
   )
+
 
 pdf(here(plotpath, "het_check_by_pop.pdf"), width=6, height=6)
 
