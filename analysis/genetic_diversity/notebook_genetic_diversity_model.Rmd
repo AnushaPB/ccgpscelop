@@ -264,21 +264,70 @@ tmean_mod_df %>%
   summarise(across(everything(), ~sum(is.na(.))))
 ```
 
-# Hypothesis 6: Genetic diversity explained by wildland fire frequency
-USGS Combined wildland fire datasets for the United States and certain territories, 1800s-Present (summary rasters): https://www.sciencebase.gov/catalog/item/61aa5483d34eb622f699df85
+# Hypothesis 6: Genetic diversity explained by fire
+
 ```{r}
-# Load wildfire frequency raster created using data_processing/get_wildfire.R
-fire <- rast(here("data", "env", "california_fire_frequency.tif"))
-names(fire) <- "fire"
+# Historical fire regime data
+# Fire Return Interval (FRI)
+fri <- rast("LF2016_FRI_200_CONUS/Tif/LC16_FRI_200.tif") 
+# Percent Replacement (PFS)
+pfs <- rast("LF2016_PFS_200_CONUS/Tif/LC16_PFS_200.tif")
+# Vegetation Departure (VDep)
+vdep <- rast("LF2016_VDep_200_CONUS/Tif/LC16_VDep_200.tif")
 
-# Extract fire values at sample locations
-fire_mod_df <- data.frame(
-  SampleID = coords$SampleID,
-  fire = terra::extract(fire, coords, ID = FALSE)[, "fire"]
-)
+# Activate relevant category for each raster
+activeCat(fri)<- "FRI_ALLFIR"
+activeCat(vdep) <- "LABEL"
 
-# Check NA values
-print(colSums(is.na(fire_mod_df)))
+# There are multiple categories for PFS, so create separate rasters for each
+pfs_replac <- pfs
+pfs_mixed <- pfs
+pfs_surfac <- pfs
+activeCat(pfs_replac) <- "PRC_REPLAC"
+activeCat(pfs_mixed) <- "PRC_MIXED"
+activeCat(pfs_surfac) <- "PRC_SURFAC"
+
+# Stack layers FRI and PFS layers
+fire_stack <- c(pfs_replac, pfs_mixed, pfs_surfac, fri)
+
+# Buffer coordinates
+coords_buffer <- st_buffer(coords_proj, dist = 1000)
+
+# Extract fire data using buffer and majority value
+fire_vals <- terra::extract(fire_stack, coords_buffer)
+
+buffer_n_extract <- function(r, points, buffer_dist = 1000) {
+  # Buffer points and extract raster values
+  points_buffer <- st_buffer(points, dist = buffer_dist) 
+  vals <- terra::extract(r, points_buffer, na.rm = TRUE)
+  names(vals) <- c("ID", "value")
+
+  # For each ID (point buffer), get the majority value
+  majority_vals <- 
+    vals %>%
+    as_tibble() %>%
+    group_by(ID, value) %>%
+    summarise(n = n()) %>%
+    filter(value != -9999, value != "Water") %>%
+    filter(n == max(n)) %>%
+    ungroup() %>%
+    select(ID, value) %>%
+    # For IDs with multiple majority values, take the numeric one over the character one
+    group_by(ID) %>%
+    filter(ifelse(n() > 1 & any(!is.na(as.numeric(as.character(value)))), !is.na(as.numeric(as.character(value))), TRUE)) %>%
+    slice(1)
+  
+  # Combine back to points so that buffers that have no value that is not -9999 or water can get NA values
+  majority_vals_complete <- 
+    points %>% 
+    mutate(ID = row_number()) %>%
+    left_join(majority_vals, by = "ID")
+  
+  points[[names(r)[1]]] <- majority_vals_complete$value
+  
+  return(points)
+}
+
 ```
 
 # Combine rasters into a raster stack
