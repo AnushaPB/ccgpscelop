@@ -293,81 +293,55 @@ activeCat(pfs_replac) <- "PRC_REPLAC"
 activeCat(pfs_mixed) <- "PRC_MIXED"
 activeCat(pfs_surfac) <- "PRC_SURFAC"
 
-buffer_n_extract <- function(r, points, buffer_dist) {
-  # Buffer points and extract raster values
-  points_buffer <- st_buffer(points, dist = buffer_dist) 
-  vals <- terra::extract(r, points_buffer, na.rm = TRUE)
-  names(vals) <- c("ID", "value")
-
-  # For each ID (point buffer), get the majority value
-  majority_vals <- 
-    vals %>%
-    as_tibble() %>%
-    # Count each value
-    group_by(ID, value) %>%
-    summarise(n = n()) %>%
-    # Remove NA values and ignore Water since it is just points near the coast
-    filter(value != -9999, value != "Water") %>%
-    # Get max category that is not NA or water
-    # ! If all values are NA this point will get an NA in the next step
-    filter(n == max(n)) %>%
-    ungroup() %>%
-    select(ID, value) %>%
-    # For IDs with multiple majority values, take the numeric one over the character one
-    # (In this data, there are no cases where you have two majority numeric values - you will get an error if there is)
-    group_by(ID) %>%
-    filter(ifelse(n() > 1 & any(!is.na(as.numeric(as.character(value)))), !is.na(as.numeric(as.character(value))), TRUE)) %>%
-    slice(1)
-  
-  # Combine back to points so that buffers that have no value that is not -9999 or water can get NA values
-  majority_vals_complete <- 
-    points %>% 
-    mutate(ID = row_number()) %>%
-    left_join(majority_vals, by = "ID")
-  
-  points[[names(r)[1]]] <- majority_vals_complete$value
-  
-  return(points)
-}
-
-# Stack layers FRI and PFS layers
-names(fire_list) <- c("pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep")
-fire_values <- map(fire_list, ~buffer_n_extract(.x, coords_proj, buffer_dist = 250)) # Warning is okay, it is just because of as.numeric() conversion
-
-
 fire_list <- list(pfs_replac, pfs_mixed, pfs_surfac, fri, vdep)
+names(fire_list) <- c("pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep")
+
+fri_vals <- extract(fri, coords_proj, ID = FALSE)$FRI_ALLFIR
 
 fire_mod_df <- 
-  map(fire_list, ~terra::extract(.x, coords_proj)[,2]) %>% 
+  map(fire_list, ~terra::extract(.x, coords_proj)[,2], .progress = TRUE) %>% 
   bind_cols() %>%
-  mutate(across(starts_with("pfs"), ~ifelse(-9999, 0, .x))) %>%
+  mutate(SampleID = coords$SampleID) %>%
+  mutate(across(starts_with("pfs"), ~ifelse(.x == -9999, 0, .x))) %>%
   mutate(fri = ifelse(fri == -9999, NA, fri)) %>%
   # Convert vdep to fully numeric by coding categories (urban/agriculture/etc.) as 101 (highest departure)
   # A warning is normal here because of coercion to numeric
   mutate(
     vdep = as.numeric(as.character(vdep)),
     vdep = ifelse(is.na(vdep), 101, vdep)
-  ) %>%
-  # Log transform FRI (to reduce skew)
-  mutate(
-    log_fri = log1p(fri + 1) # log(1 + x) to avoid log(0)
-  )
-
-range(fire_mod_df$fri)
+  ) 
 
 # Check for NAs
 fire_mod_df %>% 
   summarise(across(everything(), ~sum(is.na(.))))
-# 18
 
-test_df <- left_join(fire_mod_df, het)
+# Calculate log
+fire_mod_df <-
+  fire_mod_df %>%
+  # Log transform FRI (to reduce skew)
+  mutate(
+    log_fri = log1p(fri + 1) # log(1 + x) to avoid log(0)
+  ) 
+
+# Check for NAs
+fire_mod_df %>% 
+  summarise(across(everything(), ~sum(is.na(.))))
+```
+```{r}
+test_df <- left_join(fire_mod_df, het) %>% left_join(get_coords(sf = TRUE)) %>% st_as_sf()
 pdf(here("test.pdf"))
-ggplot(test_df, aes(x = pfs_surfac, y = Ho)) + geom_point() 
+ggplot(test_df, aes(x = pfs_surfac, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
+ggplot(test_df, aes(x = pfs_replac, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
+ggplot(test_df, aes(x = pfs_mixed, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
+ggplot(test_df, aes(x = fri, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
+ggplot(test_df, aes(x = log_fri, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
+ggplot(test_df) + geom_sf(aes(color = log_fri)) + scale_color_viridis_c(option = "turbo")
+ggplot(test_df) + geom_sf(aes(color = fri)) + scale_color_viridis_c(option = "turbo")
 dev.off()
 
 cor(fire_mod_df %>% select(fri, pfs_replac, pfs_surfac), use = "pairwise.complete.obs")
 
-pc <- prcomp(fire_mod_df %>% select(fri, pfs_replac, pfs_surfac) %>% filter(fri < 1000), center = TRUE, scale. = TRUE)
+pc <- prcomp(fire_mod_df %>% select(pfs_mixed, pfs_replac, pfs_surfac, fri), center = TRUE, scale. = TRUE)
 fire_mod_df$PC1 <- pc$x[,1]
 fire_mod_df$PC2 <- pc$x[,2]
 
@@ -383,6 +357,9 @@ ggplot(fire_mod_df, aes(x = PC1, y = PC2)) +
   geom_text(data = var_loadings, aes(x = PC1*3.2, y = PC2*3.2, label = Variable), color = "red")
 dev.off()
 
+test_df <- left_join(fire_mod_df, het)
+lm(Ho ~ log_fri + pfs_mixed + pfs_surfac, data = test_df) %>% summary()
+lm(Ho ~ PC1 + PC2, data = test_df) %>% summary()
 ```
 
 # Combine rasters into a raster stack
@@ -451,7 +428,8 @@ mod_df <-
   left_join(tmean_mod_df) %>%
   left_join(fire_mod_df) %>%
   dplyr::select(Ho, SampleID, all_of(mod_vars)) %>%
-  drop_na(starts_with("pfs"))
+  drop_na(starts_with("pfs")) %>%
+  drop_na(log_fri)
 
 # Check sample number
 # Note: het has 259 samples, but two of them are potentially flipped ("Scelocci_CAS213197", "Scelocci_CAS214858"), so we remove the from the model (they are not included in coords)
@@ -485,6 +463,7 @@ write_csv(export_df, here(outpath, "model_df.csv"))
 r <- cor(mod_df[, mod_vars], use = "pairwise.complete.obs")
 # Set the diagonal and lower triangle to NA
 r[lower.tri(r, diag = TRUE)] <- NA
+r
 
 # Find the pairs with correlations greater than 0.7
 high_corr <- which(abs(r) > 0.7, arr.ind = TRUE)
@@ -544,7 +523,9 @@ mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
 
 # Confirm no NA
 stopifnot(all(colSums(is.na(mod_sf_unique_scaled)) == 0))
+```
 
+```{r}
 # Run OLS and get residuals
 f <- formula(paste0("Ho ~", paste(mod_vars, collapse = " + ")))
 ols_model <- lm(f, data = mod_sf_unique)
@@ -690,10 +671,10 @@ plan(sequential)
 # Fit final model 
 ```{r}
 # Create final formula
-f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + pfs_replac + pfs_mixed + pfs_surfac + log_fri + vdep + Q")
+f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + log_fri + pfs_mixed + pfs_surfac + vdep + Q")
 
 # Fit model
-final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
+final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled) # TEMP DROP NA
 
 # Calculate VIF
 vif_values <- car::vif(final_model)
@@ -783,8 +764,8 @@ wingen_r <-
 names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 
 # Isolate significant vs all variables
-sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "pfs_surfac", "log_fri")
-mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "log_fri")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
@@ -1085,7 +1066,7 @@ plot_var <- function(x){
     theme(plot.title = element_text(hjust = 0.5))
 }
 
-sig_vars <- c("csi_past", "Q", "tmean_dif", "pfs_replac","pfs_surfac", "log_fri")
+sig_vars <- c("csi_past", "Q", "tmean_dif", "pfs_replac", "pfs_surfac", "log_fri")
 pdf(here(plotpath, "significant_variable_maps_sf.pdf"), width = 4*3, height = 4*2)
 plts <- map(sig_vars, ~plot_var(.x))
 cowplot::plot_grid(plotlist = plts, nrow = 2)
