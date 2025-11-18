@@ -269,11 +269,17 @@ tmean_mod_df %>%
 ```{r}
 # Historical fire regime data
 # Fire Return Interval (FRI)
-fri <- rast("LF2016_FRI_200_CONUS/Tif/LC16_FRI_200.tif") 
+ca_proj_buffer <- st_buffer(ca_proj, dist = 10000) %>% st_transform(5070) # buffer to ensure full coverage when cropping rasters
+fri_og <- rast("analysis/wildfire/LF2016_FRI_200_CONUS/Tif/LC16_FRI_200.tif") 
+fri <- crop(fri_og, ca_proj_buffer)
+
 # Percent Replacement (PFS)
-pfs <- rast("LF2016_PFS_200_CONUS/Tif/LC16_PFS_200.tif")
+pfs_og <- rast("analysis/wildfire/LF2016_PFS_200_CONUS/Tif/LC16_PFS_200.tif")
+pfs <- crop(pfs_og, ca_proj_buffer)
+
 # Vegetation Departure (VDep)
-vdep <- rast("LF2016_VDep_200_CONUS/Tif/LC16_VDep_200.tif")
+vdep_og <- rast("analysis/wildfire/LF2016_VDep_200_CONUS/Tif/LC16_VDep_200.tif")
+vdep <- crop(vdep_og, ca_proj_buffer)
 
 # Activate relevant category for each raster
 activeCat(fri)<- "FRI_ALLFIR"
@@ -287,16 +293,7 @@ activeCat(pfs_replac) <- "PRC_REPLAC"
 activeCat(pfs_mixed) <- "PRC_MIXED"
 activeCat(pfs_surfac) <- "PRC_SURFAC"
 
-# Stack layers FRI and PFS layers
-fire_stack <- c(pfs_replac, pfs_mixed, pfs_surfac, fri)
-
-# Buffer coordinates
-coords_buffer <- st_buffer(coords_proj, dist = 1000)
-
-# Extract fire data using buffer and majority value
-fire_vals <- terra::extract(fire_stack, coords_buffer)
-
-buffer_n_extract <- function(r, points, buffer_dist = 1000) {
+buffer_n_extract <- function(r, points, buffer_dist) {
   # Buffer points and extract raster values
   points_buffer <- st_buffer(points, dist = buffer_dist) 
   vals <- terra::extract(r, points_buffer, na.rm = TRUE)
@@ -306,13 +303,18 @@ buffer_n_extract <- function(r, points, buffer_dist = 1000) {
   majority_vals <- 
     vals %>%
     as_tibble() %>%
+    # Count each value
     group_by(ID, value) %>%
     summarise(n = n()) %>%
+    # Remove NA values and ignore Water since it is just points near the coast
     filter(value != -9999, value != "Water") %>%
+    # Get max category that is not NA or water
+    # ! If all values are NA this point will get an NA in the next step
     filter(n == max(n)) %>%
     ungroup() %>%
     select(ID, value) %>%
     # For IDs with multiple majority values, take the numeric one over the character one
+    # (In this data, there are no cases where you have two majority numeric values - you will get an error if there is)
     group_by(ID) %>%
     filter(ifelse(n() > 1 & any(!is.na(as.numeric(as.character(value)))), !is.na(as.numeric(as.character(value))), TRUE)) %>%
     slice(1)
@@ -328,11 +330,64 @@ buffer_n_extract <- function(r, points, buffer_dist = 1000) {
   return(points)
 }
 
+# Stack layers FRI and PFS layers
+names(fire_list) <- c("pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep")
+fire_values <- map(fire_list, ~buffer_n_extract(.x, coords_proj, buffer_dist = 250)) # Warning is okay, it is just because of as.numeric() conversion
+
+
+fire_list <- list(pfs_replac, pfs_mixed, pfs_surfac, fri, vdep)
+
+fire_mod_df <- 
+  map(fire_list, ~terra::extract(.x, coords_proj)[,2]) %>% 
+  bind_cols() %>%
+  mutate(across(starts_with("pfs"), ~ifelse(-9999, 0, .x))) %>%
+  mutate(fri = ifelse(fri == -9999, NA, fri)) %>%
+  # Convert vdep to fully numeric by coding categories (urban/agriculture/etc.) as 101 (highest departure)
+  # A warning is normal here because of coercion to numeric
+  mutate(
+    vdep = as.numeric(as.character(vdep)),
+    vdep = ifelse(is.na(vdep), 101, vdep)
+  ) %>%
+  # Log transform FRI (to reduce skew)
+  mutate(
+    log_fri = log1p(fri + 1) # log(1 + x) to avoid log(0)
+  )
+
+range(fire_mod_df$fri)
+
+# Check for NAs
+fire_mod_df %>% 
+  summarise(across(everything(), ~sum(is.na(.))))
+# 18
+
+test_df <- left_join(fire_mod_df, het)
+pdf(here("test.pdf"))
+ggplot(test_df, aes(x = pfs_surfac, y = Ho)) + geom_point() 
+dev.off()
+
+cor(fire_mod_df %>% select(fri, pfs_replac, pfs_surfac), use = "pairwise.complete.obs")
+
+pc <- prcomp(fire_mod_df %>% select(fri, pfs_replac, pfs_surfac) %>% filter(fri < 1000), center = TRUE, scale. = TRUE)
+fire_mod_df$PC1 <- pc$x[,1]
+fire_mod_df$PC2 <- pc$x[,2]
+
+var_loadings <- data.frame(Variable = rownames(pc$rotation), pc$rotation)
+
+pdf(here("test.pdf"))
+ggplot(fire_mod_df, aes(x = PC1, y = PC2)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  geom_segment(data = var_loadings, aes(xend = PC1*3, yend = PC2*3), 
+             x = 0, y = 0, arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+  geom_text(data = var_loadings, aes(x = PC1*3.2, y = PC2*3.2, label = Variable), color = "red")
+dev.off()
+
 ```
 
 # Combine rasters into a raster stack
-This can take a while because of the fire raster
-```{r}
+This can take a while because of the fire rasters
+```r
 env_list <- 
   list(
     NDVI = ndvi,
@@ -341,7 +396,11 @@ env_list <-
     tmean_dif = tmean_dif,
     csi_past = csi_past, 
     Q = q_r,
-    fire = fire
+    pfs_replac = fire_list$pfs_replac,
+    pfs_mixed =fire_list$pfs_mixed, 
+    pfs_surfac = fire_list$pfs_surfac, 
+    fri = fire_list$fri, 
+    vdep = fire_list$vdep
   )
 
 # Project all rasters to EPSG:3310 and mask with CA
@@ -379,7 +438,7 @@ env_stack <-
 # Create model data
 ```{r}
 # Model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "fire", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "x", "y")
 
 # Combine dataframes
 mod_df <- 
@@ -391,7 +450,8 @@ mod_df <-
   left_join(glacier_mod_df) %>%
   left_join(tmean_mod_df) %>%
   left_join(fire_mod_df) %>%
-  dplyr::select(Ho, SampleID, all_of(mod_vars))
+  dplyr::select(Ho, SampleID, all_of(mod_vars)) %>%
+  drop_na(starts_with("pfs"))
 
 # Check sample number
 # Note: het has 259 samples, but two of them are potentially flipped ("Scelocci_CAS213197", "Scelocci_CAS214858"), so we remove the from the model (they are not included in coords)
@@ -404,7 +464,10 @@ stopifnot(all(colSums(is.na(mod_df)) == 0))
 mod_sf <- 
   get_coords(sf = TRUE) %>% 
   right_join(mod_df) %>% 
-  st_transform(3310)
+  st_transform(3310) %>%
+  select(-x, -y) %>%
+  bind_cols(st_coordinates(.)) %>%
+  rename(x = X, y = Y)
 ```
 
 ```{r}
@@ -423,8 +486,8 @@ r <- cor(mod_df[, mod_vars], use = "pairwise.complete.obs")
 # Set the diagonal and lower triangle to NA
 r[lower.tri(r, diag = TRUE)] <- NA
 
-# Find the pairs with correlations greater than 0.6
-high_corr <- which(abs(r) > 0.6, arr.ind = TRUE)
+# Find the pairs with correlations greater than 0.7
+high_corr <- which(abs(r) > 0.7, arr.ind = TRUE)
 # Print the pairs
 high_corr_pairs <- data.frame(
   Var1 = rownames(r)[high_corr[, 1]],
@@ -432,7 +495,7 @@ high_corr_pairs <- data.frame(
   Correlation = r[high_corr]
 )
 
-# No highly correlated pairs (other than x/y, which doesn't matter)
+# No pairs with correlation > 0.7
 high_corr_pairs
 ```
 
@@ -452,7 +515,7 @@ dev.off()
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "fire", "Q")
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
 
 # GLS can't handle 0 distances, so take the average of the coordinates
 mod_sf_unique <- 
@@ -471,12 +534,16 @@ mod_sf_unique_scaled <-
     )
   )
 
+
 # Confirm that all glacier values are 0 and 1
 stopifnot(all(mod_sf_unique_scaled$glacier %in% c(0, 1)))
 
 # Convert glacier to factor
 mod_sf_unique_scaled$glacier_factor <- as.factor(mod_sf_unique$glacier)
 mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
+
+# Confirm no NA
+stopifnot(all(colSums(is.na(mod_sf_unique_scaled)) == 0))
 
 # Run OLS and get residuals
 f <- formula(paste0("Ho ~", paste(mod_vars, collapse = " + ")))
@@ -550,13 +617,87 @@ print(sig_vars_by_model)
 # [1] "bio1"      "csi_past"  "tmean_dif" "fire"      "Q"       
 ```
 
+# Test model variable combinations
+
+```{r}
+library(MuMIn)
+# Test all model combinations
+dredge_result <- dredge(ols_model)
+# Get top models based on delta AICc < 2
+top_models <- get.models(dredge_result, subset = delta < 2)
+# Get variables for each of top models
+top_vars <- 
+  top_models %>%
+  map(~broom::tidy(.x) %>%
+        filter(!term %in% c("(Intercept)")) %>%
+        pull(term))
+```
+
+```r
+# Fit top formulas but with GLS (just end up with Q as the best modell...)
+gls_aic <-
+  map(top_vars, ~{
+    f <- reformulate(.x, response = "Ho")
+    gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique)
+  }, .progress = TRUE) %>%
+  map_dbl(AIC)
+
+# Get best model
+best_gls_model <- top_models[[which.min(gls_aic)]]
+```
+
+```r
+library(furrr)
+fit_best_gls <- function(data, mod_vars) {
+  message("Testing model variables:", paste(mod_vars, collapse = ", "))
+  combos <- map(1:length(mod_vars), ~ combn(mod_vars, .x, simplify = FALSE)) |> flatten()
+  forms  <- map(combos, ~ reformulate(.x, response = "Ho"))
+  
+  mods <- future_map(forms, ~ gls(.x,
+                           correlation = corExp(form = ~ x + y, nugget = FALSE),
+                           data = data), .progress = TRUE)
+  
+  aics <- map_dbl(mods, AIC)
+  mods[[which.min(aics)]]
+}
+
+plan(multisession, workers = 8)
+gls_best_result <- fit_best_gls(mod_sf_unique_scaled, mod_vars)
+plan(sequential)
+summary(gls_best_result)
+```
+
+```r
+library(furrr)
+fit_best_gls <- function(data, mod_vars) {
+  message("Testing model variables:", paste(mod_vars, collapse = ", "))
+  combos <- map(1:length(mod_vars), ~ combn(mod_vars, .x, simplify = FALSE)) |> flatten()
+  forms  <- map(combos, ~ reformulate(.x, response = "Ho"))
+  
+  mods <- future_map(forms, ~ gls(.x,
+                           correlation = corExp(form = ~ x + y, nugget = FALSE),
+                           data = data), .progress = TRUE)
+  
+  aics <- map_dbl(mods, AIC)
+  mods[[which.min(aics)]]
+}
+
+plan(multisession, workers = 4)
+gls_best_result <- fit_best_gls(mod_sf_unique_scaled, top_vars)
+plan(sequential)
+```
+
 # Fit final model 
 ```{r}
 # Create final formula
-f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + fire + Q")
+f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + pfs_replac + pfs_mixed + pfs_surfac + log_fri + vdep + Q")
 
 # Fit model
 final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled)
+
+# Calculate VIF
+vif_values <- car::vif(final_model)
+stopifnot(!any(vif_values > 5)) # Check for multicollinearity issues
 
 # Results
 mod_result <- broom::tidy(final_model)
@@ -568,17 +709,17 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.46
-cor(predict(final_model), mod_sf_unique$Ho) # 0.68
+cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.50
+cor(predict(final_model), mod_sf_unique$Ho) # 0.71
 ```
 
 # Figures
 ```{r}
 # Define a color scale function using MetBrewer with an argument to extend the scale for better visualization
-scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1) {
+scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1, r_min  = NULL, r_max = NULL) {
   aesthetic <- match.arg(aesthetic)
-  r_min <- min(values, na.rm = TRUE)
-  r_max <- max(values, na.rm = TRUE)
+  if (is.null(r_min)) r_min <- min(values, na.rm = TRUE)
+  if (is.null(r_max)) r_max <- max(values, na.rm = TRUE)
   rng   <- r_max - r_min
   lims  <- c(r_min - rng*extend_scale, r_max + rng*extend_scale)
 
@@ -592,26 +733,40 @@ scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale
 
 # Make residual plots for model
 plot_mod <- function(x, y, df, model, 
-                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif","fire","Q"),
-                     color_var = "x") {
+                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep","Q"),
+                     color_var = "x", residual = TRUE) {
 
   # Calculate residuals for y variable given x variable
-  df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
+  if (residual) df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
 
   # Choose whether to color by x or y variable
   col_var <- if (color_var == "x") x else y
 
-  ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+  # Extract beta and p-value for x variable
+  model_summary <- broom::tidy(model)
+  # Convert to scientific notation for plotting
+  beta <- formatC(model_summary$estimate[model_summary$term == x], format = "e", digits = 2)
+  pval <- model_summary$p.value[model_summary$term == x]
+  pval <- ifelse(pval < 0.001, "< 0.001", paste0("= ", round(pval, 3)))
+
+  plt <-
+    ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
     geom_point(aes(col = .data[[col_var]])) +
     geom_smooth(method = "lm", colour = "black") +
     scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) +
-    #ggpubr::stat_cor() +
-    labs(x = stringr::str_to_sentence(make_pretty_names(x)), 
-      y = stringr::str_to_sentence("Residual heterozygosity")) +
+    annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+             label = paste0("β = ", beta, "\n", "p ", pval), size = 6) +
+    xlab(stringr::str_to_sentence(make_pretty_names(x))) +
     theme_classic() +
     theme(legend.position = "none",
-          axis.title = element_text(size = 14),
-          axis.text  = element_text(size = 12))
+          axis.title = element_text(size = 16),
+          axis.text  = element_text(size = 14))
+
+  if (residual) {
+    plt + labs(y = "Partial heterozygosity")
+  } else {
+    plt + labs(y = "Observed heterozygosity")
+  }
 
 }
 
@@ -628,8 +783,8 @@ wingen_r <-
 names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 
 # Isolate significant vs all variables
-sig_vars <- c("csi_past", "tmean_dif", "bio1", "fire", "Q")
-mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "fire", "Q")
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "pfs_surfac", "log_fri")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
@@ -644,40 +799,295 @@ ho_plot <- ggplot(wingen_r) +
     legend.position = "inside",              # turn on "inside" mode
     legend.justification = c(1, 1),          # anchor legend's top-right corner
     legend.position.inside = c(0.9, 0.9),   # place near panel's top-right
-    legend.key.height = unit(0.5, "cm"),
-    legend.key.width  = unit(0.5, "cm"),
-    legend.title = element_text(size = 12),
-    legend.text  = element_text(size = 10)
+    legend.key.height = unit(0.9, "cm"),
+    legend.key.width  = unit(0.9, "cm"),
+    legend.title = element_text(size = 16),
+    legend.text  = element_text(size = 14)
   )
 
 # B: partial residuals 
 plts_residual_y <- purrr::map(
   sig_vars, 
   # Use unscaled data for plotting
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, color_var = "y")
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, color_var = "y", residual = TRUE)
 )
+# B: Raw values
+plts_raw_y <- purrr::map(
+  sig_vars, 
+  # Use unscaled data for plotting
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, color_var = "y", residual = FALSE)
+)
+
 
 # C: predicted vs observed 
 pred_vs_obs <-
   # Use unscaled data for plotting
   ggplot(mod_sf_unique, aes(x = predict(final_model), y = Ho)) +
-  geom_point(aes(col = Ho), shape = 1) +
+  geom_point(aes(col = Ho), shape = 16, size = 2) +
   geom_smooth(method = "lm", colour = "black") +
   scale_met_cont(c(mod_sf_unique$Ho, wingen_r$layer), aesthetic = "colour", extend_scale = 0.1) +
   theme_classic() +
   labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
-  ggpubr::stat_cor(size = 5) +
+  ggpubr::stat_cor(size = 6) +
   theme(legend.position = "none",
-        axis.title = element_text(size = 14),
-        axis.text  = element_text(size = 12))
+        axis.title = element_text(size = 16),
+        axis.text  = element_text(size = 14))
 
 pred_vs_obs_adj <- cowplot::plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = c(0.9, 0.1))
 
-plt1 <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 2)
-plt2 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
+plt2_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 2)
+plt2_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 2)
+plt1 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
                            labels = c("A", "C"), rel_heights = c(0.6, 0.4), label_size = 18)
 
-png(here(plotpath, "figure_Ho.png"), height = 2.95*4*300*0.9, width = 3.55*4*300*0.9, res = 300)
-cowplot::plot_grid(plt2, plt1, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
+png(here(plotpath, "figure_Ho_residual.png"), height = 3.45*4*300*0.9, width = 4.1*4*300*0.9, res = 300)
+cowplot::plot_grid(plt1, plt2_residual, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
+dev.off()
+
+png(here(plotpath, "figure_Ho_raw.png"), height = 3.5*4*300*0.9, width = 4.1*4*300*0.9, res = 300)
+cowplot::plot_grid(plt1, plt2_raw, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
+dev.off()
+```
+
+
+```{r}
+pop_df <- 
+  get_pops() %>%
+  left_join(get_coords(sf = TRUE)) %>% 
+  st_as_sf() %>%
+  st_transform(3310) %>%
+  bind_cols(st_coordinates(.)) %>%
+  st_drop_geometry() %>%
+  group_by(X, Y) %>%
+  # Take the mean but it doesn't matter since all samples in a pop have the same cluster
+  summarise(cluster = mean(as.numeric(cluster))) %>%
+  mutate(cluster = factor(cluster)) %>%
+  rename(x = X, y = Y) %>%
+  ungroup() %>%
+  right_join(mod_sf_unique) %>%
+  st_as_sf()
+
+# Color scales
+group1 <- c("8", "6", "2")
+group2 <- c("4", "3", "7")
+group3 <- c("1", "5")
+hiroshige_cols <- rev(c("#042346", "#295580", "#6bb2cc", "#9cd3dd", "#fecd6d", "#f7a957", "#ec7b4c", "#f04f32"))
+cs1 <- hiroshige_cols[1:3]
+names(cs1) <- group1
+cs2 <- hiroshige_cols[4:6]
+names(cs2) <- group2
+cs3 <- hiroshige_cols[7:8]
+names(cs3) <- group3
+pop_cols <- c(cs1, cs2, cs3)
+
+# Make residual plots for model
+plot_mod_pop <- function(x, y, df, model, 
+                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep","Q"), residual = TRUE) {
+
+  # Calculate residuals for y variable given x variable
+  if (residual) df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
+
+  # Extract beta and p-value for x variable
+  model_summary <- broom::tidy(model)
+  # Convert to scientific notation for plotting
+  beta <- formatC(model_summary$estimate[model_summary$term == x], format = "e", digits = 2)
+  pval <- model_summary$p.value[model_summary$term == x]
+  pval <- ifelse(pval < 0.001, "< 0.001", paste0("= ", round(pval, 3)))
+
+  plt <-
+    ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+    geom_point(aes(col = cluster), size = 2, alpha = 0.8) +
+    geom_smooth(method = "lm", colour = "black") +
+    scale_color_manual(values = pop_cols) +
+    annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+             label = paste0("β = ", beta, "\n", "p ", pval), size = 6) +
+    xlab(stringr::str_to_sentence(make_pretty_names(x))) +
+    theme_classic() +
+    theme(legend.position = "none",
+          axis.title = element_text(size = 16),
+          axis.text  = element_text(size = 14))
+
+  if (residual) {
+    plt + labs(y = "Partial heterozygosity")
+  } else {
+    plt + labs(y = "Observed heterozygosity")
+  }
+
+}
+
+# Isolate significant vs all variables
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "pfs_surfac", "log_fri")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
+
+# A: population plot
+pop_label <- 
+  st_drop_geometry(pop_df) %>% 
+  group_by(cluster) %>%
+  summarize(x = median(x), y = median(y)) %>%
+  st_as_sf(coords = c("x", "y"), crs = 3310) 
+
+pop_plot <-
+  ggplot() +
+  geom_sf(data = ca, col = NA) +
+  geom_sf(data = pop_df, aes(fill = cluster), cex = 2, pch = 21, col = "NA")+
+  #geom_point(data = pop_label, aes(x = x, y = y, fill = cluster), cex = 7, pch = 21, alpha = 0.7) +
+  #geom_text(data = pop_label, aes(x = x, y = y, label = cluster), cex = 5) +
+  labs(col = "Population") +
+  scale_fill_manual(values = pop_cols)  +
+  theme_void() +
+  theme(
+    legend.position = "none"
+  )
+# B: partial residuals 
+plts_residual_y <- purrr::map(
+  sig_vars, 
+  # Use unscaled data for plotting
+  ~plot_mod_pop(.x, "Ho", pop_df, model = final_model, residual = TRUE)
+)
+
+# B: Raw values
+plts_raw_y <- purrr::map(
+  sig_vars, 
+  # Use unscaled data for plotting
+  ~plot_mod_pop(.x, "Ho", pop_df, model = final_model, residual = FALSE)
+)
+
+# C: predicted vs observed 
+pred_vs_obs <-
+  # Use unscaled data for plotting
+  ggplot(pop_df, aes(x = predict(final_model), y = Ho)) +
+  geom_point(aes(col = cluster), shape = 16, size = 2) +
+  geom_smooth(method = "lm", colour = "black") +
+  scale_color_manual(values = pop_cols) +
+  theme_classic() +
+  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
+  ggpubr::stat_cor(size = 6) +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 16),
+        axis.text  = element_text(size = 14))
+
+pred_vs_obs_adj <- cowplot::plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = c(0.9, 0.1))
+
+plt2_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 2)
+plt2_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 2)
+plt1 <- cowplot::plot_grid(plotlist = list(pop_plot, pred_vs_obs_adj), ncol = 1,
+                           labels = c("A", "C"), rel_heights = c(0.6, 0.4), label_size = 18)
+
+png(here(plotpath, "figure_Ho_residual_pop.png"), height = 3.45*4*300*0.9, width = 4.1*4*300*0.9, res = 300)
+cowplot::plot_grid(plt1, plt2_residual, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
+dev.off()
+
+png(here(plotpath, "figure_Ho_raw_pop.png"), height = 3.5*4*300*0.9, width = 4.1*4*300*0.9, res = 300)
+cowplot::plot_grid(plt1, plt2_raw, ncol = 2,labels = c("", "B"),  rel_widths = c(0.4, 0.6), align = "h", label_size = 18)
+dev.off()
+```
+
+```{r}
+# Plot points on map colored by variable
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "pfs_surfac", "log_fri")
+plot_points_map <- function(var, points_sf) {
+  plt1 <- 
+    ggplot() +
+    geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 0.5) +
+    geom_sf(data = points_sf, aes_string(col = var), size = 2) +
+    scale_met_cont(points_sf[[var]], aesthetic = "colour", extend_scale = 0.1) +
+    theme_void() +
+    labs(title = stringr::str_to_sentence(make_pretty_names(var)), col = "") +
+    theme(legend.position = "top", plot.title = element_text(hjust = 0.5))
+
+  # Plot variable vs Ho
+  plt2 <- plot_mod(var, "Ho", points_sf, model = final_model, color_var = "x", residual = FALSE) + theme(plot.title = element_blank())
+
+  cowplot::plot_grid(plt2, plt1, nrow = 1, align = "hv")
+
+}
+png(here(plotpath, "significant_variable_maps.png"), width = 5*2, height = 5.5*length(sig_vars), res = 300, unit = "in")
+plt_list <- map(sig_vars, ~(plot_points_map(.x, mod_sf_unique)))
+cowplot::plot_grid(plotlist = plt_list, ncol = 1, align = "hv")
+dev.off()
+```
+
+```{r}
+# For each variable, build a model with all other variables and compare the residuals to the full model residuals
+calc_var_resid <- function(x, mod_vars, df){
+  other_vars <- setdiff(mod_vars, x)
+  sub_f <- reformulate(other_vars, response = "Ho")
+  f <- reformulate(mod_vars, response = "Ho")
+  sub_model <- gls(sub_f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = df)
+  full_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = df)
+  #sub_model <- lm(sub_f, data = df)
+  #full_model <- lm(f, data = df)
+
+  # Difference in fit
+  sub_pred <- predict(sub_model)
+  full_pred <- predict(full_model)
+  pred_change <- full_pred - sub_pred
+
+  return(tibble(
+    pred_change = pred_change, 
+    variable = x, 
+    x = df$x, 
+    y = df$y)
+  )
+}
+
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "pfs_surfac", "log_fri")
+
+var_resid <- map(sig_vars, ~calc_var_resid(.x, mod_vars, mod_sf_unique), .progress = TRUE)
+
+var_resid_df <- 
+  var_resid %>% 
+  bind_rows() %>% 
+  st_as_sf(coords = c("x", "y"), crs = 3310) %>%
+  group_by(variable) %>%
+  mutate(pred_change_scaled = scale(pred_change)[,1]) 
+
+pair_plot <- function(x, label = ""){
+  y = "pred_change"
+  change <- var_resid_df %>% filter(variable == x) %>% pull(y)
+  df <- mod_sf_unique %>% mutate(change = change)
+  plt_scatter <-
+    ggplot(df, aes_string(x = x, y = "Ho")) +
+    geom_point(aes(col = change), alpha = 0.7) +
+    scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
+    geom_smooth(method = "lm", colour = "black") +
+    theme_classic() +
+    labs(x = make_pretty_names(x), y = "Observed Heterozygosity", col = y) +
+    theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
+
+  plt_map <-
+    ggplot(df) +
+    geom_sf(data = ca_proj, fill = "white", colour = "gray", size = 0.5) +
+    geom_sf(aes(col = change), pch = 16, size = 1.5, alpha = 0.9) +
+    scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
+    theme_void() +
+    labs(col = "Δ Predicted\nHeterozygosity") +
+    theme(legend.position = "right", plot.title = element_text(hjust = 0.5))
+
+  cowplot::plot_grid(plt_scatter, plt_map, nrow = 1, labels = c(label, ""), align = "h", rel_widths = c(0.45, 0.55))
+}
+
+png(here(plotpath, "variable_importance_map.png"), width = 3.5*2*2, height = 3*length(sig_vars)/2, units = "in", res = 300)
+plts <- map(1:length(sig_vars), ~pair_plot(sig_vars[.x], label = LETTERS[.x]))
+cowplot::plot_grid(plotlist = plts, ncol = 2)
+dev.off()
+```
+
+Maps of significant variables
+```{r}
+plot_var <- function(x){
+  ggplot() +
+    geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 0.5) +
+    geom_sf(data = mod_sf_unique, aes_string(fill = x), size = 2, shape = 21, color = "#00000087") +
+    scale_met_cont(mod_sf_unique[[x]], aesthetic = "fill", extend_scale = 0.1) +
+    theme_void() +
+    labs(title = stringr::str_to_sentence(make_pretty_names(x)), fill = "") +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+sig_vars <- c("csi_past", "Q", "tmean_dif", "pfs_replac","pfs_surfac", "log_fri")
+pdf(here(plotpath, "significant_variable_maps_sf.pdf"), width = 4*3, height = 4*2)
+plts <- map(sig_vars, ~plot_var(.x))
+cowplot::plot_grid(plotlist = plts, nrow = 2)
 dev.off()
 ```
