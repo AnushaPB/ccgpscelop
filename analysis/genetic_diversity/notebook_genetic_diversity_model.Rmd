@@ -265,7 +265,6 @@ tmean_mod_df %>%
 ```
 
 # Hypothesis 6: Genetic diversity explained by fire
-
 ```{r}
 # Historical fire regime data
 # Fire Return Interval (FRI)
@@ -281,11 +280,15 @@ pfs <- crop(pfs_og, ca_proj_buffer)
 vdep_og <- rast("analysis/wildfire/LF2016_VDep_200_CONUS/Tif/LC16_VDep_200.tif")
 vdep <- crop(vdep_og, ca_proj_buffer)
 
-# Activate relevant category for each raster
+# Fire regime group (FRG)
+bps_og <- rast("analysis/wildfire/LF2016_BPS_200_CONUS/Tif/LC16_BPS_200.tif")
+bps <- crop(bps_og, ca_proj_buffer)
+
+# Activate relevant categories for each raster
 activeCat(fri)<- "FRI_ALLFIR"
+
 activeCat(vdep) <- "LABEL"
 
-# There are multiple categories for PFS, so create separate rasters for each
 pfs_replac <- pfs
 pfs_mixed <- pfs
 pfs_surfac <- pfs
@@ -293,13 +296,14 @@ activeCat(pfs_replac) <- "PRC_REPLAC"
 activeCat(pfs_mixed) <- "PRC_MIXED"
 activeCat(pfs_surfac) <- "PRC_SURFAC"
 
+activeCat(bps) <- "GROUPVEG"
+
 fire_list <- list(pfs_replac, pfs_mixed, pfs_surfac, fri, vdep)
 names(fire_list) <- c("pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep")
 
-fri_vals <- extract(fri, coords_proj, ID = FALSE)$FRI_ALLFIR
-
+coords_fire_proj <- st_transform(coords, crs = st_crs(fri))
 fire_mod_df <- 
-  map(fire_list, ~terra::extract(.x, coords_proj)[,2], .progress = TRUE) %>% 
+  map(fire_list, ~terra::extract(.x, coords_fire_proj)[,2], .progress = TRUE) %>% 
   bind_cols() %>%
   mutate(SampleID = coords$SampleID) %>%
   mutate(across(starts_with("pfs"), ~ifelse(.x == -9999, 0, .x))) %>%
@@ -311,9 +315,70 @@ fire_mod_df <-
     vdep = ifelse(is.na(vdep), 101, vdep)
   ) 
 
+# Add groupveg to fire_mod_df
+fire_mod_df$groupveg <- terra::extract(bps, coords_fire_proj)[,2]
+
 # Check for NAs
 fire_mod_df %>% 
   summarise(across(everything(), ~sum(is.na(.))))
+# 18 missing FRI values
+
+# Impute NA values for extracted values based onneighbors
+na_i <- which(is.na(fire_mod_df$fri))
+na_coords <- coords_fire_proj[na_i, ]
+# na_coords_buffer <- st_buffer(na_coords, dist = buffer_dist)
+# buffer_vals <- terra::extract(r, na_coords_buffer)
+# vals_summary <- 
+#   data.frame(buffer_vals) %>%
+#   group_by(ID) %>%
+#   summarise(mode_val = mode(get(names(r)[1])))
+
+# Get the cell that contains each coordinate
+xy <- na_coords %>% st_coordinates()
+
+na_vals <-
+  map_dbl(1:nrow(xy), ~{
+    # Get focal cell
+    focal_cell <- cellFromXY(fri, xy[.x, , drop = FALSE])
+    stopifnot(!is.na(focal_cell))
+
+    # Get neighboring (bordering) cells
+    # directions = 4 (rook neighbors) or 8 (queen neighbors incl. diagonals)
+    nbr_cells <- adjacent(fri, cells = focal_cell, directions = 8, pairs = FALSE)
+    nbr_cells <- as.vector(nbr_cells) # make into vector
+    
+    # Extract values from those neighboring cells
+    nbr_vals <- fri[nbr_cells]
+    bps_vals <- bps[nbr_cells]
+
+    # Combine in df
+    nbr_df <- 
+      data.frame(
+        fri = nbr_vals[, "FRI_ALLFIR"],
+        bps = bps_vals[, "GROUPVEG"]
+      ) %>%
+      # Remove NA
+      filter(fri != -9999)
+
+    if (nrow(nbr_df) == 0){
+      # If no neighboring values, return NA
+      return(NA)
+    }
+
+    # Get mean of neighboring values (most common value)
+    mean_val <- mean(nbr_df$fri)
+    return(mean_val)
+  })
+
+fire_mod_df$fri[is.na(fire_mod_df$fri)] <- na_vals
+
+# Count NA values again
+fire_mod_df %>% 
+  summarise(across(everything(), ~sum(is.na(.))))
+
+# Drop final NA values
+fire_mod_df <- fire_mod_df %>%
+  drop_na(fri)
 
 # Calculate log
 fire_mod_df <-
@@ -358,7 +423,7 @@ ggplot(fire_mod_df, aes(x = PC1, y = PC2)) +
 dev.off()
 
 test_df <- left_join(fire_mod_df, het)
-lm(Ho ~ log_fri + pfs_mixed + pfs_surfac, data = test_df) %>% summary()
+lm(Ho ~ log_fri + pfs_mixed + pfs_surfac + groupveg, data = test_df) %>% summary()
 lm(Ho ~ PC1 + PC2, data = test_df) %>% summary()
 ```
 
@@ -415,7 +480,7 @@ env_stack <-
 # Create model data
 ```{r}
 # Model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "groupveg", "x", "y")
 
 # Combine dataframes
 mod_df <- 
@@ -460,7 +525,8 @@ write_csv(export_df, here(outpath, "model_df.csv"))
 ```{r}
 # Check correlations
 # Compute the correlation matrix
-r <- cor(mod_df[, mod_vars], use = "pairwise.complete.obs")
+numeric_mod_vars <- mod_vars[mod_vars != "groupveg"]
+r <- cor(mod_df[, numeric_mod_vars], use = "pairwise.complete.obs")
 # Set the diagonal and lower triangle to NA
 r[lower.tri(r, diag = TRUE)] <- NA
 r
@@ -474,13 +540,13 @@ high_corr_pairs <- data.frame(
   Correlation = r[high_corr]
 )
 
-# No pairs with correlation > 0.7
+# pfs_replace and pfs_surfac have a correlation of -0.72
 high_corr_pairs
 ```
 
 ```{r}
 #Make nice correlation plot
-r <- stats::cor(mod_df[, setdiff(mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
+r <- stats::cor(mod_df[, setdiff(numeric_mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
 rownames(r) <- colnames(r) <- make_pretty_names(rownames(r))
 r[lower.tri(r, diag = TRUE)] <- NA
 
@@ -494,25 +560,34 @@ dev.off()
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "groupveg", "Q")
+numeric_mod_vars <- mod_vars[mod_vars != "groupveg"]
 
-# GLS can't handle 0 distances, so take the average of the coordinates
+# GLS can't handle 0 distances, so take the average of the coordinates (mode for veg type)
+mode_val <- function(x) {
+  ux <- na.omit(x)
+  ux[which.max(tabulate(match(ux, unique(ux))))]
+}
+
 mod_sf_unique <- 
   mod_sf %>%
   group_by(x, y) %>%
-  summarise_at(c(mod_vars, "Ho"), mean, na.rm = TRUE) %>%
-  ungroup()
+  summarise(
+    across(all_of(c(numeric_mod_vars, "Ho")), ~ mean(.x, na.rm = TRUE)),
+    groupveg = mode_val(groupveg),
+    .groups = "drop"
+  )
+
 
 # Scale data
 mod_sf_unique_scaled <-
   mod_sf_unique %>%
   mutate(
     across(
-      all_of(setdiff(mod_vars, "glacier")),
+      all_of(setdiff(numeric_mod_vars, "glacier")),
       ~ as.numeric(scale(.x))   # <- drop matrix
     )
   )
-
 
 # Confirm that all glacier values are 0 and 1
 stopifnot(all(mod_sf_unique_scaled$glacier %in% c(0, 1)))
@@ -590,18 +665,35 @@ models <- list(OLS = ols_model, GLS = gls_model)
 sig_vars_by_model <- map(models, ~ broom::tidy(.x) %>%
   filter(!term %in% c("lambda", "rho", "(Intercept)"), p.value < 0.05) %>%
   pull(term))
-print(sig_vars_by_model)
-# $OLS
-# [1] "bio1"      "csi_past"  "tmean_dif" "fire"      "Q"        
+print(sig_vars_by_model) 
+```
 
-# $GLS
-# [1] "bio1"      "csi_past"  "tmean_dif" "fire"      "Q"       
+```{r}
+library(spdep)
+
+# Coordinates matrix
+coords <- cbind(mod_sf_unique$x, mod_sf_unique$y)
+
+# 8 nearest neighbors (robust for irregular sampling)
+knn_8 <- knearneigh(coords, k = 8)
+nb_8  <- knn2nb(knn_8)
+lw_8  <- nb2listw(nb_8, style = "W")
+
+# Moran's I for OLS residuals
+moran_ols <- moran.test(mod_sf_unique$ols_resids, lw_8)
+print(moran_ols)
+
+# Moran's I for GLS normalized residuals
+moran_gls <- moran.test(mod_sf_unique$gls_resids, lw_8)
+print(moran_gls)
 ```
 
 # Test model variable combinations
 
 ```{r}
 library(MuMIn)
+# Set NA action to "na.fail" to ensure models with missing data are not considered
+options(na.action = "na.fail")
 # Test all model combinations
 dredge_result <- dredge(ols_model)
 # Get top models based on delta AICc < 2
@@ -612,60 +704,8 @@ top_vars <-
   map(~broom::tidy(.x) %>%
         filter(!term %in% c("(Intercept)")) %>%
         pull(term))
-```
 
-```r
-# Fit top formulas but with GLS (just end up with Q as the best modell...)
-gls_aic <-
-  map(top_vars, ~{
-    f <- reformulate(.x, response = "Ho")
-    gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique)
-  }, .progress = TRUE) %>%
-  map_dbl(AIC)
-
-# Get best model
-best_gls_model <- top_models[[which.min(gls_aic)]]
-```
-
-```r
-library(furrr)
-fit_best_gls <- function(data, mod_vars) {
-  message("Testing model variables:", paste(mod_vars, collapse = ", "))
-  combos <- map(1:length(mod_vars), ~ combn(mod_vars, .x, simplify = FALSE)) |> flatten()
-  forms  <- map(combos, ~ reformulate(.x, response = "Ho"))
-  
-  mods <- future_map(forms, ~ gls(.x,
-                           correlation = corExp(form = ~ x + y, nugget = FALSE),
-                           data = data), .progress = TRUE)
-  
-  aics <- map_dbl(mods, AIC)
-  mods[[which.min(aics)]]
-}
-
-plan(multisession, workers = 8)
-gls_best_result <- fit_best_gls(mod_sf_unique_scaled, mod_vars)
-plan(sequential)
-summary(gls_best_result)
-```
-
-```r
-library(furrr)
-fit_best_gls <- function(data, mod_vars) {
-  message("Testing model variables:", paste(mod_vars, collapse = ", "))
-  combos <- map(1:length(mod_vars), ~ combn(mod_vars, .x, simplify = FALSE)) |> flatten()
-  forms  <- map(combos, ~ reformulate(.x, response = "Ho"))
-  
-  mods <- future_map(forms, ~ gls(.x,
-                           correlation = corExp(form = ~ x + y, nugget = FALSE),
-                           data = data), .progress = TRUE)
-  
-  aics <- map_dbl(mods, AIC)
-  mods[[which.min(aics)]]
-}
-
-plan(multisession, workers = 4)
-gls_best_result <- fit_best_gls(mod_sf_unique_scaled, top_vars)
-plan(sequential)
+print(top_vars[[1]])
 ```
 
 # Fit final model 
@@ -674,7 +714,8 @@ plan(sequential)
 f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + log_fri + pfs_mixed + pfs_surfac + vdep + Q")
 
 # Fit model
-final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled) # TEMP DROP NA
+final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled) 
+final_model <- lm(f, data = mod_sf_unique_scaled) 
 
 # Calculate VIF
 vif_values <- car::vif(final_model)
@@ -690,8 +731,8 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.50
-cor(predict(final_model), mod_sf_unique$Ho) # 0.71
+cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.43
+cor(predict(final_model), mod_sf_unique$Ho) # 0.65
 ```
 
 # Figures
