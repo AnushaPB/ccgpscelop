@@ -268,7 +268,8 @@ tmean_mod_df %>%
 ```{r}
 # Historical fire regime data
 # Fire Return Interval (FRI)
-ca_proj_buffer <- st_buffer(ca_proj, dist = 10000) %>% st_transform(5070) # buffer to ensure full coverage when cropping rasters
+ca_proj_buffer <-  ca_proj %>% st_transform(5070) %>% st_buffer(dist = 10000) # buffer to ensure full coverage when cropping 
+rasters
 fri_og <- rast("analysis/wildfire/LF2016_FRI_200_CONUS/Tif/LC16_FRI_200.tif") 
 fri <- crop(fri_og, ca_proj_buffer)
 
@@ -297,16 +298,48 @@ activeCat(pfs_mixed) <- "PRC_MIXED"
 activeCat(pfs_surfac) <- "PRC_SURFAC"
 
 activeCat(bps) <- "GROUPVEG"
+```
 
+```{r}
 fire_list <- list(pfs_replac, pfs_mixed, pfs_surfac, fri, vdep)
 names(fire_list) <- c("pfs_replac", "pfs_mixed", "pfs_surfac", "fri", "vdep")
 
-coords_fire_proj <- st_transform(coords, crs = st_crs(fri))
+coords_fire_proj <- st_transform(get_coords(sf = TRUE), crs = st_crs(fri))
 fire_mod_df <- 
+  # Extract fire rasters
   map(fire_list, ~terra::extract(.x, coords_fire_proj)[,2], .progress = TRUE) %>% 
   bind_cols() %>%
-  mutate(SampleID = coords$SampleID) %>%
+  # Add vegetation
+  mutate(groupveg = terra::extract(bps, coords_fire_proj)[,2]) %>%
+  # Add SampleIDs
+  mutate(SampleID = coords_fire_proj$SampleID) %>%
+  # Make categorical variables for fire regime
+  mutate(
+    fri_cat = case_when(
+      fri == -9999 ~ "No Fire Regime",                 # NA means no modeled fire
+      fri <= 35 ~ "Frequent Fire (≤35 yrs)",
+      fri <= 200 ~ "Infrequent Fire (35–200 yrs)",
+      fri > 200 ~ "Very Infrequent Fire (>200 yrs)"
+    )
+  ) %>%
+  mutate(
+    pfs_replac_cat = case_when(
+      pfs_replac == -9999 ~ "No Fire Regime",
+      #pfs_replac == -9999 ~ "Low Replacement (<33%)", # Treat as 0% replacement, otherwise total overlap with FRI no fire regime
+      pfs_replac < 33 ~ "Low Replacement (<33%)",
+      pfs_replac < 67 ~ "Moderate Replacement (33–66%)",
+      pfs_replac >= 67 ~ "High Replacement (>66%)"
+    )
+  ) %>%
+  # Convert -9999 to 0 for pfs values (-9999 are areas with no fire, so 0% of area burned at any severity)
   mutate(across(starts_with("pfs"), ~ifelse(.x == -9999, 0, .x))) %>%
+  # Combined mixed and low PFS into a single "low" category and rename pfs_replac to "high"
+  mutate(
+    pfs_sum = pfs_replac + pfs_mixed + pfs_surfac,
+    pfs_low = (pfs_mixed + pfs_surfac)/pfs_sum,
+    pfs_high = pfs_replac/pfs_sum
+  ) %>%
+  # Convert -9999 to NA for fri (these will be dealt with later)
   mutate(fri = ifelse(fri == -9999, NA, fri)) %>%
   # Convert vdep to fully numeric by coding categories (urban/agriculture/etc.) as 101 (highest departure)
   # A warning is normal here because of coercion to numeric
@@ -315,116 +348,169 @@ fire_mod_df <-
     vdep = ifelse(is.na(vdep), 101, vdep)
   ) 
 
-# Add groupveg to fire_mod_df
-fire_mod_df$groupveg <- terra::extract(bps, coords_fire_proj)[,2]
+# Check which points have "Open Water" vegetation
+# These seem to be next to lakes
+coords[fire_mod_df$groupveg == "Open Water",]
 
-# Check for NAs
-fire_mod_df %>% 
-  summarise(across(everything(), ~sum(is.na(.))))
-# 18 missing FRI values
+# Confirm that pfs_low and pfs_high are perfectly colinear
+cor(fire_mod_df$pfs_low, fire_mod_df$pfs_high, use = "complete.obs") # -1
 
-# Impute NA values for extracted values based onneighbors
-na_i <- which(is.na(fire_mod_df$fri))
+# Impute Open Water values for extracted values based on neighbors
+na_i <- which(fire_mod_df$groupveg == "Open Water")
 na_coords <- coords_fire_proj[na_i, ]
-# na_coords_buffer <- st_buffer(na_coords, dist = buffer_dist)
-# buffer_vals <- terra::extract(r, na_coords_buffer)
-# vals_summary <- 
-#   data.frame(buffer_vals) %>%
-#   group_by(ID) %>%
-#   summarise(mode_val = mode(get(names(r)[1])))
 
 # Get the cell that contains each coordinate
 xy <- na_coords %>% st_coordinates()
 
-na_vals <-
-  map_dbl(1:nrow(xy), ~{
+groupveg_na_vals <-
+  map_vec(1:nrow(xy), ~{
     # Get focal cell
-    focal_cell <- cellFromXY(fri, xy[.x, , drop = FALSE])
+    focal_cell <- cellFromXY(bps, xy[.x, , drop = FALSE])
     stopifnot(!is.na(focal_cell))
 
     # Get neighboring (bordering) cells
     # directions = 4 (rook neighbors) or 8 (queen neighbors incl. diagonals)
-    nbr_cells <- adjacent(fri, cells = focal_cell, directions = 8, pairs = FALSE)
+    nbr_cells <- adjacent(bps, cells = focal_cell, directions = 8, pairs = FALSE)
     nbr_cells <- as.vector(nbr_cells) # make into vector
     
     # Extract values from those neighboring cells
-    nbr_vals <- fri[nbr_cells]
-    bps_vals <- bps[nbr_cells]
+    nbr_vals <- bps[nbr_cells]
 
     # Combine in df
     nbr_df <- 
       data.frame(
-        fri = nbr_vals[, "FRI_ALLFIR"],
-        bps = bps_vals[, "GROUPVEG"]
+        groupveg = nbr_vals[, "GROUPVEG"]
       ) %>%
-      # Remove NA
-      filter(fri != -9999)
+      # Remove Open water
+      filter(groupveg != "Open Water")
 
     if (nrow(nbr_df) == 0){
       # If no neighboring values, return NA
       return(NA)
     }
 
-    # Get mean of neighboring values (most common value)
-    mean_val <- mean(nbr_df$fri)
-    return(mean_val)
+    # Get most common value of neighboring values
+    mode_val <- 
+      nbr_df %>%
+      count(groupveg) %>%
+      arrange(desc(n)) %>%
+      slice(1) %>%
+      pull(groupveg)
+    return(mode_val)
   })
 
-fire_mod_df$fri[is.na(fire_mod_df$fri)] <- na_vals
+fire_mod_df$groupveg[fire_mod_df$groupveg == "Open Water"] <- groupveg_na_vals
+unique(fire_mod_df$groupveg)
 
 # Count NA values again
 fire_mod_df %>% 
   summarise(across(everything(), ~sum(is.na(.))))
 
-# Drop final NA values
-fire_mod_df <- fire_mod_df %>%
-  drop_na(fri)
-
-# Calculate log
-fire_mod_df <-
+# Replace final NA values with 0 because these are locations that likely never burn (e.g., urban areas/very sparse vegetation)
+# # From email: "If the BpS is not Sparsely Vegetated or Barren/Water/Rock/Snow, the BpS model does not include fire because model contributors did not think that fire was a critical disturbance shaping the BpS. This is most common in very wet or very dry ecosystems. For these systems an FRI of 0 may be appropriate."
+fire_mod_df <- 
   fire_mod_df %>%
-  # Log transform FRI (to reduce skew)
-  mutate(
-    log_fri = log1p(fri + 1) # log(1 + x) to avoid log(0)
-  ) 
+  mutate(fri = ifelse(is.na(fri), 0, fri))
 
 # Check for NAs
 fire_mod_df %>% 
   summarise(across(everything(), ~sum(is.na(.))))
+
+# Check correlations between metrics (with a log correction because of skew)
+cor(log(fire_mod_df[, c("pfs_replac", "pfs_surfac", "pfs_low", "pfs_high", "fri")] + 1), use = "pairwise.complete.obs")
+# In the end I am choosing: 
+# fire severity = pfs_replac (proportion of high severity fires) which is almost perfectly correlated with pfs_low (proportion of low + mixed severity fires), but 0 values can be either high proportion of low severity fire or no fire at all
+# fire frequency = fri (fire return interval)
+fire_mod_df <-
+  fire_mod_df %>%
+  mutate(
+    fire_severity = log1p(pfs_replac),
+    fire_frequency = log1p(fri),
+    fire_severity_cat = factor(pfs_replac_cat, levels = c("No Fire Regime", "Low Replacement (<33%)", "Moderate Replacement (33–66%)", "High Replacement (>66%)")),
+    fire_frequency_cat = factor(fri_cat, levels = c("No Fire Regime", "Frequent Fire (≤35 yrs)", "Infrequent Fire (35–200 yrs)",  "Very Infrequent Fire (>200 yrs)"))
+  )
+
+# These two variables are correlated at 0.8, which is high
+cor(fire_mod_df$fire_severity, fire_mod_df$fire_frequency, use = "pairwise.complete.obs") 
+
+# Run PCA on fire_severity and fire_frequency
+fire_pc <- prcomp((fire_mod_df[, c("fire_frequency", "fire_severity")]), center = TRUE, scale. = TRUE)$x[,1]
+# Flip so increasing fire pc = increasing fire severity/decreasing frequency
+fire_mod_df$fire_pc <- fire_pc * -1
+
+# Count NA values again
+fire_mod_df %>% 
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  select(where(~. > 0))
 ```
+
 ```{r}
-test_df <- left_join(fire_mod_df, het) %>% left_join(get_coords(sf = TRUE)) %>% st_as_sf()
-pdf(here("test.pdf"))
-ggplot(test_df, aes(x = pfs_surfac, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
-ggplot(test_df, aes(x = pfs_replac, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
-ggplot(test_df, aes(x = pfs_mixed, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
-ggplot(test_df, aes(x = fri, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
-ggplot(test_df, aes(x = log_fri, y = Ho)) + geom_point() + geom_smooth(method = "lm") + ggpubr::stat_cor()
-ggplot(test_df) + geom_sf(aes(color = log_fri)) + scale_color_viridis_c(option = "turbo")
-ggplot(test_df) + geom_sf(aes(color = fri)) + scale_color_viridis_c(option = "turbo")
+test_df <- 
+  get_het() %>% 
+  right_join(fire_mod_df) %>% 
+  left_join(get_coords(sf = TRUE)) %>%
+  st_as_sf() %>%
+  left_join(q_mod_df)
+ 
+pdf(here(plotpath, "fire_variables.pdf"), width = 6.5, height = 4)
+ggplot(test_df, aes(x = fire_severity, y = Ho)) +
+  geom_point(aes(col = fire_severity_cat)) +
+  geom_smooth(method = "lm") +
+  theme_classic() + 
+  labs(x = "log1p(% High Severity Fire)", col = "Bins") +
+  stat_cor()
+
+ggplot(test_df, aes(x = fire_frequency, y = Ho)) +
+  geom_point(aes(col = fire_frequency_cat)) +
+  geom_smooth(method = "lm") +
+  theme_classic() + 
+  labs(x = "log1p(Fire Return Interval)", col = "Bins") +
+  stat_cor()
+
+ggplot(test_df, aes(x = fire_pc, y = Ho)) +
+  geom_point(aes(col = fire_frequency_cat, pch = fire_severity_cat)) +
+  geom_smooth(method = "lm") +
+  theme_classic() + 
+  labs(x = "Fire PCA", col = "Frequency category", pch = "Severity category") +
+  stat_cor()
+
+ggplot(test_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = fire_frequency_cat, pch = fire_severity_cat)) +
+  labs(col = "Frequency category", pch = "Severity category") +
+  theme_void()
+
+ggplot(test_df, aes(x = fire_pc, y = Ho)) +
+  geom_point(aes(col = groupveg)) +
+  geom_smooth(method = "lm") +
+  theme_classic() + 
+  labs(x = "Fire PCA", col = "Vegetation group") +
+  stat_cor()
 dev.off()
 
-cor(fire_mod_df %>% select(fri, pfs_replac, pfs_surfac), use = "pairwise.complete.obs")
+lm(
+  Ho ~ fire_pc + groupveg + Q,
+  data = test_df
+) %>%
+summary()
 
-pc <- prcomp(fire_mod_df %>% select(pfs_mixed, pfs_replac, pfs_surfac, fri), center = TRUE, scale. = TRUE)
-fire_mod_df$PC1 <- pc$x[,1]
-fire_mod_df$PC2 <- pc$x[,2]
+mod <- lm(
+  Ho ~ pfs_replac_cat + fri_cat + groupveg,
+  data = test_df
+)
+summary(mod)
 
-var_loadings <- data.frame(Variable = rownames(pc$rotation), pc$rotation)
+library(emmeans)
+emmeans_pfs <- emmeans(mod, specs = "pfs_replac_cat")
+tukey_pfs <- contrast(emmeans_pfs, method = "tukey")
+tukey_pfs
 
-pdf(here("test.pdf"))
-ggplot(fire_mod_df, aes(x = PC1, y = PC2)) + 
-  geom_point() + 
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
-  geom_segment(data = var_loadings, aes(xend = PC1*3, yend = PC2*3), 
-             x = 0, y = 0, arrow = arrow(length = unit(0.2, "cm")), color = "red") +
-  geom_text(data = var_loadings, aes(x = PC1*3.2, y = PC2*3.2, label = Variable), color = "red")
-dev.off()
+# Tukey pairwise comparisons for Fire Return Interval category
+emmeans_fri <- emmeans(mod, specs = "fri_cat")
+tukey_fri <- contrast(emmeans_fri, method = "tukey")
+tukey_fri
 
-test_df <- left_join(fire_mod_df, het)
-lm(Ho ~ log_fri + pfs_mixed + pfs_surfac + groupveg, data = test_df) %>% summary()
-lm(Ho ~ PC1 + PC2, data = test_df) %>% summary()
+count(fire_mod_df, fri_cat, pfs_replac_cat)
 ```
 
 # Combine rasters into a raster stack
@@ -480,7 +566,7 @@ env_stack <-
 # Create model data
 ```{r}
 # Model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "groupveg", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "fire_severity", "fire_frequency", "fire_severity_cat", "fire_frequency_cat", "fire_pc", "vdep", "groupveg", "x", "y")
 
 # Combine dataframes
 mod_df <- 
@@ -492,9 +578,7 @@ mod_df <-
   left_join(glacier_mod_df) %>%
   left_join(tmean_mod_df) %>%
   left_join(fire_mod_df) %>%
-  dplyr::select(Ho, SampleID, all_of(mod_vars)) %>%
-  drop_na(starts_with("pfs")) %>%
-  drop_na(log_fri)
+  dplyr::select(Ho, SampleID, all_of(mod_vars))
 
 # Check sample number
 # Note: het has 259 samples, but two of them are potentially flipped ("Scelocci_CAS213197", "Scelocci_CAS214858"), so we remove the from the model (they are not included in coords)
@@ -525,14 +609,19 @@ write_csv(export_df, here(outpath, "model_df.csv"))
 ```{r}
 # Check correlations
 # Compute the correlation matrix
-numeric_mod_vars <- mod_vars[mod_vars != "groupveg"]
+numeric_mod_vars <-
+  mod_df %>% 
+  select(all_of(mod_vars)) %>%
+  select(where(is.numeric)) %>% 
+  colnames()
+
 r <- cor(mod_df[, numeric_mod_vars], use = "pairwise.complete.obs")
 # Set the diagonal and lower triangle to NA
 r[lower.tri(r, diag = TRUE)] <- NA
 r
 
-# Find the pairs with correlations greater than 0.7
-high_corr <- which(abs(r) > 0.7, arr.ind = TRUE)
+# Find the pairs with correlations greater than 0.6
+high_corr <- which(abs(r) > 0.6, arr.ind = TRUE)
 # Print the pairs
 high_corr_pairs <- data.frame(
   Var1 = rownames(r)[high_corr[, 1]],
@@ -540,7 +629,7 @@ high_corr_pairs <- data.frame(
   Correlation = r[high_corr]
 )
 
-# pfs_replace and pfs_surfac have a correlation of -0.72
+# fire_severity and log_fri have a correlation of 0.67
 high_corr_pairs
 ```
 
@@ -556,28 +645,66 @@ corrplot(r, method = "ellipse", type = "upper", tl.col = "black", tl.srt = 45, d
 dev.off()
 ```
 
+```{r}
+# Check for confounding with vegetation group and fire
+anova(lm(fire_frequency ~ groupveg, data = mod_df)) # Significant ANOVA
+lsr::etaSquared(lm(fire_frequency ~ groupveg, data = mod_df)) # Eta squared = 0.55 -> high confounding (>50% variance explained by veg group)
+
+lm(Ho ~ fire_frequency, data = mod_df) %>% summary() # Significant effect of fire frequency alone
+lm(Ho ~ fire_frequency + groupveg, data = mod_df) %>% summary() # No significant effect of fire frequency when controlling for vegetation group
+lm(Ho ~ fire_severity + groupveg, data = mod_df) %>% summary() # Significant effect of fire severity when controlling for vegetation group
+lm(Ho ~ fire_severity + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI, data = mod_df) %>% summary() # Fire severity significant
+lm(Ho ~ groupveg + csi_past + bio1 + tmean_dif + Q + glacier + gHM + NDVI + Q, data = mod_df) %>% summary() # Adding Q makes fire severity non-significant
+
+lm(Ho ~ fire_severity + fire_frequency + csi_past + bio1 + tmean_dif + glacier + gHM, data = mod_df) %>% summary()
+
+
+lm(Q ~ fire_severity + csi_past + bio1 + tmean_dif + vdep + groupveg + gHM + NDVI + glacier + fire_frequency, data = mod_df) %>% summary() 
+# Q is significantly positively affected by fire_severity and vegetation and negatively affected by NDVI
+
+pdf(here(plotpath, "vegetation_plots.pdf"))
+ggplot(mod_df, aes(x = groupveg, y = fire_frequency)) +
+  geom_boxplot() +
+  theme_minimal() 
+ggplot(mod_df, aes(x = groupveg, y = Ho)) + 
+  geom_boxplot() +
+  theme_minimal() 
+ggplot(mod_df, aes(x = fire_frequency, y = Ho)) +
+  geom_point(aes(col = groupveg)) +
+  geom_smooth(method = "lm") +
+  theme_minimal() 
+ggplot(mod_df, aes(x = fire_severity, y = Ho)) +
+  geom_point(aes(col = groupveg)) +
+  geom_smooth(method = "lm") +
+  theme_minimal() 
+dev.off()
+```
+
 # Run Ho models
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif", "pfs_replac", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "groupveg", "Q")
-numeric_mod_vars <- mod_vars[mod_vars != "groupveg"]
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif",  "fire_severity", "fire_frequency", "vdep", "groupveg", "Q")
 
 # GLS can't handle 0 distances, so take the average of the coordinates (mode for veg type)
 mode_val <- function(x) {
   ux <- na.omit(x)
   ux[which.max(tabulate(match(ux, unique(ux))))]
 }
+cat_mod_vars <- mod_df %>% 
+  select(all_of(mod_vars)) %>%
+  select(where(~is.character(.x) | is.factor(.x))) %>%
+  colnames()
+numeric_mod_vars <- setdiff(mod_vars, cat_mod_vars)
 
 mod_sf_unique <- 
   mod_sf %>%
   group_by(x, y) %>%
   summarise(
     across(all_of(c(numeric_mod_vars, "Ho")), ~ mean(.x, na.rm = TRUE)),
-    groupveg = mode_val(groupveg),
+    across(all_of(cat_mod_vars), ~ mode_val(.x)),
     .groups = "drop"
   )
-
 
 # Scale data
 mod_sf_unique_scaled <-
@@ -689,11 +816,11 @@ print(moran_gls)
 ```
 
 # Test model variable combinations
-
 ```{r}
 library(MuMIn)
 # Set NA action to "na.fail" to ensure models with missing data are not considered
 options(na.action = "na.fail")
+
 # Test all model combinations
 dredge_result <- dredge(ols_model)
 # Get top models based on delta AICc < 2
@@ -708,14 +835,53 @@ top_vars <-
 print(top_vars[[1]])
 ```
 
+```{r}
+# Global formula
+f_full <- Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + fire_severity + fire_frequency + vdep + groupveg + Q 
+
+# Global GLS model (use ML for AIC-based selection)
+gls_full <- gls(
+  f_full,
+  data = mod_sf_unique_scaled,
+  method = "ML",
+  correlation = corExp(form = ~ x + y, nugget = FALSE)
+)
+
+# All subsets model selection on the GLS
+dredge_res <- dredge(gls_full, trace = TRUE)
+
+# Look at the top of the table
+head(dredge_res)
+
+# Get top models based on delta AICc < 2
+top_gls_models <- get.models(dredge_res, subset = delta < 2)
+
+# Get variables used in each of the top models (excluding intercept)
+top_vars_gls <- 
+  top_gls_models %>%
+  map(~ broom::tidy(.x) %>%
+        filter(term != "(Intercept)") %>%
+        pull(term))
+
+# Print variables in top models
+top_vars_gls
+
+# Get best model
+best_gls <- get.models(dredge_res, subset = 1)[[1]]
+summary(best_gls)
+
+# Refit best model with REML
+final_gls <- update(best_gls, method = "REML")
+summary(final_gls)
+```
+
 # Fit final model 
 ```{r}
 # Create final formula
-f <- formula("Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + log_fri + pfs_mixed + pfs_surfac + vdep + Q")
+f <- formula("Ho ~ bio1 + csi_past + tmean_dif + fire_frequency + gHM + NDVI + glacier + groupveg + vdep")
 
 # Fit model
-final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled) 
-final_model <- lm(f, data = mod_sf_unique_scaled) 
+final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "REML") 
 
 # Calculate VIF
 vif_values <- car::vif(final_model)
@@ -731,8 +897,8 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.43
-cor(predict(final_model), mod_sf_unique$Ho) # 0.65
+cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.45
+cor(predict(final_model), mod_sf_unique$Ho) # 0.67
 ```
 
 # Figures
@@ -805,8 +971,8 @@ wingen_r <-
 names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 
 # Isolate significant vs all variables
-sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "log_fri")
-mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "pfs_mixed", "pfs_surfac", "log_fri", "vdep", "Q")
+sig_vars <- c("csi_past", "Q", "tmean_dif", "bio1", "fire_frequency")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "fire_frequency", "vdep", "Q")
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
