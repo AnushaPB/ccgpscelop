@@ -326,14 +326,6 @@ evt_mod_df <-
   evt_mod_df %>%
   mutate(evt = as.character(evt)) %>%
   mutate(evt = ifelse(grepl("Developed", evt), "Developed", evt)) %>%
-  mutate(
-    evt = case_when(
-      evt == "Exotic Herbaceous" ~ "Grassland",
-      evt == "Exotic Tree-Shrub" ~ "Shrubland",
-      evt == "Sparsely Vegetated" ~ "Sparse",
-      TRUE ~ evt
-    )
-  ) %>%
   select(-n)
 
 # Print unique cats
@@ -637,8 +629,8 @@ names(mtbs) <- str_remove(basename(files), ".tif$")
 coords_proj_buffer <- coords_proj %>% st_buffer(dist = 100)
 mtbs_vals <- 
   map(mtbs, ~{
-    vals <-terra::extract(.x, coords_proj_buffer, ID = TRUE, na.rm = FALSE)
-    names(vals) <- c("ID", "mtbs")
+    vals <-terra::extract(.x, coords_proj_buffer, ID = TRUE, na.rm = FALSE, xy = TRUE)
+    names(vals) <- c("ID", "mtbs", "r_x", "r_y")
     return(vals)
   }) %>%
   bind_rows(.id = "year") %>%
@@ -646,7 +638,9 @@ mtbs_vals <-
     is.na(mtbs)     ~ 0,      # no fire
     mtbs == 6     ~ NA_real_, # unknown severity inside perimeter
     TRUE ~ mtbs
-  ))
+  )) %>%
+  filter(!year %in% paste0("mtbs_CA_", 2020:2024))
+unique(mtbs_vals$year)
 
 mtbs_prop <-
   mtbs_vals %>%
@@ -667,31 +661,103 @@ nrow(mtbs_prop)
 
 unique(mtbs_counts$mtbs)
 
+table(mtbs_vals$mtbs)
+
 mtbs_mod_df <-
   mtbs_vals %>%
   group_by(ID, year) %>%
-  mutate(mtbs = case_when(
-  mtbs %in% 1:4 ~ mtbs,   # valid severity
-  mtbs == 5     ~ 1,      # increased greenness → treat as burned, low severity
-  mtbs == 0     ~ 0,      # no fire
-  mtbs == 6     ~ NA_real_# unknown severity inside perimeter
-  ) ifelse(is.na(mtbs), 0, mtbs)) %>%  # Convert NAs to 0 (unburned)
   summarise(
-    prop_high = mean(mtbs == 4, na.rm = TRUE),
-    prop_burned = mean(mtbs %in% 2:4, na.rm = TRUE)
+    prop_high = any(mtbs == 4),
+    prop_burned = any(mtbs %in% 3:4),
   ) %>%
   group_by(ID) %>%
   summarise(
-    mean_sev = mean(prop_high, na.rm = TRUE),
-    mean_burned = mean(prop_burned, na.rm = TRUE)
+    mtbs = sum(prop_high, na.rm = TRUE),
+    mtbs2 = sum(prop_burned, na.rm = TRUE)
   ) %>%
   mutate(SampleID = coords_proj$SampleID) %>%
   select(-ID)
+unique(mtbs_mod_df$mtbs)
 
-test_df2 <- mod_df %>% left_join(mtbs_prop, by = "SampleID") %>% left_join(get_het())
-lm(Ho ~ fire_severity + mtbs_1 + mtbs_2 + mtbs_3 + mtbs_4 + mtbs_5 + bio1 + gHM + NDVI + csi_past + glacier + evt, data = test_df2) %>%  
-  tidy() %>% 
-  mutate(p.value = round(p.value, 3))
+mtbs_mod_df <-
+  mtbs_vals %>%
+  group_by(ID, r_x, r_y) %>%
+  summarise(
+    bin_high = any(mtbs == 4),
+    bin_burned = any(mtbs %in% 1:5),
+    # Need NA removed TRUE to remove NA values from non-processed areas (e.g., ocean)
+    number_high = sum(mtbs %in% 3:4, na.rm = TRUE),
+    number_burned = sum(mtbs %in% 1:5, na.rm = TRUE),
+    prop_high = number_high/number_burned
+  ) %>%
+  mutate(prop_high = ifelse(number_burned == 0, 0, prop_high)) %>%
+  group_by(ID) %>%
+  summarise(
+    mtbs = median(prop_high, na.rm = TRUE),
+  ) %>%
+  mutate(SampleID = coords_proj$SampleID) %>%
+  select(-ID)
+unique(mtbs_mod_df$mtbs)
+
+test_df2 <- mod_df %>% left_join(mtbs_mod_df, by = "SampleID") %>% left_join(get_het())
+lm(Ho ~ fire_severity + mtbs + bio1 + gHM + NDVI + csi_past + glacier + evt, data = test_df2) %>%  
+  tidy() 
+
+mtbs_mod_df <-
+  mtbs_vals %>%
+  group_by(ID, year) %>%
+  summarise(
+    bin_fire = any(mtbs %in% 1:5)
+  ) %>%
+  pivot_wider(
+    names_from = year,
+    values_from = bin_fire,
+    values_fill = FALSE
+  )
+mtbs_mod_df$SampleID <- coords_proj$SampleID
+head(mtbs_mod_df)
+
+# For each year test whether there is a significant difference in Ho between burned and unburned
+byyear <- purrr::map(
+  setdiff(names(mtbs_mod_df), c("ID", "SampleID")),
+  function(year_col) {
+
+    test_df_year <-
+      mod_df %>%
+      left_join(
+        mtbs_mod_df %>% select(SampleID, all_of(year_col)),
+        by = "SampleID"
+      ) %>%
+      mutate(
+        burned = as.logical(.data[[year_col]])
+      )
+
+    model <- lm(
+      Ho ~ burned,
+      data = test_df_year
+    )
+
+    tidy_mod <- broom::tidy(model)
+
+    p_value <- tidy_mod %>%
+      filter(term == "burnedTRUE") %>%
+      pull(p.value)
+
+    tibble(
+      year = year_col,
+      p_value = p_value
+    )
+  }
+)
+
+byyear_df <- bind_rows(byyear) %>% mutate(padj = p.adjust(p_value, "fdr")) %>% filter(p_value < 0.05)
+true_points <- mtbs_mod_df %>% select(any_of(byyear_df$year)) %>% filter(if_any(everything(), ~ . == TRUE)) %>% mutate(anyTRUE = sum(if_any(everything(), ~ . == TRUE)))
+
+# Plot where the true points are
+pdf(here(plotpath, "mtbs_significant_years.pdf"), width = 6, height = 6)
+plot(st_geometry(ca_proj), main = "Samples with Significant MTBS Fire Effect on Ho by Year")
+points(st_coordinates(coords_proj)[true_points$ID, ], col = "red", pch = 19)
+dev.off()
 ```
 
 ```{r}
@@ -709,7 +775,7 @@ test_df %>%
 
 test_df_buffer = test_df
 
-lm(Ho ~ fire_frequency_recent + evt + tmean_dif + csi_past + glacier + gHM + NDVI + fire_severity + bio1 + vdep, data = test_df_buffer) %>%  
+lm(Ho ~ fire_frequency_recent + evt + tmean_dif + csi_past + glacier + NDVI + gHM + fire_severity + bio1 + vdep, data = test_df_buffer) %>%  
   tidy() %>% 
   mutate(p.value = round(p.value, 3))
 
