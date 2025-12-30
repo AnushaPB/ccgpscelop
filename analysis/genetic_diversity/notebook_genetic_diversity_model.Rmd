@@ -373,14 +373,6 @@ vdep <- crop(vdep_og, ca_proj_buffer)
 bps_og <- rast("analysis/wildfire/LF2016_BPS_200_CONUS/Tif/LC16_BPS_200.tif")
 bps <- crop(bps_og, ca_proj_buffer)
 
-# Longest fire free interval from 1984-2022
-lffi_og <- rast("analysis/wildfire/conus_fire_history_metrics_1984_2022/conus_1984_2022_LFFI.tif")
-lffi <- crop(lffi_og, ca_proj_buffer)
-
-# Recent fire frequency (FRQ) from 1984-2022
-frq_og <- rast("analysis/wildfire/conus_fire_history_metrics_1984_2022/conus_1984_2022_FRQ.tif")
-frq <- crop(frq_og, ca_proj_buffer)
-
 # Activate relevant categories for each raster
 activeCat(fri)<- "FRI_ALLFIR"
 activeCat(vdep) <- "LABEL"
@@ -548,30 +540,12 @@ vdep_vals <-
   group_by(ID) %>%
   summarise(vdep = median(vdep, na.rm = TRUE))
 
-# Get recent fire data
-# (Not same scale as evt or vegetation group, so just take median over buffer)
-contemporary_fire_vals <-
-  terra::extract(c(lffi, frq), coords_buffer, na.rm = FALSE, ID = TRUE) %>%
-  rename(lffi = conus_1984_2022_LFFI, frq = conus_1984_2022_FRQ) %>%
-  group_by(ID) %>%
-  # Calculate LFFI in the buffer, ONLY using the pixels that experienced fire (i.e., not NA values)
-  # Why: we want to know the fire free interval where fire did occur, not the average over the whole buffer which would be biased towards unburned areas
-  # If you do it the other way (i.e., turn NAs into 39 first) you get biased high values
-  # Either way, if you remove all the points whre lffi is NA, there is a significant relationship between lffi and Ho, so I am comfortable with this approach
-  summarise(lffi = median(lffi, na.rm = TRUE)) %>%
-  # Any remaining NA values are the result of no fire occurring in the buffer during the 39 year period so replace NA with 39 (interpretation: longest fire free interval from 1984-2022 is 39 years if no fires occurred)
-  mutate(lffi = ifelse(is.na(lffi), 39, lffi))
-
-# Confirm no NAs
-stopifnot(all(!is.na(lffi_df$lffi)))
-
 # Combine into a single dataframe
 fire_mod_df <- 
   # Combine data frames
   groupveg_mode %>% 
   rename(groupveg = GROUPVEG) %>%          
   left_join(vdep_vals, by = "ID") %>%
-  left_join(contemporary_fire_vals, by = "ID") %>%
   select(-ID) %>%
   # Add SampleIDs
   mutate(SampleID = coords_proj$SampleID) %>%
@@ -586,6 +560,116 @@ fire_mod_df <-
   ) 
 ```
 
+# Hypothesis 8: Genetic diversity explained by recent fire history
+
+MTBS fire severity classes from https://mtbs.gov/faq/geospatial-data:
+0 - No Data (NA in raster)
+1 - Unburned to Low
+2 - Low
+3 - Moderate
+4 - High
+5 - Increased Greenness
+6 - Non-Processing Mask
+
+```{r}
+# MTBS fire burn data
+path <- here("analysis", "wildfire", "mtbs_fire")
+files <- list.files(path, pattern = "*.tif", full.names = TRUE)
+mtbs <- map(files, rast)
+names(mtbs) <- str_remove(basename(files), ".tif$")
+
+# Buffer points by 100 m to capture nearby fires
+coords_proj_buffer <- coords_proj %>% st_buffer(dist = 100)
+
+# Extract MTBS values for each year and each point
+range(mtbs_vals$mtbs, na.rm = TRUE)
+mtbs_vals <- 
+  map(mtbs, ~{
+    vals <-terra::extract(.x, coords_proj_buffer, ID = TRUE, na.rm = FALSE, xy = TRUE)
+    names(vals) <- c("ID", "mtbs", "r_x", "r_y")
+    return(vals)
+  }, .progress = TRUE) %>%
+  bind_rows(.id = "year") 
+
+# Confirm that the range of values is 1 to 6 (NA is 0)
+stopifnot(all(range(mtbs_vals$mtbs, na.rm = TRUE) %in% 1:6))
+  
+mtbs_vals_cleaned <- 
+  mtbs_vals %>%
+  # Remove years after 2000
+  filter(!year %in% paste0("mtbs_CA_", 2020:2024)) %>%
+  # Calculate burned vs unburned
+  # Unburned ->  NA (no fire), 1 (unburned to low), and 5 (increased greenness) -> 0
+  # Burned -> 2 (low), 3 (moderate), 4 (high) -> 1
+  # Ignore 6 (non-processing mask) -> NA
+  mutate(burned_pixel = case_when(
+    mtbs %in% c(2, 3, 4) ~ 1,
+    mtbs %in% c(1, 5) ~ 0,
+    is.na(mtbs) ~ 0,
+    mtbs == 6 ~ NA
+  ))
+
+b <- which(coords_proj$SampleID == a)
+mtbs_vals %>% filter(ID == b) %>% drop_na(mtbs)
+
+# Determine whether any pixel was burned in a buffer within a given year
+mtbs_id_year <-
+  mtbs_vals_cleaned %>%
+  group_by(ID, year) %>%
+  summarize(
+    burned = max(burned_pixel, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # For cases where all pixels were NA (non-processing mask), set burned to NA
+  mutate(burned = ifelse(is.infinite(burned), NA, burned))
+  
+# There is one coordinate that has no data for just 1985
+mtbs_id_year %>% filter(is.na(burned))
+# With a 300 m buffer, the closest pixel is 2 (burned)
+extract(mtbs$mtbs_CA_1985, st_buffer(coords_proj[179,], 300)) %>% distinct(mtbs_CA_1985)
+# And you don't get any non-burned area until 500 m
+extract(mtbs$mtbs_CA_1985, st_buffer(coords_proj[179,], 500)) %>% distinct(mtbs_CA_1985)
+# So we will impute this value as burned
+mtbs_id_year <- 
+  mtbs_id_year %>%
+  mutate(burned = ifelse(ID == 179 & year == "mtbs_CA_1985", 1, burned))
+
+# Check for any remaining NAs
+mtbs_id_year %>% filter(is.na(burned))
+
+# Calculate LFFI (Longest Fire-Free Interval) per point
+mtbs_lffi <-
+  mtbs_id_year %>%
+  # Arrange by ID and year before calculating runs (!important)
+  arrange(ID, year) %>%                
+  group_by(ID) %>%
+  # Create run_id for sequences of burned vs unburned years
+  mutate(
+    run_id = cumsum(burned != lag(burned, default = first(burned)))
+  ) %>%
+  # Filter to only unburned runs
+  filter(burned == 0) %>%
+  # Count length of each unburned run
+  count(ID, run_id, name = "ffi_length") %>%
+  # Get max length per ID (LFFI)
+  summarize(lffi = max(ffi_length, na.rm = TRUE)) %>%
+  # Add SampleID
+  mutate(SampleID = coords_proj$SampleID) %>%
+  select(SampleID, lffi)
+
+test_df <- 
+  read_csv(here(outpath, "model_df.csv")) %>%
+  left_join(mtbs_lffi, by = "SampleID") 
+
+cor(test_df$lffi.x, test_df$lffi.y, use = "pairwise.complete.obs")
+
+test_df %>% filter(lffi.x != lffi.y) %>% select(SampleID, lffi.x, lffi.y)
+
+lm(Ho ~ (lffi.y) + csi_past + glacier + tmean_dif + NDVI + gHM + bio1 + vdep + frg + evt, data = test_df) %>%
+  summary()
+ 
+unique(mtbs_mod_df$mtbs)
+```
 # Combine rasters into a raster stack
 This can take a while because of the fire rasters
 ```r
