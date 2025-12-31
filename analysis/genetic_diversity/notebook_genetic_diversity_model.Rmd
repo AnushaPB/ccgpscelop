@@ -484,7 +484,7 @@ frg_mode_with_ties <-
   group_by(ID) %>%
   # Get mode fire regime group per ID (keeping ties)
   slice_max(order_by = n, n = 1, with_ties = TRUE) %>%
-  ungroup()
+  ungroup() 
 
 # Identify IDs that have ties
 frg_ties <-
@@ -535,48 +535,35 @@ stopifnot(nrow(frg_mode_resolved) == nrow(coords_proj))  # confirm number of row
 frg_df <- 
   frg_mode_resolved %>%
   mutate(SampleID = coords_proj$SampleID) %>%
-  select(SampleID, frg)
+  select(SampleID, frg) %>%
+  # Set factor levels
+  mutate(frg = factor(frg, levels = c(
+    "No Fire Regime",
+    "Infrequent Fire Regime",
+    "Intermediate Frequency + Low/Moderate Severity",
+    "Intermediate Frequency + High Severity",
+    "High Frequency + Low/Moderate Severity",
+    "High Frequency + High Severity"
+  )))
 
-unique(vdep_vals$vdep)
 # Get vegetation departure data
 vdep_vals <-
   terra::extract(vdep, coords_buffer) %>%
   rename(vdep = LABEL) %>%
-  mutate(
-    vdep = as.numeric(as.character(vdep)),
-    vdep = ifelse(is.na(vdep), 100, vdep)
-  ) %>%
-  group_by(ID) %>%
-  summarise(vdep = median(vdep, na.rm = TRUE)) %>%
-  mutate(SampleID = coords_proj$SampleID)
-
-vdep_vals <-
-  terra::extract(vdep, coords_buffer) %>%
-  rename(vdep = LABEL) %>%
   mutate(vdep_num = as.numeric(as.character(vdep))) %>%
-  # Categorize: Very Low (0-16%), Low to Moderate (17-33%), Moderate to Low (34-50%), Moderate to High (51-66%), High (67-83%), and Very High (84-100%), NA = "Not Assessed"
-  # Convert vdep to fully numeric by coding categories (urban/agriculture/etc.) as 101 (highest departure)
-  mutate(vdep_cat =
+  mutate(vdep = 
     case_when(
       is.na(vdep_num) & vdep == "Water" ~ NA,
-      is.na(vdep_num) & !(vdep == "Water") ~ vdep, # original category
-      vdep_num >= 0 & vdep_num <= 16 ~ "Very Low (0-16%)",
-      vdep_num >= 17 & vdep_num <= 33 ~ "Low to Moderate (17-33%)",
-      vdep_num >= 34 & vdep_num <= 50 ~ "Moderate to Low (34-50%)",
-      vdep_num >= 51 & vdep_num <= 66 ~ "Moderate to High (51-66%)",
-      vdep_num >= 67 & vdep_num <= 83 ~ "High (67-83%)",
-      vdep_num >= 84 & vdep_num <= 100 ~ "Very High (84-100%)"
+      is.na(vdep_num) & vdep == "Barren or Sparse" ~ 0,
+      is.na(vdep_num) & vdep == "Urban" ~ 100,
+      is.na(vdep_num) & vdep == "Agriculture" ~ 100,
+      TRUE ~ vdep_num
     )
   ) %>%
-  filter(!is.na(vdep_cat)) %>%
-  # Count by ID and take max (not counting NAs)
   group_by(ID) %>%
-  count(vdep_cat, name = "n") %>%
-  slice_max(order_by = n, n = 1, with_ties = FALSE) %>%
-  dplyr::select(-ID)
-vdep_vals$SampleID <- coords_proj$SampleID
+  summarise(vdep = median(vdep, na.rm = TRUE))  %>%
+  mutate(SampleID = coords_proj$SampleID)
 
-stopifnot(all(!is.na(vdep_vals$vdep_cat)))
 
 # Get recent fire data
 # (Not same scale as evt or vegetation group, so just take median over buffer)
@@ -588,13 +575,21 @@ fire <-
   # Why: we want to know the fire free interval where fire did occur, not the average over the whole buffer which would be biased towards unburned areas
   # If you do it the other way (i.e., turn NAs into 39 first) you get biased high values
   # Either way, if you remove all the points whre lffi is NA, there is a significant relationship between lffi and Ho, so I am comfortable with this approach
+  mutate(frq = ifelse(is.na(frq), 0, frq)) %>% # Treat NA as 0
   summarise(
     lffi = median(lffi, na.rm = TRUE),
-    lffi_nona = median(lffi_nona, na.rm = FALSE),
+    lffi_nona = median(lffi_nona, na.rm = TRUE),
     frq_median = median(frq, na.rm = TRUE),
-    all_na = all(is.na(frq)),
-    burned = any(frq > 0, na.rm = TRUE)
+    burned = any(frq > 0, na.rm = TRUE),
+    frq_max = max(frq, na.rm = TRUE)
   ) %>%
+  #mutate(frq_median = scale(frq_median)[,1]) %>%
+  mutate(frq_bin = case_when(
+    frq_max == 0 ~ "Unburned",
+    frq_max > 0 & frq_max <= 1 ~ "1 Fire",
+    frq_max > 1 ~ "2+ Fires",
+  )) %>%
+  mutate(lffi2 = ifelse(is.na(lffi), 36, lffi)) %>%
   mutate(SampleID = coords_proj$SampleID)
 
 test_df <-
@@ -602,66 +597,66 @@ test_df <-
   select(-lffi, -vdep) %>%
   left_join(fire, by = "SampleID") %>%
   left_join(select(vdep_vals, vdep, SampleID)) %>%
-  mutate(transition =  case_when(groupveg != evt ~ evt, TRUE ~ "No Change")) %>%
-  mutate(vdep2 = case_when(vdep > 100 ~ 87, TRUE ~ vdep))
+  mutate(transition =  case_when(groupveg != evt ~ evt, TRUE ~ "No Change"))
 
-unique(test_df$vdep_cat)
+test_df <- 
+test_df %>% 
+  mutate(frequency_simple = case_when(
+    grepl("High Frequency", frg) ~ "High Frequency",
+    grepl("No Fire Regime", frg) ~ "No Fire Regime",
+    grepl("Infrequent", frg) ~ "Low Frequency",
+    grepl("Intermediate", frg) ~ "Intermediate Frequency"
+  )) %>%
+  mutate(frequency_simple = case_when(
+    grepl("High Frequency", frg) ~ "High Frequency",
+    grepl("No Fire Regime", frg) ~ "No Fire Regime",
+    grepl("Infrequent", frg) ~ "Low Frequency",
+    grepl("Intermediate", frg) ~ "Intermediate Frequency"
+  )) %>%
+  mutate(frequency_simple2 = case_when(
+    grepl("High Frequency", frg) ~ "High Frequency",
+    grepl("No Fire Regime", frg) ~ "No Fire Regime/Low Frequency",
+    grepl("Infrequent", frg) ~ "No Fire Regime/Low Frequency",
+    grepl("Intermediate", frg) ~ "Intermediate Frequency"
+  )) %>%
+  mutate(severity_simple = case_when(
+    grepl("High Severity", frg) ~ "High Severity",
+    grepl("Low/Moderate Severity", frg) ~ "Low/Moderate Severity",
+    TRUE ~ "No Fire Regime/Infrequent fire"
+  )) %>%
+  mutate(frequency_simple = factor(frequency_simple, levels = (c("High Frequency", "Intermediate Frequency", "Low Frequency", "No Fire Regime")))) %>%
+  mutate(severity_simple = factor(severity_simple, levels = rev(c("High Severity", "Low/Moderate Severity", "No Fire Regime/Infrequent fire")))) %>%
+  mutate(freq_bin = frequency_simple == "High Frequency") %>%
+  # Set factor levels
+  mutate(frg = factor(frg, levels = c(
+    "No Fire Regime",
+    "Infrequent Fire Regime",
+    "Intermediate Frequency + Low/Moderate Severity",
+    "Intermediate Frequency + High Severity",
+    "High Frequency + Low/Moderate Severity",
+    "High Frequency + High Severity"
+  )))
+unique(test_df$frg)
+names(test_df)
 
-lm(Ho ~ NDVI + gHM + bio1 + csi_past + glacier + tmean_dif + frg + vdep + evt + burned, data = test_df) %>% summary()
+mod <- lm(Ho ~ NDVI + gHM + bio1 + csi_past + glacier + tmean_dif + vdep + evt + frequency_simple2 * frq_median, data = test_df) 
+summary(mod)
+# 1) Get the slope of Ho vs frq_median within each frequency_simple group
+tr <- emtrends(mod, ~ frequency_simple2, var = "frq_median")
+summary(tr, infer = TRUE)  # adds tests vs 0
 
-lm(Ho ~ NDVI + gHM + bio1 + csi_past + glacier + tmean_dif + frg + vdep + evt + (lffi), data = filter(test_df, !is.na(lffi))) %>% summary()
-filter(test_df, !is.na(lffi)) %>% arrange(desc(vdep)) %>% select(vdep, groupveg, evt)
-
-pdf(here(plotpath, "lffi_vs_ho.pdf"), width = 9, height = 4)
-ggplot(test_df, aes(x = lffi, y = Ho)) +
-  geom_jitter(aes(col = frg)) +
+png(here(plotpath, "lffi_vs_ho.png"), width = 12, height = 6, units = "in", res = 300)
+ggplot(test_df, aes(x = frq_median, y = Ho)) +
+  geom_jitter(aes(col = frequency_simple)) +
   geom_smooth(method = "lm") +
+  #scale_color_viridis_c(option = "turbo") +
   theme_classic() +
   theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
+  #facet_wrap(~frequency_simple, scales = "free") +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6) 
 
-ggplot(filter(test_df, !is.na(lffi)), aes(x = vdep, y = Ho)) +
-  geom_jitter(aes(col = gHM)) +
-  geom_smooth(method = "lm") +
-  scale_color_viridis_c(option = "turbo") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
-
-ggplot(filter(test_df, !is.na(lffi)), aes(x = vdep, y = Ho)) +
-  geom_jitter(aes(col = evt)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
-
-ggplot(filter(test_df, !is.na(lffi)), aes(x = vdep, y = Ho)) +
-  geom_jitter(aes(col = groupveg)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
-
-ggplot(test_df, aes(x = vdep2, y = Ho)) +
-  geom_jitter(aes(col = evt)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
-
-ggplot(test_df, aes(x = vdep2, y = Ho)) +
-  geom_jitter(aes(col = groupveg)) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
-
-ggplot(test_df, aes(x = lffi_nona, y = Ho)) +
-  geom_jitter(aes(col = frg), width = 2) +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6)
+library(ggfortify)
+autoplot(mod)
 
 dev.off()
 
