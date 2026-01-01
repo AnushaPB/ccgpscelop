@@ -567,7 +567,7 @@ vdep_vals <-
 
 # Get recent fire data
 # (Not same scale as evt or vegetation group, so just take median over buffer)
-fire <-
+recent_fire_vals <-
   terra::extract(c(lffi, frq), coords_buffer, na.rm = FALSE, ID = TRUE) %>%
   group_by(ID) %>%
   mutate(lffi_nona = ifelse(is.na(lffi), 36, lffi)) %>%
@@ -589,84 +589,15 @@ fire <-
     frq_max > 0 & frq_max <= 1 ~ "1 Fire",
     frq_max > 1 ~ "2+ Fires",
   )) %>%
-  mutate(lffi2 = ifelse(is.na(lffi), 36, lffi)) %>%
-  mutate(SampleID = coords_proj$SampleID)
-
-test_df <-
-  read_csv(here(outpath, "model_df.csv")) %>%
-  select(-lffi, -vdep) %>%
-  left_join(fire, by = "SampleID") %>%
-  left_join(select(vdep_vals, vdep, SampleID)) %>%
-  mutate(transition =  case_when(groupveg != evt ~ evt, TRUE ~ "No Change"))
-
-test_df <- 
-test_df %>% 
-  mutate(frequency_simple = case_when(
-    grepl("High Frequency", frg) ~ "High Frequency",
-    grepl("No Fire Regime", frg) ~ "No Fire Regime",
-    grepl("Infrequent", frg) ~ "Low Frequency",
-    grepl("Intermediate", frg) ~ "Intermediate Frequency"
-  )) %>%
-  mutate(frequency_simple = case_when(
-    grepl("High Frequency", frg) ~ "High Frequency",
-    grepl("No Fire Regime", frg) ~ "No Fire Regime",
-    grepl("Infrequent", frg) ~ "Low Frequency",
-    grepl("Intermediate", frg) ~ "Intermediate Frequency"
-  )) %>%
-  mutate(frequency_simple2 = case_when(
-    grepl("High Frequency", frg) ~ "High Frequency",
-    grepl("No Fire Regime", frg) ~ "No Fire Regime/Low Frequency",
-    grepl("Infrequent", frg) ~ "No Fire Regime/Low Frequency",
-    grepl("Intermediate", frg) ~ "Intermediate Frequency"
-  )) %>%
-  mutate(severity_simple = case_when(
-    grepl("High Severity", frg) ~ "High Severity",
-    grepl("Low/Moderate Severity", frg) ~ "Low/Moderate Severity",
-    TRUE ~ "No Fire Regime/Infrequent fire"
-  )) %>%
-  mutate(frequency_simple = factor(frequency_simple, levels = (c("High Frequency", "Intermediate Frequency", "Low Frequency", "No Fire Regime")))) %>%
-  mutate(severity_simple = factor(severity_simple, levels = rev(c("High Severity", "Low/Moderate Severity", "No Fire Regime/Infrequent fire")))) %>%
-  mutate(freq_bin = frequency_simple == "High Frequency") %>%
-  # Set factor levels
-  mutate(frg = factor(frg, levels = c(
-    "No Fire Regime",
-    "Infrequent Fire Regime",
-    "Intermediate Frequency + Low/Moderate Severity",
-    "Intermediate Frequency + High Severity",
-    "High Frequency + Low/Moderate Severity",
-    "High Frequency + High Severity"
-  )))
-unique(test_df$frg)
-names(test_df)
-
-mod <- lm(Ho ~ NDVI + gHM + bio1 + csi_past + glacier + tmean_dif + vdep + evt + frequency_simple2 * frq_median, data = test_df) 
-summary(mod)
-# 1) Get the slope of Ho vs frq_median within each frequency_simple group
-tr <- emtrends(mod, ~ frequency_simple2, var = "frq_median")
-summary(tr, infer = TRUE)  # adds tests vs 0
-
-png(here(plotpath, "lffi_vs_ho.png"), width = 12, height = 6, units = "in", res = 300)
-ggplot(test_df, aes(x = frq_median, y = Ho)) +
-  geom_jitter(aes(col = frequency_simple)) +
-  geom_smooth(method = "lm") +
-  #scale_color_viridis_c(option = "turbo") +
-  theme_classic() +
-  theme(text = element_text(size = 16)) +
-  #facet_wrap(~frequency_simple, scales = "free") +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6) 
-
-library(ggfortify)
-autoplot(mod)
-
-dev.off()
-
+  mutate(lffi2 = ifelse(is.na(lffi), 36, lffi)) 
+  
 # Combine into a single dataframe
 fire_mod_df <- 
   # Combine data frames
   groupveg_mode %>% 
   rename(groupveg = GROUPVEG) %>%          
   left_join(vdep_vals, by = "ID") %>%
-  left_join(contemporary_fire_vals, by = "ID") %>%
+  left_join(recent_fire_vals, by = "ID") %>%
   select(-ID) %>%
   # Add SampleIDs
   mutate(SampleID = coords_proj$SampleID) %>%
@@ -674,29 +605,21 @@ fire_mod_df <-
   left_join(evt_mod_df, by = "SampleID") %>%
   # Add frg
   left_join(frg_df, by = "SampleID")  %>%
+  # Create simple frequency column 
+  mutate(fire_frq = case_when(
+    grepl("High Frequency", frg) ~ "High Frequency",
+    grepl("Intermediate Frequency", frg) ~ "Intermediate Frequency",
+    frg == "Infrequent Fire Regime" ~ "Infrequent/No Fire Regime",
+    frg == "No Fire Regime" ~ "Infrequent/No Fire Regime",
+    TRUE ~ NA_character_
+  )) %>%
   # Create factors 
   mutate(
-    frg = factor(frg, levels = rev(c("High Frequency + High Severity", "High Frequency + Low/Moderate Severity", "Intermediate Frequency + High Severity", "Intermediate Frequency + Low/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime"))),
+    fire_frg = factor(frg, levels = rev(c("High Frequency + High Severity", "High Frequency + Low/Moderate Severity", "Intermediate Frequency + High Severity", "Intermediate Frequency + Low/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime"))),
+    fire_frq = factor(fire_frq, levels = c("High Frequency", "Intermediate Frequency", "Infrequent/No Fire Regime")),
     groupveg = as.character(groupveg),
+    fire_recent = frq_median
   ) 
-```
-
-```{r}
-library(tidyverse)
-pdf(here(plotpath, "lffi_vs_ho.pdf"))
-df %>%
-  mutate(
-    ndvi_bin = ntile(NDVI, 3) %>% factor(labels = c("Low NDVI", "Mid NDVI", "High NDVI"))
-  ) %>%
-  ggplot(aes(x = lffi_nona, y = Ho)) +
-  geom_point(alpha = 0.6) +
-  geom_smooth(method = "lm", se = TRUE, color = "black") +
-  scale_x_continuous(trans = "log10") +  # if appropriate
-  facet_wrap(~ ndvi_bin) +
-  theme_classic() +
-  labs(x = "LFFI (years)", y = "Genetic diversity (Ho)")
-
-dev.off()
 ```
 
 # Combine rasters into a raster stack
@@ -752,7 +675,7 @@ env_stack <-
 # Create model data
 ```{r}
 # Model variables
-mod_vars <- c("NDVI", "gHM", "bio1", "Q", "csi_past", "glacier", "tmean_dif", "frg", "lffi", "vdep", "groupveg", "evt", "x", "y")
+mod_vars <- c("NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "fire_frg", "fire_frq", "fire_recent", "vdep", "groupveg", "evt", "x", "y", "Q")
 
 # Combine dataframes
 mod_df <- 
@@ -807,8 +730,8 @@ r <- cor(mod_df[, numeric_mod_vars], use = "pairwise.complete.obs")
 r[lower.tri(r, diag = TRUE)] <- NA
 r
 
-# Find the pairs with correlations greater than 0.6
-high_corr <- which(abs(r) > 0.6, arr.ind = TRUE)
+# Find the pairs with correlations greater than 0.7
+high_corr <- which(abs(r) > 0.7, arr.ind = TRUE)
 # Print the pairs
 high_corr_pairs <- data.frame(
   Var1 = rownames(r)[high_corr[, 1]],
@@ -817,7 +740,7 @@ high_corr_pairs <- data.frame(
 ) %>%
 arrange(desc(abs(Correlation)))
 
-# No pairs with correlation > 0.6
+# gHM and vdep have a correlation > 0.6, but not > 0.7
 high_corr_pairs
 ```
 
@@ -865,9 +788,9 @@ evt_rsq %>% filter(rsq > 0.5) # No variables (gHM + vdep are close to 40%)
 mean(mod_df$groupveg == mod_df$evt)  # Only 42% match
 
 # Checking R squared for fire categories
-fire_severity_cat_rsq  <- 
+fire_frg_cat_rsq  <- 
   map(numeric_mod_vars, ~{
-    mod <- lm(as.formula(paste0(.x, " ~ fire_severity_cat")), data = mod_df)
+    mod <- lm(as.formula(paste0(.x, " ~ fire_frg")), data = mod_df)
     rsq <- summary(mod)$adj.r.squared
     data.frame(variable = .x, rsq = rsq)
   }) %>%
@@ -875,19 +798,7 @@ fire_severity_cat_rsq  <-
   arrange(desc(rsq))
 
 # Filter for high R2
-fire_severity_cat_rsq %>% filter(rsq > 0.5) # No
-
-fire_frequency_cat_rsq  <- 
-  map(numeric_mod_vars, ~{
-    mod <- lm(as.formula(paste0(.x, " ~ fire_frequency_cat")), data = mod_df)
-    rsq <- summary(mod)$adj.r.squared
-    data.frame(variable = .x, rsq = rsq)
-  }) %>%
-  bind_rows() %>%
-  arrange(desc(rsq))
-
-# Filter for high R2
-fire_frequency_cat_rsq %>% filter(rsq > 0.5) 
+fire_frg_cat_rsq %>% filter(rsq > 0.5) # None
 ```
 
 ```{r}
@@ -912,26 +823,6 @@ veg_corr <- pmap(veg_levels, function(Var1, Var2) {
   bind_rows()
 
 veg_corr %>% arrange(desc(cor))
-
-# Check correlation between fire frequency and severity groups
-fire_levels <- expand.grid(
-  unique(mod_df$fire_severity_cat),
-  unique(mod_df$fire_frequency_cat)
-)
-fire_corr <- pmap(fire_levels, function(Var1, Var2) {
-  tibble(
-    fire_severity_cat = Var1,
-    fire_frequency_cat = Var2,
-    cor = cor(
-      as.integer(mod_df$fire_severity_cat == Var1),
-      as.integer(mod_df$fire_frequency_cat == Var2),
-      method = "pearson"
-    )
-  )
-}) %>%
-  bind_rows()
-
-fire_corr %>% arrange(desc(abs(cor))) # High correlations
 ```
 
 ```{r}
@@ -957,7 +848,7 @@ dev.off()
 
 ```{r}
 # Model formula variables
-mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif",  "fire_severity_cat", "fire_frequency_cat", "fire_severity_recent", "fire_frequency_recent", "vdep", "groupveg", "evt", "lgm", "lig", "eh", "mh", "lh", "Q")
+mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif",  "fire_frg", "fire_frq", "fire_recent", "vdep", "groupveg", "evt", "Q")
 
 # GLS can't handle 0 distances, so take the average of the coordinates (mode for veg type)
 mode_val <- function(x) {
@@ -996,20 +887,16 @@ stopifnot(all(mod_sf_unique_scaled$glacier %in% c(0, 1)))
 mod_sf_unique_scaled$glacier_factor <- as.factor(mod_sf_unique$glacier)
 mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
 
-# Set reference levels for groupveg and evt and fire
+# Set reference levels for groupveg and evt
 mod_sf_unique_scaled$groupveg <- relevel(as.factor(mod_sf_unique_scaled$groupveg), ref = "Shrubland")
 mod_sf_unique_scaled$evt <- relevel(as.factor(mod_sf_unique_scaled$evt), ref = "Shrubland")
-
-# If fire severity category and frequency category are included, set reference levels
-if ("fire_severity_cat" %in% colnames(mod_sf_unique_scaled)) mod_sf_unique_scaled$fire_severity_cat <- relevel(as.factor(mod_sf_unique_scaled$fire_severity_cat), ref = "No Fire Regime")
-if ("fire_frequency_cat" %in% colnames(mod_sf_unique_scaled)) mod_sf_unique_scaled$fire_frequency_cat <- relevel(as.factor(mod_sf_unique_scaled$fire_frequency_cat), ref = "No Fire Regime")
 
 # Confirm no NA
 stopifnot(all(colSums(is.na(mod_sf_unique_scaled)) == 0))
 ```
 
 ```{r}
-f <- formula("Ho ~ glacier + gHM + bio1 + csi_past + tmean_dif + fire_frequency_cat + fire_severity_recent + vdep + groupveg + evt")
+f <- formula("Ho ~ NDVI + glacier + gHM + bio1 + csi_past + tmean_dif + evt + fire_frg + fire_recent")
 
 # Run OLS and get residuals
 ols_model <- lm(f, data = mod_sf_unique)
@@ -1061,14 +948,14 @@ dev.off()
 # The GLS model residuals look better than the OLS residuals
 
 # Compare AIC
-AIC(ols_model, gls_model) 
+AIC(ols_model, gls_model) # GLS has lower AIC
 
 # Compare significant variables (p < 0.05) for each model using map
 models <- list(OLS = ols_model, GLS = gls_model)
 sig_vars_by_model <- map(models, ~ broom::tidy(.x) %>%
   filter(!term %in% c("lambda", "rho", "(Intercept)"), p.value < 0.05) %>%
   pull(term))
-print(sig_vars_by_model) 
+print(sig_vars_by_model) # Same significant variables for both models
 ```
 
 ```{r}
@@ -1089,125 +976,30 @@ moran_ols <- moran.test(mod_sf_unique$ols_resids, lw_8)
 # Moran's I for GLS normalized residuals
 moran_gls <- moran.test(mod_sf_unique$gls_resids, lw_8)
 
-print(moran_ols)
-print(moran_gls)
+print(moran_ols) # 0.169
+print(moran_gls) # 0.168
 ```
 
-# Test model variable combinations
+# Fit full model 1
 ```{r}
-library(MuMIn)
-# Set NA action to "na.fail" to ensure models with missing data are not considered
-options(na.action = "na.fail")
-
-# Test all model combinations
-dredge_result <- dredge(ols_model)
-# Get top models based on delta AICc < 2
-top_models <- get.models(dredge_result, subset = delta < 2)
-# Get variables for each of top models
-top_vars <- 
-  top_models %>%
-  map(~broom::tidy(.x) %>%
-        filter(!term %in% c("(Intercept)")) %>%
-        pull(term))
-
-print(top_vars[[1]])
-```
-
-```{r}
-# Global formula
-f_full <- Ho ~ glacier + NDVI + gHM + bio1 + csi_past + tmean_dif + fire_severity + fire_frequency + vdep + groupveg + evt
-
-# Global GLS model (use ML for AIC-based selection)
-gls_full <- gls(
-  f_full,
-  data = mod_sf_unique_scaled,
-  method = "ML",
-  correlation = corExp(form = ~ x + y, nugget = FALSE)
-)
-
-# All subsets model selection on the GLS
-dredge_res <- dredge(gls_full, trace = TRUE)
-
-# Look at the top of the table
-head(dredge_res)
-
-# Get top models based on delta AICc < 2
-top_gls_models <- get.models(dredge_res, subset = delta < 2)
-
-# Get variables used in each of the top models (excluding intercept)
-top_vars_gls <- 
-  top_gls_models %>%
-  map(~ broom::tidy(.x) %>%
-        filter(term != "(Intercept)") %>%
-        pull(term))
-
-# Print variables in top models
-top_vars_gls
-top_vars_gls[[1]]
-
-# Get best model
-best_gls <- get.models(dredge_res, subset = 1)[[1]]
-summary(best_gls)
-
-# Refit best model with REML
-final_gls <- update(best_gls, method = "REML")
-final_gls %>% broom::tidy() %>% mutate(p.value = round(p.value, 3))
-```
-
-# Fit final model 
-```{r}
-mod_sf_unique_scaled$fire_recent <- exp(mod_sf_unique_scaled$fire_severity_recent)
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + glacier + gHM + fire_severity + fire_severity_recent + vdep + evt")
-lm(f, data = mod_df) %>% summary()
-lm(f, data = mod_df) %>% car::vif()
-
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + NDVI + glacier + gHM + fire_recent + vdep + evt") # Remove groupveg to get p-value
-veg0_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + NDVI + glacier + gHM + fire_recent + vdep + groupveg + evt")
-veg_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-veg_model %>% broom::tidy() %>% mutate(p.value = round(p.value, 3)) %>% filter(p.value < 0.05)
-# Emmean test for groupveg
-anova(veg0_model, veg_model) # Not significant difference; groupveg does not improve model
-emmeans(veg_model, specs = "groupveg", mode = "appx-satterthwaite") %>%
-  contrast(method = "tukey") %>%
-  data.frame() %>% 
-  filter(p.value < 0.05)# No individual contrasts are significant
-emmeans(veg_model, specs = "evt", mode = "appx-satterthwaite") %>%
-  contrast(method = "tukey") %>%
-  data.frame() %>% 
-  filter(p.value < 0.05)# No individual contrasts are significant
-
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + NDVI + glacier + gHM + fire_recent + vdep + evt")
-noveg0_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + NDVI + glacier + gHM + fire_recent + fire_severity + vdep + evt")
-noveg_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-noveg_model %>% broom::tidy() %>% mutate(p.value = round(p.value, 3)) %>% filter(p.value < 0.05)
-anova(noveg0_model, noveg_model) # p = 0.04; fire severity significantly improves model
-
-AIC(veg_model, noveg_model)
-anova(noveg_model, veg_model) # No significant difference
-
-
-f <- formula("Ho ~ bio1 + csi_past + tmean_dif + glacier + gHM + fire_severity_cat + fire_severity_recent + vdep + evt")
+f <- formula("Ho ~ NDVI + glacier + gHM + bio1 + csi_past + tmean_dif + evt + fire_frg + fire_recent")
 
 # Fit model
-final_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "REML")
-summary(final_model)
+gls_final <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
 
 # Double check OLS
 ols_final <- lm(f, data = mod_sf_unique_scaled)
-summary(ols_final)
 
 # Compare OLS vs GLS
-AIC(ols_final, final_model)
-final_model <- ols_final
+AIC(ols_final, gls_final) # GLS lower AIC
+full_model1 <- gls_final
 
 # Calculate VIF
-performance::check_collinearity(final_model) # From performance package
-#  groupveg 7.82 [6.33, 9.73]     2.80      0.13     [0.10, 0.16] # Moderate collinearity
+performance::check_collinearity(full_model1) # From performance package
+#  evt 7.62 [6.20, 9.42]     2.76      0.13     [0.11, 0.16]
 
 # Results
-mod_result <- broom::tidy(final_model)
+mod_result <- broom::tidy(full_model1)
 mod_result
 
 # Significant variables
@@ -1216,110 +1008,186 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(final_model), mod_sf_unique$Ho)^2 # 0.45
-cor(predict(final_model), mod_sf_unique$Ho) # 0.67
-```
-```{r}
-# ANOVA and emmeans test for groupveg
-anova(final_model) # Note: fire severity is not significant here because of vegetation group confounding
-# Mode = "appx-satterthwaite" for GLS models
-emmeans_gls <- emmeans(final_model, specs = "groupveg", mode = "appx-satterthwaite")
-tukey_gls <- contrast(emmeans_gls, method = "tukey")
-tukey_gls # No individual contrasts are significant
-
+cor(predict(full_model1), mod_sf_unique$Ho)^2 # 0.45
+cor(predict(full_model1), mod_sf_unique$Ho) # 0.67
 ```
 
 ```{r}
-# TEMPORARY TEST FIRE VARIALBE
-test_vars <- function(f){
-  f <- formula(f)
-  # ML to compare AIC
-  mod <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-  mod_result <- broom::tidy(mod)
-  print(AIC(mod))
-  print(cor(predict(mod), mod_sf_unique$Ho)^2)
-  mod_result %>% select(term, estimate, p.value) %>% mutate(p.value = round(p.value, 3))
-}
+# Mode = "df.error" for GLS models
 
-test_vars("Ho ~ fire_pc + groupveg")
-test_vars("Ho ~ fire_severity + groupveg")
-test_vars("Ho ~ fire_frequency + groupveg")
+# Test for differences between vegetation groups
+emmeans_gls <- emmeans(full_model1, specs = "evt", mode = "df.error")
+tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
+tukey_gls %>% data.frame() %>% filter(p.value < 0.05)
+# 0 rows
 
+# Test for differences between fire regime groups
+emmeans_gls <- emmeans(full_model1, specs = "fire_frg", mode = "df.error")
+tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
+tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
+#                                                                      contrast
+# 1                   No Fire Regime - (Intermediate Frequency + High Severity)
+# 2                   No Fire Regime - (High Frequency + Low/Moderate Severity)
+# 3 (Intermediate Frequency + High Severity) - (High Frequency + High Severity)
+#        estimate           SE  df   t.ratio      p.value
+# 1 -0.0003613110 8.450006e-05 233 -4.275867 0.0004167679
+# 2 -0.0002642442 8.563145e-05 233 -3.085831 0.0170652352
+# 3  0.0002247490 8.353848e-05 233  2.690365 0.0382703584
 
-test_vars("Ho ~ groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q") # NO FIRE
-test_vars("Ho ~ fire_pc + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
-test_vars("Ho ~ fire_severity + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
-test_vars("Ho ~ fire_frequency + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
+```
 
+# Fit full model 2: interaction between fire frequency and recent fire
 
-test_vars("Ho ~ groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI") # NO FIRE
-test_vars("Ho ~ fire_pc + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
-test_vars("Ho ~ fire_severity + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
-test_vars("Ho ~ fire_frequency + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
+```{r}
+f <- formula("Ho ~ NDVI + bio1 + csi_past + tmean_dif + glacier + gHM +  fire_frq * fire_recent + evt")
 
-# Test with OLS
-test_vars <- function(f){
-  f <- formula(f)
-  mod <- lm(f, data = mod_sf_unique_scaled)
-  mod_result <- broom::tidy(mod)
-  print(AIC(mod))
-  print(cor(predict(mod), mod_sf_unique$Ho)^2)
-  mod_result %>% select(term, estimate, p.value) %>% mutate(p.value = round(p.value, 3))
-}
+# Fit model
+gls_final <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
 
-test_vars("Ho ~ fire_pc + groupveg")
-test_vars("Ho ~ fire_severity + groupveg")
-test_vars("Ho ~ fire_frequency + groupveg")
+# Double check OLS
+ols_final <- lm(f, data = mod_sf_unique_scaled)
 
-test_vars("Ho ~ fire_pc + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
-test_vars("Ho ~ fire_severity + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
-test_vars("Ho ~ fire_frequency + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + Q")
+# Compare OLS vs GLS
+AIC(ols_final, gls_final) # GLS lower AIC
+full_model2 <- gls_final
 
-test_vars("Ho ~ fire_pc + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
-test_vars("Ho ~ fire_severity + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
-test_vars("Ho ~ fire_frequency + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI")
+# Calculate VIF
+performance::check_collinearity(full_model2) # From performance package
+# Moderate Correlation
+
+#                  Term  VIF   VIF 95% CI adj. VIF Tolerance Tolerance 95% CI
+#                   evt 7.09 [5.77, 8.76]     2.66      0.14     [0.11, 0.17]
+#  fire_frq:fire_recent 5.79 [4.73, 7.14]     2.41      0.17     [0.14, 0.21]
+
+# Results
+mod_result <- broom::tidy(full_model2)
+mod_result
+
+# Significant variables
+mod_result %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) 
+sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "lambda")) %>% pull(term)
+print(sig_vars)
+
+# You can't get a traditional R2 for spatial models, but you can get an alternative R2
+cor(predict(full_model2), mod_sf_unique$Ho)^2 # 0.45
+cor(predict(full_model2), mod_sf_unique$Ho) # 0.67
+
+# Compare full_model1 and full_model2
+AIC(full_model1, full_model2) # Comparable AIC, full_model2 slightly lower
+anova(full_model1, full_model2) # No significant difference between models
 ```
 
 ```{r}
-q_f <- formula("Q ~ fire_frequency_cat + groupveg + csi_past + bio1 + tmean_dif + glacier + gHM + NDVI + evt + fire_severity_recent")
+# Test for differences between vegetation groups
+emmeans_gls <- emmeans(full_model2, specs = "evt", mode = "df.error")
+tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
+tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
+# 0 rows
+
+# Test for differences between fire regime groups
+emmeans_gls <- emmeans(full_model2, specs = "fire_frq", mode = "df.error")
+tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
+tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
+# NOTE: Results may be misleading due to interactions (because you average over levels of fire_recent)
+#                                               contrast      estimate
+# 1              High Frequency - Intermediate Frequency -9.432813e-05
+# 2         High Frequency - (Infrequent/No Fire Regime)  2.612126e-04
+# 3 Intermediate Frequency - (Infrequent/No Fire Regime)  3.555407e-04
+#             SE  df   t.ratio      p.value
+# 1 3.893687e-05 234 -2.422591 1.617076e-02
+# 2 8.239477e-05 234  3.170257 2.589725e-03
+# 3 8.106787e-05 234  4.385717 5.244712e-05
+
+# !Important: test for trend in fire_recent within each fire_frq group
+tr <- emtrends(full_model2, ~ fire_frq, var = "fire_recent", mode = "df.error")
+summary(tr, infer = TRUE)
+#  fire_frq                  fire_recent.trend       SE  df  lower.CL upper.CL
+#  High Frequency                     5.65e-05 2.63e-05 234  4.63e-06 0.000108
+#  Intermediate Frequency            -2.15e-06 2.19e-05 234 -4.53e-05 0.000041
+#  Infrequent/No Fire Regime         -1.94e-04 1.23e-04 234 -4.36e-04 0.000048
+#  t.ratio p.value
+#    2.146  0.0329
+#   -0.098  0.9221
+#   -1.580  0.1155
+```
+
+# Modelling admixture
+
+```{r}
+elev <- get_dem()
+q_f <- formula("Q ~ fire_frq")
+q_df <- 
+  mod_df %>% 
+  mutate(fire_sev = case_when(
+    grepl("High Severity", fire_frg) ~ "High Severity",
+    grepl("Low/Moderate Severity", fire_frg) ~ "Low/Moderate Severity",
+    fire_frg %in% c("Infrequent Fire Regime") ~ "Any severity infrequent Fire",
+    fire_frg == "No Fire Regime" ~ "No Fire",
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(admix_any = ifelse(Q > 0.01, 1, 0)) %>%
+  left_join(elev) %>%
+  mutate(elev = ifelse(is.na(elev), 0, elev))  # NAs are likely coastal samples, set to 0
+
+q_df %>% filter(is.na(elev))
 
 # OLS
-q_mod_ols <- lm(q_f, data = mod_df)
-summary(q_mod_ols)
-broom::tidy(q_mod_ols) %>% select(term, estimate, p.value)
-ols_resids <- residuals(q_mod_ols)
+mod_occ <- glm(
+  admix_any ~ NDVI + bio1 + csi_past + tmean_dif + glacier + gHM + fire_frg +
+    fire_recent + evt,
+  family = binomial,
+  data = q_df
+)
+summary(mod_occ)
 
-# Fit and plot semivariogram
-q_variogram <- variogram(ols_resids ~ 1, data = mod_sf_unique_scaled)
-q_vgm <- map(c("Exp", "Sph", "Gau"), ~fit.variogram(q_variogram, model = vgm(.x)))
-names(q_vgm) <- c("Exp", "Sph", "Gau")
-pdf(here(plotpath, "q_ols_variogram.pdf"))
-plot(q_variogram, q_vgm[["Exp"]], main = "Q OLS Residuals Variogram (Exponential)")
-plot(q_variogram, q_vgm[["Sph"]], main = "Q OLS Residuals Variogram (Spherical)")
-plot(q_variogram, q_vgm[["Gau"]], main = "Q OLS Residuals Variogram (Gaussian)")
+# Emmeans for fire regime
+emmeans_q <- emmeans(mod_occ, specs = "fire_frg")
+tukey_q <- contrast(emmeans_q, method = "tukey", adjust = "fdr")
+tukey_q %>% data.frame() %>% filter(p.value < 0.05) 
+
+mod_mag <- glm(
+  Q ~ evt + elev + fire_sev,
+  family = Gamma(link = "log"),
+  data = subset(q_df, Q > 0.01)
+)
+
+car::Anova(mod_mag, type = 2)
+
+# Emmeans for fire regime
+emmeans_q <- emmeans(mod_mag, specs = "fire_sev")
+tukey_q <- contrast(emmeans_q, method = "tukey", adjust = "fdr")
+tukey_q %>% data.frame() %>% filter(p.value < 0.05) 
+#                                                                      contrast
+
+pdf(here(plotpath, "q_by_fire_regime.pdf"), width = 10, height = 4)
+mod_df %>%
+  mutate(nonzero = Q > 0.01) %>%
+  group_by(fire_frg) %>%
+  summarize(p_nonzero = mean(nonzero)) %>%
+  ggplot(aes(fire_frg, p_nonzero)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Proportion non-zero")
+
+ggplot(mod_df %>% filter(Q > 0.01),
+       aes(fire_frg, Q)) +
+  geom_violin(trim = TRUE) +
+  geom_jitter(aes(col = evt)) +
+  geom_boxplot(width = 0.15, outlier.shape = NA) +
+  scale_y_log10() +
+  labs(y = "Value (non-zero only)") +
+  theme(axis.text.x = element_text(angle = 10, hjust = 1))
+
+ggplot(mod_df, aes(fire_frg, Q)) +
+  geom_jitter(width = 0.2, height = 0,
+              alpha = 0.3, size = 1, aes(col = evt)) +
+  stat_summary(fun = median,
+               geom = "point",
+               size = 3,
+               color = "red") +
+  labs(y = "Value")
+
 dev.off()
-
-# Coordinates matrix
-coords <- cbind(mod_sf_unique$x, mod_sf_unique$y)
-
-# 8 nearest neighbors (robust for irregular sampling)
-knn_8 <- knearneigh(coords, k = 8)
-nb_8  <- knn2nb(knn_8)
-lw_8  <- nb2listw(nb_8, style = "W")
-
-# Moran's I for OLS residuals
-moran_ols <- moran.test(residuals(q_mod_ols), lw_8)
-moran_ols
-
-# Fit GLS
-q_mod_gls <- gls(q_f, correlation = corSpher(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "REML")
-broom::tidy(q_mod_gls) %>% select(term, estimate, p.value)
-
-# Moran's I for GLS normalized residuals
-moran_gls <- moran.test(residuals(q_mod_gls), lw_8)
-
-print(moran_ols)
-print(moran_gls)
 ```
 
 # Figures
