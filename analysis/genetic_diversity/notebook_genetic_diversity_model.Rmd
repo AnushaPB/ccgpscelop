@@ -185,6 +185,7 @@ glacier_coords <- coords %>% st_transform(st_crs(lgm_glaciers))
 glacier_mod_df <- 
   coords %>%
   mutate(glacier = as.numeric(lengths(st_within(glacier_coords, lgm_glaciers)) > 0)) %>%
+  mutate(glacier = factor(glacier, levels = c(0, 1), labels = c("OutsideGlacier", "InsideGlacier"))) %>%
   st_drop_geometry()
 ```
 
@@ -281,15 +282,16 @@ ca_proj_buffer <-  ca_proj %>% st_transform(5070) %>% st_buffer(dist = 10000) # 
 
 evt_og <- rast("analysis/wildfire/LF2016_EVT_200_CONUS/Tif/LC16_EVT_200.tif") 
 evt <- crop(evt_og, ca_proj_buffer)
+# EVT PHYS is EVT physiogomy 
+# It is a good balance between detail and generalization that still captures relevant vegetation types for sceloporus habitat
 activeCat(evt) <- "EVT_PHYS"
+names(evt) <- "evt"
 
 # Extract EVT values in a 100 m buffer around each point
 coords_buffer <- coords_proj %>% st_buffer(dist = 100)
 
 # Get counts of each EVT class per ID
-evt_vals <- 
-  terra::extract(evt, coords_buffer, na.rm = FALSE, ID = TRUE) %>%
-  rename(evt = EVT_PHYS)
+evt_vals <- terra::extract(evt, coords_buffer, na.rm = FALSE, ID = TRUE)
 
 evt_counts <-
   evt_vals  %>% 
@@ -298,7 +300,7 @@ evt_counts <-
   count(ID, evt, name = "n")     # counts per ID x class
 
 # This keeps all top classes per ID (i.e., ties are retained)
-evt_mod_df <-
+evt_mod_df_with_ties <-
   evt_counts %>%
   group_by(ID) %>%
   slice_max(order_by = n, n = 1, with_ties = TRUE) %>%
@@ -306,7 +308,7 @@ evt_mod_df <-
 
 # IDs that have ties for the top class
 ties <-
-  evt_mod_df %>%
+  evt_mod_df_with_ties %>%
   add_count(ID, name = "n_top") %>%  # how many "winners" for that ID
   filter(n_top > 1) %>%
   arrange(ID, desc(n), evt)
@@ -316,36 +318,48 @@ tie_ids <- unique(ties$ID)
 tie_coords <- coords_proj[tie_ids, ]
 tie_evt_vals <- 
   terra::extract(evt, tie_coords, na.rm = FALSE) %>%
-  rename(evt = EVT_PHYS) %>%
   mutate(ID = tie_ids)
 
 # Replace tied classes with the value from the original coordinates
 evt_mod_df <-
-  evt_mod_df %>%
+  evt_mod_df_with_ties %>%
   filter(!(ID %in% tie_ids)) %>%  # remove tied IDs
   bind_rows(tie_evt_vals %>% select(ID, evt)) %>%  # add back in tied IDs with original coord values
   arrange(ID) %>%
   mutate(SampleID = coords_proj$SampleID) %>%
   select(-ID) 
 
-unique(evt_mod_df$evt)
+# Get counts in each category
+evt_mod_df %>% 
+  count(evt) %>%
+  arrange(desc(n))
+#    evt                            n
+#    <fct>                      <int>
+#  1 Shrubland                     83
+#  2 Developed                     41
+#  3 Conifer                       38
+#  4 Exotic Herbaceous             26
+#  5 Hardwood                      16
+#  6 Riparian                      14
+#  7 Sparsely Vegetated             9
+#  8 Developed-Medium Intensity     7
+#  9 Agricultural                   7
+# 10 Exotic Tree-Shrub              6
+# 11 Developed-Low Intensity        5
+# 12 Grassland                      3
+# 13 Developed-Roads                2
+# Based on these counts, I think it is safe to collapse all developed classes into one "Developed" category
 
 # Replace any evt classes that are developed with just "Developed"
-# Group similar vegetation types (to match groupveg categories)
+# Doing this collapsing after the counting to avoid losing information about the other vegetation types present in the buffer
 evt_mod_df <-
   evt_mod_df %>%
   mutate(evt = as.character(evt)) %>%
   mutate(evt = ifelse(grepl("Developed", evt), "Developed", evt)) %>%
-  # Replace exotic with corresponding native vegetation type
-  mutate(evt = case_when(
-    evt == "Exotic Herbaceous" ~ "Grassland",
-    evt == "Exotic Tree-Shrub" ~ "Shrubland",
-    TRUE ~ evt
-  )) %>%
   select(-n)
 
 # Print unique cats
-unique(evt_mod_df$evt)
+evt_mod_df %>% count(evt)
 
 # Check NAs
 evt_mod_df %>%
@@ -583,12 +597,9 @@ recent_fire_vals <-
     burned = any(frq > 0, na.rm = TRUE),
     frq_max = max(frq, na.rm = TRUE)
   ) %>%
-  #mutate(frq_median = scale(frq_median)[,1]) %>%
-  mutate(frq_bin = case_when(
-    frq_max == 0 ~ "Unburned",
-    frq_max > 0 & frq_max <= 1 ~ "1 Fire",
-    frq_max > 1 ~ "2+ Fires",
-  )) %>%
+  # Use median to calculate whether there was any recent fire (frq_median > 0)
+  # Don't use frq_max for bining because that would code any point that had a single pixel burned as "recent fire" and that is too sensitive (I have tested both ways and bin(frq_max) is not significant)
+  mutate(frq_bin = factor(ifelse(frq_median > 0, 1, 0), levels = c(0,1), labels = c("Unburned", "Burned"))) %>%
   mutate(lffi2 = ifelse(is.na(lffi), 36, lffi)) 
   
 # Combine into a single dataframe
@@ -601,8 +612,6 @@ fire_mod_df <-
   select(-ID) %>%
   # Add SampleIDs
   mutate(SampleID = coords_proj$SampleID) %>%
-  # Add contemporary vegetation group (buffered)
-  left_join(evt_mod_df, by = "SampleID") %>%
   # Add frg
   left_join(frg_df, by = "SampleID")  %>%
   # Create simple frequency column 
@@ -616,9 +625,9 @@ fire_mod_df <-
   # Create factors 
   mutate(
     fire_frg = factor(frg, levels = rev(c("High Frequency + High Severity", "High Frequency + Low/Moderate Severity", "Intermediate Frequency + High Severity", "Intermediate Frequency + Low/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime"))),
-    fire_frq = factor(fire_frq, levels = c("High Frequency", "Intermediate Frequency", "Infrequent/No Fire Regime")),
+    fire_frq = factor(fire_frq, levels = rev(c("High Frequency", "Intermediate Frequency", "Infrequent/No Fire Regime"))),
     groupveg = as.character(groupveg),
-    fire_recent = frq_median
+    fire_recent = frq_bin
   ) 
 ```
 
@@ -731,7 +740,7 @@ r[lower.tri(r, diag = TRUE)] <- NA
 r
 
 # Find the pairs with correlations greater than 0.7
-high_corr <- which(abs(r) > 0.7, arr.ind = TRUE)
+high_corr <- which(abs(r) > 0.6, arr.ind = TRUE)
 # Print the pairs
 high_corr_pairs <- data.frame(
   Var1 = rownames(r)[high_corr[, 1]],
@@ -740,8 +749,9 @@ high_corr_pairs <- data.frame(
 ) %>%
 arrange(desc(abs(Correlation)))
 
-# gHM and vdep have a correlation > 0.6, but not > 0.7
+# gHM and vdep have a correlation > 0.6
 high_corr_pairs
+# Decided to keep both variables since they represent different processes
 ```
 
 ```{r}
@@ -755,7 +765,6 @@ png(here(plotpath, "correlation_plot.png"), width = 10*300, height = 10*300, uni
 corrplot(r, method = "ellipse", type = "upper", tl.col = "black", tl.srt = 45, diag = FALSE, addCoef.col = "black", number.cex = 0.8)
 dev.off()
 ```
-
 
 ```{r}
 # Checking R squared for BPS vegetation group
@@ -782,7 +791,8 @@ evt_rsq  <-
   arrange(desc(rsq))
 
 # Filter for high R2 (>50% variance explained by vegetation group)
-evt_rsq %>% filter(rsq > 0.5) # No variables (gHM + vdep are close to 40%)
+evt_rsq %>% filter(rsq > 0.5) # No variables >50%
+evt_rsq %>% filter(rsq > 0.4) # But vdep is 45% and gHM is 41%, likely due to correlation with the Developed vegetation group
 
 # Check correlation between groupveg and evt
 mean(mod_df$groupveg == mod_df$evt)  # Only 42% match
@@ -799,6 +809,19 @@ fire_frg_cat_rsq  <-
 
 # Filter for high R2
 fire_frg_cat_rsq %>% filter(rsq > 0.5) # None
+
+# Checking R squared for glacier
+glacier_rsq <-  
+  map(numeric_mod_vars, ~{
+    mod <- lm(as.formula(paste0(.x, " ~ glacier")), data = mod_df)
+    rsq <- summary(mod)$adj.r.squared
+    data.frame(variable = .x, rsq = rsq)
+  }) %>%
+  bind_rows() %>%
+  arrange(desc(rsq))
+
+# Filter for high R2 (>50% variance explained by glacier)
+glacier_rsq %>% filter(rsq > 0.5) # None
 ```
 
 ```{r}
@@ -825,27 +848,7 @@ veg_corr <- pmap(veg_levels, function(Var1, Var2) {
 veg_corr %>% arrange(desc(cor))
 ```
 
-```{r}
-pdf(here(plotpath, "vegetation_plots.pdf"))
-ggplot(mod_df, aes(x = groupveg, y = fire_frequency)) +
-  geom_boxplot() +
-  theme_minimal() 
-ggplot(mod_df, aes(x = groupveg, y = Ho)) + 
-  geom_boxplot() +
-  theme_minimal() 
-ggplot(mod_df, aes(x = fire_frequency, y = Ho)) +
-  geom_point(aes(col = groupveg)) +
-  geom_smooth(method = "lm") +
-  theme_minimal() 
-ggplot(mod_df, aes(x = fire_severity, y = Ho)) +
-  geom_point(aes(col = groupveg)) +
-  geom_smooth(method = "lm") +
-  theme_minimal() 
-dev.off()
-```
-
-# Run Ho models
-
+## Transform and scale data for modeling
 ```{r}
 # Model formula variables
 mod_vars <- c("glacier", "NDVI", "gHM", "bio1", "csi_past", "tmean_dif",  "fire_frg", "fire_frq", "fire_recent", "vdep", "groupveg", "evt", "Q")
@@ -875,28 +878,33 @@ mod_sf_unique_scaled <-
   mod_sf_unique %>%
   mutate(
     across(
-      all_of(setdiff(numeric_mod_vars, "glacier")),
-      ~ as.numeric(scale(.x))   # <- drop matrix
+      all_of(numeric_mod_vars),
+      ~ as.numeric(scale(.x))
     )
   )
 
-# Confirm that all glacier values are 0 and 1
-stopifnot(all(mod_sf_unique_scaled$glacier %in% c(0, 1)))
-
-# Convert glacier to factor
-mod_sf_unique_scaled$glacier_factor <- as.factor(mod_sf_unique$glacier)
-mod_sf_unique$glacier_factor <- as.factor(mod_sf_unique$glacier)
-
-# Set reference levels for groupveg and evt
+# Set reference levels for groupveg, evt, and fire variables
 mod_sf_unique_scaled$groupveg <- relevel(as.factor(mod_sf_unique_scaled$groupveg), ref = "Shrubland")
 mod_sf_unique_scaled$evt <- relevel(as.factor(mod_sf_unique_scaled$evt), ref = "Shrubland")
+mod_sf_unique_scaled$fire_frg <- relevel(as.factor(mod_sf_unique_scaled$fire_frg), ref = "No Fire Regime")
+mod_sf_unique_scaled$fire_frq <- relevel(as.factor(mod_sf_unique_scaled$fire_frq), ref = "Infrequent/No Fire Regime") # Note: setting high frequency as reference because this variable is used to test for an interaction with recent fire (hypothesis: recent fire suppression will negatively effect Ho in high frequency fire regimes, but not in other cases). We do an emmeans post-hoc test to compare all levels, so the choice of reference here is not critical.
 
 # Confirm no NA
 stopifnot(all(colSums(is.na(mod_sf_unique_scaled)) == 0))
+
 ```
 
 ```{r}
-f <- formula("Ho ~ NDVI + glacier + gHM + bio1 + csi_past + tmean_dif + evt + fire_frg + fire_recent")
+# After visual inspection of the data I observed a non-linear relationship between csi_past and Ho
+# So I am testing a quadratic term for csi_past
+model_linear <- lm(Ho ~ NDVI + glacier + gHM + bio1 + csi_past + tmean_dif + evt + fire_frg + fire_recent, data = mod_sf_unique)
+model_poly <- lm(Ho ~ NDVI + glacier + gHM + bio1 + poly(csi_past, 2, raw = TRUE) + tmean_dif + evt + fire_frg + fire_recent, data = mod_sf_unique)
+anova(model_linear, model_poly) # The polynomial model is significantly better
+```
+
+## Fit initial OLS and GLS models
+```{r}
+f <- formula("Ho ~ NDVI + glacier + gHM + bio1 + poly(csi_past, 2, raw = TRUE) + tmean_dif + evt + fire_frg + fire_recent")
 
 # Run OLS and get residuals
 ols_model <- lm(f, data = mod_sf_unique)
@@ -945,10 +953,10 @@ plt_list <- list(
 )
 plot_grid(plotlist = plt_list, nrow = 1)
 dev.off()
-# The GLS model residuals look better than the OLS residuals
+# The GLS model residuals look the same as the OLS residuals
 
 # Compare AIC
-AIC(ols_model, gls_model) # GLS has lower AIC
+anova(gls_model, ols_model) # GLS significantly better, but absolute AIC difference is small
 
 # Compare significant variables (p < 0.05) for each model using map
 models <- list(OLS = ols_model, GLS = gls_model)
@@ -976,30 +984,44 @@ moran_ols <- moran.test(mod_sf_unique$ols_resids, lw_8)
 # Moran's I for GLS normalized residuals
 moran_gls <- moran.test(mod_sf_unique$gls_resids, lw_8)
 
-print(moran_ols) # 0.169
-print(moran_gls) # 0.168
+print(moran_ols) # 0.140
+print(moran_gls) # 0.144
 ```
 
 # Fit full model 1
 ```{r}
-f <- formula("Ho ~ NDVI + glacier + gHM + bio1 + csi_past + tmean_dif + evt + fire_frg + fire_recent")
+f_0 <- formula("Ho ~ NDVI + glacier + gHM + bio1 + poly(csi_past, 2, raw = TRUE) + tmean_dif + evt + fire_frg + fire_recent + vdep")
 
 # Fit model
-gls_final <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-
-# Double check OLS
-ols_final <- lm(f, data = mod_sf_unique_scaled)
-
-# Compare OLS vs GLS
-AIC(ols_final, gls_final) # GLS lower AIC
-full_model1 <- gls_final
+gls_model0 <- gls(f_0, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
 
 # Calculate VIF
-performance::check_collinearity(full_model1) # From performance package
-#  evt 7.62 [6.20, 9.42]     2.76      0.13     [0.11, 0.16]
+performance::check_collinearity(gls_model0) 
+# High Correlation
+#  Term   VIF     VIF 95% CI adj. VIF Tolerance Tolerance 95% CI
+#   evt 16.07 [12.99, 19.94]     4.01      0.06     [0.05, 0.08]
+# Because of high VIF for evt, and knowing that 45% of the variation VDep and 40% of the variation of NDVI is explained by evt (and gHM is also correlated with VDep), we are going to run the model with EVT, but without VDep or NDVI. I am making this choice because EVT is an important measure of habitat structure and gHM is a more direct measure of human impact compared to VDep which describes many different kinds of change on the same scale and NDVI which is not directly interpretable in terms of habitat structure.
+# I have tried just removing VDep or NDVI (individually), but the VIFs are still high .
+f_1 <- formula("Ho ~ glacier + gHM + bio1 + poly(csi_past, 2, raw = TRUE) + tmean_dif + evt + fire_frg + fire_recent")
+
+# Re-fit GLS
+gls_model1 <- gls(f_1, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
+
+# Re-calculate VIF
+performance::check_collinearity(gls_model1) 
+# No high correlation issues
+
+# Double check OLS
+ols_model1 <- lm(f_1, data = mod_sf_unique_scaled)
+
+# Compare OLS vs GLS
+anova(gls_model1, ols_model1) # GLS significantly better, but absolute AIC difference is small
+
+# Refit final model with REML
+gls_model1_final <- gls(f_1, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "REML")
 
 # Results
-mod_result <- broom::tidy(full_model1)
+mod_result <- broom::tidy(gls_model1_final)
 mod_result
 
 # Significant variables
@@ -1008,107 +1030,110 @@ sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "l
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(full_model1), mod_sf_unique$Ho)^2 # 0.45
-cor(predict(full_model1), mod_sf_unique$Ho) # 0.67
+cor(predict(gls_model1_final), mod_sf_unique$Ho)^2 # 0.52
+cor(predict(gls_model1_final), mod_sf_unique$Ho) # 0.72
 ```
 
 ```{r}
 # Mode = "df.error" for GLS models
 
 # Test for differences between vegetation groups
-emmeans_gls <- emmeans(full_model1, specs = "evt", mode = "df.error")
+emmeans_gls <- emmeans(gls_model1_final, specs = "evt", mode = "df.error")
 tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
 tukey_gls %>% data.frame() %>% filter(p.value < 0.05)
 # 0 rows
 
 # Test for differences between fire regime groups
-emmeans_gls <- emmeans(full_model1, specs = "fire_frg", mode = "df.error")
+emmeans_gls <- emmeans(gls_model1_final, specs = "fire_frg", mode = "df.error")
 tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
-tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
-#                                                                      contrast
-# 1                   No Fire Regime - (Intermediate Frequency + High Severity)
-# 2                   No Fire Regime - (High Frequency + Low/Moderate Severity)
-# 3 (Intermediate Frequency + High Severity) - (High Frequency + High Severity)
-#        estimate           SE  df   t.ratio      p.value
-# 1 -0.0003613110 8.450006e-05 233 -4.275867 0.0004167679
-# 2 -0.0002642442 8.563145e-05 233 -3.085831 0.0170652352
-# 3  0.0002247490 8.353848e-05 233  2.690365 0.0382703584
-
+tukey_gls %>% data.frame() %>% filter(p.value < 0.05)
+#                                                                              contrast
+# 1                   No Fire Regime - (Intermediate Frequency + Low/Moderate Severity)
+# 2                           No Fire Regime - (Intermediate Frequency + High Severity)
+# 3                           No Fire Regime - (High Frequency + Low/Moderate Severity)
+# 4 (Intermediate Frequency + High Severity) - (High Frequency + Low/Moderate Severity)
+# 5         (Intermediate Frequency + High Severity) - (High Frequency + High Severity)
+#        estimate           SE  df   t.ratio     p.value
+# 1 -0.0002871168 1.083897e-04 231 -2.648931 0.032369211
+# 2 -0.0003732519 8.288612e-05 231 -4.503190 0.000159363
+# 3 -0.0002544819 8.419149e-05 231 -3.022656 0.013941343
+# 4  0.0001187700 3.924938e-05 231  3.026035 0.013941343
+# 5  0.0002005696 7.881223e-05 231  2.544905 0.034748506
 ```
 
 # Fit full model 2: interaction between fire frequency and recent fire
 
 ```{r}
-f <- formula("Ho ~ NDVI + bio1 + csi_past + tmean_dif + glacier + gHM +  fire_frq * fire_recent + evt")
+f_2 <- formula("Ho ~ glacier + gHM + bio1 + poly(csi_past, 2, raw = TRUE) + tmean_dif + evt + fire_frq * fire_recent") 
 
 # Fit model
-gls_final <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
+gls_model2 <- gls(f_2, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
 
 # Double check OLS
-ols_final <- lm(f, data = mod_sf_unique_scaled)
+ols_model2 <- lm(f_2, data = mod_sf_unique_scaled)
 
 # Compare OLS vs GLS
-AIC(ols_final, gls_final) # GLS lower AIC
-full_model2 <- gls_final
+anova(gls_model2, ols_model2) # GLS significantly better, but absolute AIC difference is small
+
+# Compare GLS models
+anova(gls_model1, gls_model2) # No significant difference between models
 
 # Calculate VIF
-performance::check_collinearity(full_model2) # From performance package
-# Moderate Correlation
+performance::check_collinearity(gls_model2) # From performance package
+# No high correlation issues (other than interaction term, which just depends on the reference level set)
 
-#                  Term  VIF   VIF 95% CI adj. VIF Tolerance Tolerance 95% CI
-#                   evt 7.09 [5.77, 8.76]     2.66      0.14     [0.11, 0.17]
-#  fire_frq:fire_recent 5.79 [4.73, 7.14]     2.41      0.17     [0.14, 0.21]
+# Refit model with REML
+gls_model2_final <- gls(f_2, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "REML")
 
 # Results
-mod_result <- broom::tidy(full_model2)
+mod_result <- broom::tidy(gls_model2)
 mod_result
 
 # Significant variables
-mod_result %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) 
+mod_result %>% filter(p.value < 0.05) %>% arrange((p.value))
 sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "lambda")) %>% pull(term)
 print(sig_vars)
 
 # You can't get a traditional R2 for spatial models, but you can get an alternative R2
-cor(predict(full_model2), mod_sf_unique$Ho)^2 # 0.45
-cor(predict(full_model2), mod_sf_unique$Ho) # 0.67
-
-# Compare full_model1 and full_model2
-AIC(full_model1, full_model2) # Comparable AIC, full_model2 slightly lower
-anova(full_model1, full_model2) # No significant difference between models
+cor(predict(gls_model2), mod_sf_unique$Ho)^2 # 0.0.52
+cor(predict(gls_model2), mod_sf_unique$Ho) # 0.72
 ```
 
 ```{r}
+# !Most important test: test for differences between recent fire vs no recent fire within each fire frequency group
+emm <- emmeans(gls_model2, ~ fire_recent | fire_frq, mode = "df.error")
+contrast(emm, method = "pairwise") # No adjustment because there are only two levels for fire
+# fire_frq = Infrequent/No Fire Regime:
+#  contrast           estimate       SE  df t.ratio p.value
+#  Unburned - Burned  2.15e-04 0.000168 234   1.285  0.2001
+
+# fire_frq = Intermediate Frequency:
+#  contrast           estimate       SE  df t.ratio p.value
+#  Unburned - Burned  5.34e-05 0.000049 234   1.089  0.2771
+
+# fire_frq = High Frequency:
+#  contrast           estimate       SE  df t.ratio p.value
+#  Unburned - Burned -1.15e-04 0.000051 234  -2.251  0.0253
+
 # Test for differences between vegetation groups
-emmeans_gls <- emmeans(full_model2, specs = "evt", mode = "df.error")
+emmeans_gls <- emmeans(gls_model2, specs = "evt", mode = "df.error")
 tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
 tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
-# 0 rows
+# 0 rows 
 
 # Test for differences between fire regime groups
-emmeans_gls <- emmeans(full_model2, specs = "fire_frq", mode = "df.error")
+emmeans_gls <- emmeans(gls_model2, specs = "fire_frq", mode = "df.error")
 tukey_gls <- contrast(emmeans_gls, method = "tukey", adjust = "fdr")
 tukey_gls %>% data.frame() %>% filter(p.value < 0.05) 
 # NOTE: Results may be misleading due to interactions (because you average over levels of fire_recent)
 #                                               contrast      estimate
-# 1              High Frequency - Intermediate Frequency -9.432813e-05
-# 2         High Frequency - (Infrequent/No Fire Regime)  2.612126e-04
-# 3 Intermediate Frequency - (Infrequent/No Fire Regime)  3.555407e-04
-#             SE  df   t.ratio      p.value
-# 1 3.893687e-05 234 -2.422591 1.617076e-02
-# 2 8.239477e-05 234  3.170257 2.589725e-03
-# 3 8.106787e-05 234  4.385717 5.244712e-05
-
-# !Important: test for trend in fire_recent within each fire_frq group
-tr <- emtrends(full_model2, ~ fire_frq, var = "fire_recent", mode = "df.error")
-summary(tr, infer = TRUE)
-#  fire_frq                  fire_recent.trend       SE  df  lower.CL upper.CL
-#  High Frequency                     5.65e-05 2.63e-05 234  4.63e-06 0.000108
-#  Intermediate Frequency            -2.15e-06 2.19e-05 234 -4.53e-05 0.000041
-#  Infrequent/No Fire Regime         -1.94e-04 1.23e-04 234 -4.36e-04 0.000048
-#  t.ratio p.value
-#    2.146  0.0329
-#   -0.098  0.9221
-#   -1.580  0.1155
+# 1 (Infrequent/No Fire Regime) - Intermediate Frequency -3.320759e-04
+# 2         (Infrequent/No Fire Regime) - High Frequency -2.492403e-04
+# 3              Intermediate Frequency - High Frequency  8.283566e-05
+#             SE  df   t.ratio     p.value
+# 1 9.287118e-05 234 -3.575662 0.001273024
+# 2 9.470142e-05 234 -2.631853 0.013585296
+# 3 3.871773e-05 234  2.139476 0.033432306
 ```
 
 # Figures
@@ -1129,39 +1154,176 @@ scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale
   }
 }
 
+df = mod_sf_unique
+model = gls_model2
+x = "fire_recent"
+y = "Ho"
+residual = TRUE
+color_var = "y"
 # Make residual plots for model
-plot_mod <- function(x, y, df, model, 
-                     mod_vars = c("NDVI","gHM","bio1","csi_past","glacier","tmean_dif", "fire_severity", "vdep", "evt"),
-                     color_var = "x", residual = TRUE) {
+plot_mod <- function(x, y, df, model, mod_vars,
+                     col_var = "Ho_original", residual = TRUE) {
 
   # Calculate residuals for y variable given x variable
-  if (residual) df[[y]] <- residuals(model) + coef(model)[[x]] * as.numeric(scale(df[[x]]))
+  # Keep a copy of original Ho
+  df$Ho_original <- df$Ho
+  if (residual) {
+    # Scale all model variables in df that are numeric
+    numeric_mod_vars <- names(df)[sapply(df, is.numeric)]
+    df_scaled <- 
+      df %>%
+      mutate(across(all_of(numeric_mod_vars),~ as.numeric(scale(.x))))
 
-  # Choose whether to color by x or y variable
-  col_var <- if (color_var == "x") x else y
+    # Residuals
+    r <- residuals(model)
+
+    # Model matrix + coefficients, aligned
+    X <- model.matrix(terms(model), data = df_scaled)
+    b <- coef(model)
+
+    # Align in case ordering differs
+    b <- b[colnames(X)]
+
+    # Calculate residuals
+    cols <- grepl(x, colnames(X))
+    if (all(!cols)) {
+      stop(paste("Variable", x, "not found in model"))
+    }
+    sub_X <- X[, cols, drop = FALSE] 
+    sub_b <- b[cols]
+    stopifnot(all(colnames(sub_X) == names(sub_b)))
+    df[[y]] <- r + drop(sub_X %*% sub_b)
+  }
 
   # Extract beta and p-value for x variable
   model_summary <- broom::tidy(model)
-  # Convert to scientific notation for plotting
-  beta <- formatC(model_summary$estimate[model_summary$term == x], format = "e", digits = 2)
-  pval <- model_summary$p.value[model_summary$term == x]
-  pval <- ifelse(pval < 0.001, "< 0.001", paste0("= ", round(pval, 3)))
+  b_annotation <- 
+    model_summary %>%
+    dplyr::filter(grepl(x, term)) %>%
+    dplyr::mutate(
+      beta = formatC(estimate, format = "e", digits = 2),
+      p_lab = ifelse(p.value < 0.001, paste0("p[", row_number(), "] < 0.001"), paste0("p[", row_number(), "] == ", round(p.value, 3))),
+      line = paste0("beta[", row_number(), "] == ", beta, "*','~", p_lab)
+    )
 
-  plt <-
-    ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
-    geom_point(aes(col = .data[[col_var]]), size = 2) +
-    geom_smooth(method = "lm", colour = "black") +
-    scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) +
-    annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
-             label = paste0("β = ", beta, "\n", "p ", pval), size = 6) +
-    xlab(stringr::str_to_sentence(make_pretty_names(x))) +
+  if (x == "csi_past") {
+    
+    label_txt <- paste0("atop(", paste(b_annotation$line, collapse = ","), ")")
+    
+    plt <-
+      ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+      geom_point(aes(col = .data[[col_var]]), size = 2, show.legend = FALSE) +
+      geom_smooth(method = "lm", colour = "black", formula = y ~ poly(x, 2)) +
+      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1) 
+
+  } else if (x == "fire_frq") {
+    
+    emm  <- emmeans(model, specs = x, mode = "df.error")
+    pairs_df <- 
+      pairs(emm, adjust = "fdr") %>% summary(infer = TRUE) %>% as.data.frame() %>%
+      separate(contrast, c("group1","group2"), " - ") %>%
+      # Remove just the parentheses symbols from group1 and 2
+      mutate_at(vars(group1, group2), ~str_replace_all(.x, "[()]", "")) %>%
+      mutate(annotations = cut(p.value, c(-Inf,.001,.01,.05,Inf), c("***","**","*","ns"))) %>%
+      mutate(xmin = group1, xmax = group2) 
+      
+    df$new_x <- factor(df[[x]], levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
+    pairs_df$xmin <- factor(pairs_df$xmin, levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
+    pairs_df$xmax <- factor(pairs_df$xmax, levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
+    
+    pairs_df$y_position <- max(df[[y]], na.rm=TRUE) * (0.8 + 0.08*seq_len(nrow(pairs_df)))
+
+    plt <- 
+      ggplot(df, aes(new_x, .data[[y]])) +
+      geom_boxplot() +
+      geom_jitter(aes(col = .data[[col_var]]), size = 2, width = 0.2, show.legend = FALSE) +
+      ggpubr::stat_pvalue_manual(pairs_df,
+        label = "annotations",
+        xmin = "xmin", xmax = "xmax",
+        y.position = "y_position",
+        size = 8,
+        tip.length = 0,
+        vjust = 0.6
+      )
+  } else if (x == "fire_recent") {
+
+    dodge_w <- 0.8
+    frq_lvls <- levels(df$fire_frq)
+    rec_lvls <- levels(df$fire_recent)
+    nrec <- length(rec_lvls)
+    off <- setNames(((seq_len(nrec) - (nrec + 1)/2) * (dodge_w / nrec)), rec_lvls)  # for 2 lvls: -0.2, +0.2
+
+    emm <- emmeans(model, ~ fire_recent | fire_frq, mode = "df.error")
+    ymax_df <- df %>% dplyr::group_by(fire_frq) %>% dplyr::summarise(ymax = max(.data[[y]], na.rm=TRUE), .groups="drop")
+
+    pairs_df <- contrast(emm, "pairwise") %>% as.data.frame() %>%
+      separate(contrast, c("group1","group2"), " - ") %>%
+      mutate(
+        across(c(group1, group2), ~ stringr::str_replace_all(.x, "[()]", "")),
+        annotations = cut(p.value, c(-Inf,.001,.01,.05,Inf), c("***","**","*","ns")),
+        xbase = as.numeric(factor(fire_frq, levels = frq_lvls)),
+        xmin  = xbase + off[group1],
+        xmax  = xbase + off[group2]
+      ) %>%
+      filter(annotations != "ns") %>%
+      left_join(ymax_df, by="fire_frq") %>%
+      group_by(fire_frq) %>% 
+      mutate(y_position = ymax * (1.01 + 0.08*(row_number()-1))) %>% 
+      ungroup()
+
+    df$new_fire_frq <- factor(df$fire_frq, levels = levels(df$fire_frq), labels = c("No Fire/Low", "Intermediate", "High"))
+    pairs_df$fire_frq <- factor(pairs_df$fire_frq, levels = levels(df$fire_frq), labels = c("No Fire/Low", "Intermediate", "High"))
+
+    plt <-
+      ggplot(df, aes(x = new_fire_frq, y = .data[[y]])) +
+      geom_boxplot(aes(fill = fire_recent), position = position_dodge(dodge_w), outlier.shape = NA) +
+      geom_point(
+        aes(color = .data[[col_var]], group = fire_recent),
+        position = position_jitterdodge(jitter.width = 0.15, dodge.width = dodge_w),
+        size = 2, show.legend = FALSE
+      ) +
+      ggpubr::stat_pvalue_manual(pairs_df,
+        label = "annotations", xmin = "xmin", xmax = "xmax",  y.position = "y_position",
+        size = 10, tip.length = 0, vjust = 0.6
+      ) +
+      guides(col = "none") +
+      scale_fill_manual(values = c("Burned" = "gray", "Unburned" = "white")) +
+      labs(fill = "Recent fire") 
+    
+  } else {
+
+    label_txt <- paste(b_annotation$line, collapse = ",")
+
+    plt <-
+      ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
+      geom_point(aes(col = .data[[col_var]]), size = 2, show.legend = FALSE) +
+      geom_smooth(method = "lm", colour = "black", formula = y ~ x) +
+      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1) 
+  }
+  
+  x_label <- ifelse(x == "fire_recent", "fire_frq", x) # For recent fire, X is fire regime
+  plt <- 
+    plt + 
+    xlab(stringr::str_to_sentence(make_pretty_names(x_label))) +
     theme_classic() +
-    theme(legend.position = "none",
-          axis.title = element_text(size = 16),
-          axis.text  = element_text(size = 14))
+    theme(axis.title = element_text(size = 16), axis.text  = element_text(size = 14)) +
+    scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) 
+
+  # Add back legend to fire recent
+  if (x == "fire_recent") {
+    plt <- 
+      plt +
+      theme(
+        legend.position = "inside",
+        legend.title = element_text(size = 16),
+        legend.text = element_text(size = 14),
+        legend.justification = c(1, 1),
+        legend.position.inside = c(0.4, 0.95),
+      )
+  }
 
   if (residual) {
-    plt + labs(y = "Partial heterozygosity")
+    plt + labs(y = "Partial residual heterozygosity")
   } else {
     plt + labs(y = "Observed heterozygosity")
   }
@@ -1181,8 +1343,8 @@ wingen_r <-
 names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 
 # Isolate significant vs all variables
-sig_vars <- c("csi_past", "tmean_dif", "bio1", "fire_severity")
-mod_vars <- c("csi_past", "tmean_dif", "bio1", "glacier",  "gHM", "fire_severity", "fire_severity_recent", "vdep", "evt")
+vars_to_plot <- c("csi_past", "tmean_dif", "fire_frq", "fire_recent")
+mod_vars <- c("csi_past", "tmean_dif", "bio1", "glacier", "gHM", "fire_frq", "fire_recent", "evt")
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
@@ -1197,29 +1359,30 @@ ho_plot <- ggplot(wingen_r) +
     legend.position = "inside",              # turn on "inside" mode
     legend.justification = c(1, 1),          # anchor legend's top-right corner
     legend.position.inside = c(0.9, 0.95),   # place near panel's top-right
-    legend.key.height = unit(0.9, "cm"),
-    legend.key.width  = unit(0.9, "cm"),
+    legend.key.height = unit(0.8, "cm"),
+    legend.key.width  = unit(0.8, "cm"),
     legend.title = element_text(size = 16),
     legend.text  = element_text(size = 14)
   )
 
 # B: partial residuals 
 plts_residual_y <- purrr::map(
-  sig_vars, 
+  vars_to_plot,
   # Use unscaled data for plotting
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, color_var = "y", residual = TRUE)
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = gls_model2_final, col_var = "Ho_original", residual = TRUE)
 )
+
 # B: Raw values
 plts_raw_y <- purrr::map(
-  sig_vars, 
+  vars_to_plot,
   # Use unscaled data for plotting
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, color_var = "y", residual = FALSE)
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = gls_model2_final, col_var = "Ho_original", residual = FALSE)
 )
 
 # C: predicted vs observed 
 pred_vs_obs <-
   # Use unscaled data for plotting
-  ggplot(mod_sf_unique, aes(x = predict(final_model), y = Ho)) +
+  ggplot(mod_sf_unique, aes(x = predict(gls_model2), y = Ho)) +
   geom_point(aes(col = Ho), shape = 16, size = 2) +
   geom_smooth(method = "lm", colour = "black") +
   scale_met_cont(c(mod_sf_unique$Ho, wingen_r$layer), aesthetic = "colour", extend_scale = 0.1) +
@@ -1237,7 +1400,7 @@ plt2_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 2)
 plt1 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
                            labels = c("A", "C"), rel_heights = c(0.6, 0.45), label_size = 18)
 
-png(here(plotpath, "figure_Ho_residual.png"), height = 10.5, width = 16, res = 300, units = "in")
+png(here(plotpath, "figure_Ho_residual.png"), height = 10*0.9, width = 16*0.9, res = 300, units = "in")
 cowplot::plot_grid(plt1, plt2_residual, ncol = 2, labels = c("", "B"),  rel_widths = c(0.33, 0.66), align = "h", label_size = 18)
 dev.off()
 
@@ -1246,6 +1409,198 @@ cowplot::plot_grid(plt1, plt2_raw, ncol = 2,labels = c("", "B"),  rel_widths = c
 dev.off()
 ```
 
+```{r}
+# Bin csi_past and count admixed individuals in each bin
+1- range(bin_df$Q) # Reminder that Q is ancestry score (so actually 1 - max(original Q))
+bin_df <- 
+  mod_df %>%
+  # Admixed = greater than 10% other population ancestry
+  mutate(admix = as.numeric(Q > 0.10)) %>%
+  mutate(csi_past_bin = cut(csi_past, breaks = 5, include.lowest = TRUE))
+  
+prop_df <- 
+  bin_df %>%
+  count(csi_past_bin, admix, name = "n") %>%
+  group_by(csi_past_bin) %>%
+  mutate(prop = n / sum(n),
+         admix = factor(admix, levels = c(0,1), labels = c("Non-admixed", "Admixed"))) %>%
+  ungroup()
+
+bin_df$admix <- factor(bin_df$admix, levels = c(0,1), labels = c("Non-admixed", "Admixed"))
+
+
+# get midpoints for labels
+bin_levels <- levels(bin_df$csi_past_bin)
+bin_mids <- sapply(bin_levels, function(s) {
+  nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
+  mean(nums)
+})
+bin_lab <- sprintf("%.2f", bin_mids)  # change decimals here
+
+# Get high and low of each label
+bin_max <- sapply(bin_levels, function(s) {
+  nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
+  max(nums)
+})
+
+total_count <- 
+  prop_df %>%
+  group_by(csi_past_bin) %>%
+  summarise(total = sum(n)) 
+
+bin_csi_plt <-
+  ggplot(bin_df, aes(x = csi_past, y = Ho)) +
+  geom_point(aes(col = admix)) +
+  geom_smooth(method = "lm", colour = "black", formula = y ~ poly(x, 2)) +
+  geom_vline(xintercept = bin_max, linetype = "dashed", colour = "gray50") +
+  theme_classic()  +
+  labs(x = "Paleoclimate stability", y = "Heterozygosity", col = "") +
+  scale_x_continuous(labels = bin_lab, breaks = as.numeric(bin_lab), expand = c(0,0)) +
+  scale_color_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
+  theme(
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+  )
+
+csi_plt_count <- 
+  ggplot(prop_df, aes(x = csi_past_bin)) +
+  geom_col(aes(y = prop, fill = admix)) +
+  # Add text with counts to bars
+  geom_text(data = prop_df, aes(label = n, y = ifelse(admix == "Admixed", prop + 0.1, 0.9), col = admix), size = 7, fontface = 2) +
+  scale_fill_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
+  scale_color_manual(values = c("Non-admixed" = "pink1", "Admixed" = "lightskyblue1")) +
+  scale_x_discrete(labels = bin_lab, expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  labs(x = "Binned paleoclimate stability", y = "Proportion", fill = "") +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16)
+  )
+
+# REPEAT FOR FIRE
+bin_df$fire_frq <- factor(bin_df$fire_frq, levels = levels(bin_df$fire_frq), labels = c("No Fire/Low", "Intermediate",  "High"))
+
+fire_prop_df <- 
+  bin_df %>%
+  count(fire_frq, admix, name = "n") %>%
+  group_by(fire_frq) %>%
+  mutate(prop = n / sum(n),
+         admix = factor(admix, levels = c(0,1), labels = c("Non-admixed", "Admixed"))) %>%
+  ungroup()
+
+bin_df$admix <- factor(bin_df$admix, levels = c(0,1), labels = c("Non-admixed", "Admixed"))
+
+total_count <- 
+  fire_prop_df %>%
+  group_by(fire_frq) %>%
+  summarise(total = sum(n)) 
+
+fire_plt <-
+  ggplot(bin_df, aes(x = fire_frq, y = Ho)) +
+  geom_boxplot(aes(col = admix)) +
+  geom_jitter(aes(col = admix), size = 2, position = position_jitterdodge(), alpha = 0.5) +
+  theme_classic()  +
+  labs(x = "Historical fire frequency", y = "Heterozygosity", col = "") +
+  scale_color_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
+  theme(
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+  )
+
+
+fire_plt_count <- 
+  ggplot(fire_prop_df, aes(x = fire_frq)) +
+  geom_col(aes(y = prop, fill = admix)) +
+  # Add text with counts to bars
+  geom_text(data = fire_prop_df, aes(label = n, y = ifelse(admix == "Admixed", prop + 0.1, 0.9), col = admix), size = 7, fontface = 2) +
+  theme_classic() +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_fill_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
+  scale_color_manual(values = c("Non-admixed" = "pink1", "Admixed" = "lightskyblue1")) +
+  labs(x = "Fire frequency", y = "Proportion", fill = "", col = "") +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16)
+  )
+
+# Combine
+admix_fire_plt <- plot_grid(fire_plt, fire_plt_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.4))
+admix_csi_plt <- plot_grid(bin_csi_plt, csi_plt_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.4))
+
+png(here(plotpath, "fire_vs_admix.png"), height = 7, width = 12, res = 300, units = "in")
+plot_grid(admix_csi_plt, admix_fire_plt, nrow = 1, labels = c("A", "B"), label_size = 18)
+dev.off()
+
+# Binomial model for admix
+mod <- glm(admix ~ poly(csi_past, 2, raw = TRUE) + fire_frq*fire_recent, data = bin_df, family = "binomial")
+car::Anova(mod, 2)
+
+# Emmeans comparisons between bins
+# Test for differences between fire regime groups
+emm <- emmeans(mod, specs = "fire_frq", mode = "df.error")
+tk <- contrast(emm, method = "tukey", adjust = "fdr")
+summary(tk, infer = TRUE) %>% filter(p.value < 0.05) # Intermediate - High
+
+# Test for differences in csi_past bins
+emm <- emmeans(mod, specs = "csi_past", mode = "df.error")
+summary(emm, infer = TRUE)
+
+# Test for difference in fire recent within fire frq
+emm <- emmeans(mod, ~ fire_recent | fire_frq, mode = "df.error")
+contrast(emm, method = "pairwise") # Nothing
+
+tab <- xtabs(n ~ csi_past_bin + admix, data = prop_df)
+chisq.test(tab)
+
+set.seed(1)
+
+# observed difference: intermediate vs max of others
+obs <- with(bin_df, {
+  p_int <- mean(admix == "Admixed" & csi_past_bin == "(0.544,0.686]") /
+           mean(csi_past_bin == "(0.544,0.686]")
+  p_oth <- mean(admix == "Admixed" & csi_past_bin != "(0.544,0.686]") /
+           mean(csi_past_bin != "(0.544,0.686]")
+  p_int - p_oth
+})
+
+perm <- replicate(10000, {
+  perm_bin <- sample(bin_df$csi_past_bin)
+  p_int <- mean(bin_df$admix == "Admixed" & perm_bin == "(0.544,0.686]") /
+           mean(perm_bin == "(0.544,0.686]")
+  p_oth <- mean(bin_df$admix == "Admixed" & perm_bin != "(0.544,0.686]") /
+           mean(perm_bin != "(0.544,0.686]")
+  p_int - p_oth
+})
+
+p_value <- mean(perm >= obs)
+p_value
+
+```
+
+
+```{r}
+# Check high outlier
+admix_df <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
+outlier <- 
+  mod_df %>% 
+  filter(fire_recent == "Burned") %>% 
+  filter(Ho == max(Ho)) %>% 
+  select(Q, fire_recent, SampleID) 
+
+q8 <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/58-Sceloporus_pruned_0.6_thinned_10kb_chr.8.Q", col_names = FALSE)
+id <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/58-Sceloporus_pruned_0.6_thinned_10kb_chr.fam", col_names = FALSE)
+admix_df %>% filter(SampleID %in% outlier$SampleID)
+q8[which(id$X2 %in% outlier$SampleID),]
+```
 
 ```{r}
 pop_df <- 
@@ -1297,7 +1652,7 @@ plot_mod_pop <- function(x, y, df, model,
     geom_smooth(method = "lm", colour = "black") +
     scale_color_manual(values = pop_cols) +
     annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
-             label = paste0("β = ", beta, "\n", "p ", pval), size = 6) +
+             label = paste0("β = ", beta, "\n", "p ", pval), size = 5) +
     xlab(stringr::str_to_sentence(make_pretty_names(x))) +
     theme_classic() +
     theme(legend.position = "none",
@@ -1488,6 +1843,460 @@ plts <- map(sig_vars, ~plot_var(.x))
 cowplot::plot_grid(plotlist = plts, nrow = 2)
 dev.off()
 ```
+
+
+
+# Figures for MVZ
+
+```{r}
+library(tidyverse)
+library(here)
+library(ggpubr)
+library(rstatix)
+outpath = here("analysis", "genetic_diversity", "outputs")
+plotpath = here("analysis", "genetic_diversity", "plots")
+mod_df <- read_csv(here(outpath, "model_df.csv"))
+gg_df <- 
+  mod_df %>%
+  mutate(fire_recent = round(fire_recent, 0)) %>%
+  mutate(fire_recent_cat = case_when(
+    fire_recent == 0 ~ "No fire since 1984",
+    fire_recent > 0 ~ "≥1 fire since 1984"
+  )) %>%
+  mutate(fire_frq = case_when(
+    grepl("High Frequency", fire_frg) ~ "High",
+    grepl("Intermediate Frequency", fire_frg) ~ "Intermediate",
+    fire_frg == "Infrequent Fire Regime" ~ "Low/No Fire",
+    fire_frg == "No Fire Regime" ~ "Low/No Fire",
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(fire_frg = gsub("\\+ ", "\\+\n", fire_frg)) %>%
+  mutate(
+    fire_frq = factor(fire_frq, levels = rev(c("High", "Intermediate", "Low/No Fire"))),
+    fire_recent_cat = factor(fire_recent_cat, levels = c("No fire since 1984", "≥1 fire since 1984")),
+    fire_frg = factor(fire_frg, levels = rev(c("High Frequency +\nHigh Severity", "High Frequency +\nLow/Moderate Severity", "Intermediate Frequency +\nHigh Severity", "Intermediate Frequency +\nLow/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime")))
+  )
+
+common_evt <- gg_df %>% count(evt) %>% arrange(desc(n)) %>% filter(n > 10) %>% pull(evt)
+gg_df <- gg_df %>% mutate(evt_simple = ifelse(evt %in% common_evt, evt, "Other"))
+
+mod_sf_unique_scaled$partial_resid_csi <-
+  resid(gls_model1) +
+  coef(gls_model1)["csi_past"] * mod_sf_unique_scaled$csi_past
+
+b <- coef(gls_model1poly)
+mod_sf_unique_scaled$partial_resid_csi_poly <-
+  resid(gls_model1poly) +
+  b["poly(csi_past, 2, raw = TRUE)1"] * mod_sf_unique_scaled$csi_past +
+  b["poly(csi_past, 2, raw = TRUE)2"] * mod_sf_unique_scaled$csi_past^2
+
+# Calc pseudo R2 for poly model
+cor(predict(gls_model1poly), mod_sf_unique$Ho) # 0.72
+
+plt_poly <- 
+  ggplot(mod_df, aes(x = csi_past, y = Ho)) +
+  geom_point(aes(col = csi_past)) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
+  theme_classic() +scale_color_viridis_c(option = "turbo") +
+  labs(x = "Paleoclimate stability", y = "Heterozygosity") +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+
+# Predicted vs observed plot
+pred_obs_plt <-
+  ggplot(mod_sf_unique_scaled, aes(x = predict(gls_model1poly), y = Ho)) +
+  geom_point( size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
+  theme_classic() +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+
+gls_model_simple <- gls(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + fire_frg + fire_recent, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
+cor(predict(gls_model_simple), mod_sf_unique$Ho) # 0.72
+
+lm(Ho ~ x + y, data = mod_sf_unique_scaled) %>% summary() # R2 = 0.35
+lm(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + evt + fire_frg, data =mod_sf_unique_scaled) %>% summary() # R2 = 50
+
+lm(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + evt + fire_frg + x + y, data =mod_sf_unique_scaled) %>% summary() # even including x and y, variables are still significant
+
+map_csi_past <-
+  ggplot(mod_sf_unique) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
+  geom_sf(aes(col = csi_past), size = 2) +
+  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
+  labs(col = "Paleoclimate\nstability") +
+  theme_void() +
+  theme(
+    legend.position = "inside",
+    legend.justification = c(1, 1),
+    legend.position.inside = c(0.9, 0.95),
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 12)
+  )
+
+mod_sf_unique$partial_resid_csi_poly <- mod_sf_unique_scaled$partial_resid_csi_poly
+model_summary <- broom::tidy(gls_model1poly)
+
+b1 <- model_summary %>%
+  dplyr::filter(term == "poly(csi_past, 2, raw = TRUE)1")
+b2 <- model_summary %>%
+  dplyr::filter(term == "poly(csi_past, 2, raw = TRUE)2")
+
+beta1 <- formatC(b1$estimate, format = "e", digits = 2)
+beta2 <- formatC(b2$estimate, format = "e", digits = 2)
+
+p1_lab <- if (b1$p.value < 0.001) {
+  "p[1] < 0.001"
+} else {
+  paste0("p[1] == ", round(b1$p.value, 3))
+}
+
+p2_lab <- if (b2$p.value < 0.001) {
+  "p[2] < 0.001"
+} else {
+  paste0("p[2] == ", round(b2$p.value, 3))
+}
+
+line1 <- paste0("beta[1] == ", beta1, "*','~", p1_lab)
+line2 <- paste0("beta[2] == ", beta2, "*','~", p2_lab)
+
+label_txt <- paste0("atop(", line1, ",", line2, ")")
+
+plt_poly_partial <- 
+  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_poly)) +
+  geom_point(aes(col = csi_past)) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ poly(x, 2, raw = TRUE),
+    col = "black"
+  ) +
+  theme_classic() +
+  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
+  annotate(
+    "text", x = Inf, y = Inf, hjust = 1, vjust = 1,
+    label = label_txt, parse = TRUE, size = 5
+  ) +
+  labs(
+    x = "Paleoclimate stability",
+    y = "Partial residual heterozygosity"
+  ) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    legend.position = "none"
+  )
+
+
+csi_past_plt <- cowplot::plot_grid(plt_poly_partial, map_csi_past, nrow = 1, rel_widths = c(1, 0.8))
+
+q_plt <- ggplot(filter(mod_sf_unique, Q > 0.01), aes(x = csi_past, y = Q)) +
+  geom_point(aes(col = csi_past)) +
+  geom_smooth(method = "lm", col = "black",  formula = y ~ poly(x, 2, raw = TRUE)) +
+  theme_classic() +
+  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
+  labs(x = "Paleoclimate stability", y = "Inbreeding coefficient (Q)") +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+
+range(mod_sf_unique$Q)
+
+mod_sf_unique <- mod_sf_unique %>%
+  mutate(
+    admix = if_else(Q > 0.001, "Admixed", "Non-admixed"),
+    csi_past_bin = cut(csi_past, breaks = 8, include.lowest = TRUE)
+  )
+
+# get midpoints for labels
+bin_levels <- levels(mod_sf_unique$csi_past_bin)
+bin_mids <- sapply(bin_levels, function(s) {
+  nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
+  mean(nums)
+})
+bin_lab <- sprintf("%.2f", bin_mids)  # change decimals here
+
+count_df <- mod_sf_unique %>%
+  count(csi_past_bin, admix, name = "n") %>%
+  group_by(csi_past_bin) %>%
+  mutate(prop = n / sum(n),
+         admix = factor(admix, levels = c("Non-admixed", "Admixed"))) %>%
+  ungroup()
+
+count_df_fire <- mod_sf_unique %>%
+  count(fire_frg, admix, name = "n") %>%
+  group_by(fire_frg) %>%
+  mutate(prop = n / sum(n),
+         admix = factor(admix, levels = c("Non-admixed", "Admixed"))) %>%
+  ungroup()
+
+q_plt_prop <- 
+  ggplot(count_df, aes(x = csi_past_bin, y = prop, fill = admix)) +
+  geom_col() +
+  scale_x_discrete(labels = bin_lab) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  scale_fill_manual(values = c("Non-admixed" = "tomato2", "Admixed" = "skyblue2")) +
+  labs(x = "Binned paleoclimate stability", y = "Proportion of individuals", fill = "") +
+  theme(
+    legend.position = "top",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16)
+  )
+
+total_count <- count_df %>%
+  group_by(csi_past_bin) %>%
+  summarise(total = sum(n)) 
+
+q_plt_count <- 
+  ggplot(count_df, aes(x = csi_past_bin)) +
+  geom_col(aes(y = prop, fill = admix)) +
+  # Add text with counts to bars
+  #geom_text(data = total_count, aes(label = total), y = 0.9, size = 6, color = "white") +
+  scale_x_discrete(labels = bin_lab) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  scale_fill_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
+  labs(x = "Binned paleoclimate stability", y = "Number of individuals", fill = "") +
+  theme(
+    legend.position = "top",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    legend.text = element_text(size = 16)
+  )
+
+pdf(here(plotpath, "mvz.pdf"), width = 5.5, height = 5)
+q_plt_count
+dev.off()
+
+pdf(here(plotpath, "mvz.pdf"), width = 9, height = 4.5)
+q_plt_count
+csi_past_plt
+q_plt
+dev.off()
+
+mod_sf_unique$partial_resid_csi_notpoly <-
+  resid(gls_model1) +
+  coef(gls_model1)["csi_past"] * mod_sf_unique_scaled$csi_past
+
+plt_notpoly_raw <- 
+  ggplot(mod_sf_unique, aes(x = csi_past, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
+  theme_classic() + 
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+plt_poly_raw <- 
+  ggplot(mod_sf_unique, aes(x = csi_past, y = Ho)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
+  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
+  theme_classic() + 
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+
+
+plt_notpoly <- 
+  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_notpoly)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x) +
+  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
+  theme_classic() + 
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+plt_poly <- 
+  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_poly)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
+  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
+  theme_classic() + 
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14)
+  )
+
+
+mod_sf_unique$partial_resid_tmean_dif <-
+  resid(gls_model1poly) +
+  coef(gls_model1poly)["tmean_dif"] * mod_sf_unique_scaled$tmean_dif
+
+# Get coefficient and p-value for annotation
+model_summary <- broom::tidy(gls_model1poly)
+beta <- formatC(model_summary$estimate[model_summary$term == "tmean_dif"], format = "e", digits = 2)
+pval <- model_summary$p.value[model_summary$term == "tmean_dif"] %>% round(2)
+
+tmean_dif_plt <-
+  ggplot(mod_sf_unique, aes(x = tmean_dif, y = partial_resid_tmean_dif)) +
+  geom_point(col = "orange2") +
+  geom_smooth(method = "lm", col = "black") +
+  theme_classic() +
+  labs(x = "Contemporary temperature change", y = "Partial residual heterozygosity") +
+  annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
+           label = paste0("beta == ", beta, "*','~p == ", pval), parse = TRUE, size = 6) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    legend.position = "none"
+  )
+pdf(here(plotpath, "mvz.pdf"), width = 5, height = 5)
+tmean_dif_plt
+dev.off()
+```
+
+```{r}
+# -------------------------------------------------------------------
+# Recreate tuk_df from gls_model1poly (this is what you deleted)
+# -------------------------------------------------------------------
+
+# helper to clean factor labels consistently
+clean_lvl <- function(x) {
+  x %>%
+    as.character() %>%
+    str_replace_all("[\r\n]+", " ") %>%  # remove line breaks
+    str_squish() %>%                    # collapse whitespace
+    str_remove("^\\(") %>%              # drop leading "("
+    str_remove("\\)$")                  # drop trailing ")"
+}
+
+
+# emmeans + Tukey (FDR) on the GLS model
+emm_fire <- emmeans(gls_model1poly, ~ fire_frg, mode = "df.error")
+tuk <- pairs(emm_fire, adjust = "fdr")
+
+# Convert to a "tuk_df" equivalent with group1/group2 columns + stars
+tuk_df <- as.data.frame(tuk) %>%
+  tidyr::separate(contrast, into = c("group1", "group2"), sep = " - ", remove = FALSE) %>%
+  mutate(
+    stars = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+# If you only want significant comparisons:
+tuk_df <- tuk_df %>% filter(stars != "ns")
+
+# -------------------------------------------------------------------
+# Map comparisons to x positions for plotting brackets on ggplot
+# -------------------------------------------------------------------
+gg_df2 <- gg_df %>%
+  mutate(fire_frg_clean = clean_lvl(fire_frg),
+         fire_frg_clean = factor(
+           fire_frg_clean,
+           levels = clean_lvl(levels(fire_frg))  # keep same ordering as fire_frg
+         ))
+
+lvls_key <- levels(gg_df2$fire_frg_clean)
+
+tuk_df2 <- tuk_df %>%
+  mutate(
+    group1_key = clean_lvl(group1),
+    group2_key = clean_lvl(group2),
+    x1 = match(group1_key, lvls_key),
+    x2 = match(group2_key, lvls_key),
+    xmin = pmin(x1, x2),
+    xmax = pmax(x1, x2),
+    xmid = (xmin + xmax) / 2
+  ) %>%
+  filter(!is.na(xmin), !is.na(xmax))
+
+
+# -------------------------------------------------------------------
+# Plot (kept): fire_frg vs Ho with significant Tukey brackets
+# -------------------------------------------------------------------
+mod_sf_unique$Ho_fire_frg_partial <- resid(gls_model1poly) +
+  coef(gls_model1poly)["fire_frgInfrequent Fire Regime"] * (mod_sf_unique_scaled$fire_frg == "Infrequent Fire Regime") +
+  coef(gls_model1poly)["fire_frgIntermediate Frequency + Low/Moderate Severity"] * (mod_sf_unique_scaled$fire_frg == "Intermediate Frequency + Low/Moderate Severity") +
+  coef(gls_model1poly)["fire_frgIntermediate Frequency + High Severity"] * (mod_sf_unique_scaled$fire_frg == "Intermediate Frequency + High Severity") +
+  coef(gls_model1poly)["fire_frgHigh Frequency + Low/Moderate Severity"] * (mod_sf_unique_scaled$fire_frg == "High Frequency + Low/Moderate Severity") +
+  coef(gls_model1poly)["fire_frgHigh Frequency + High Severity"] * (mod_sf_unique_scaled$fire_frg == "High Frequency + High Severity")
+mod_sf_unique <-  
+  mod_sf_unique %>%
+  mutate(fire_frg_lb = gsub("\\+ ", "\\+\n", as.character(fire_frg))) %>%
+  mutate(
+    fire_frg_lb = factor(fire_frg_lb, levels = rev(c("High Frequency +\nHigh Severity", "High Frequency +\nLow/Moderate Severity", "Intermediate Frequency +\nHigh Severity", "Intermediate Frequency +\nLow/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime")))
+  )
+unique(mod_sf_unique$fire_frg_lb)
+
+
+# y positions for brackets (stack them)
+y_base <- max(mod_sf_unique$Ho_fire_frg_partial, na.rm = TRUE) - 0.0001
+y_step <- 0.08 * diff(range(mod_sf_unique$Ho_fire_frg_partial, na.rm = TRUE))  # tweak if needed
+
+tuk_df2 <- tuk_df2 %>%
+  arrange(xmin, xmax) %>%
+  mutate(
+    y = y_base + row_number() * y_step,
+    y_tick = y - 0.25 * y_step
+  )
+
+
+bxp2 <-
+  ggplot(mod_sf_unique, aes(x = fire_frg_lb, y = Ho_fire_frg_partial)) +
+  geom_boxplot(col = NA) +
+  geom_boxplot(data = filter(mod_sf_unique, fire_frg != "Intermediate Frequency + High Severity")) +
+  geom_boxplot(data = filter(mod_sf_unique, fire_frg == "Intermediate Frequency + High Severity"), col = "tomato2") +
+  geom_jitter(data = filter(mod_sf_unique, fire_frg != "Intermediate Frequency + High Severity"), width = 0.2, alpha = 0.5) +
+  geom_jitter(data = filter(mod_sf_unique, fire_frg == "Intermediate Frequency + High Severity"), col = "tomato2", width = 0.2, alpha = 0.5) +
+  theme_classic() +
+  labs(x = "Historical fire regime", y = "Partial residual heterozygosity") +
+  geom_segment(data = tuk_df2,
+               aes(x = xmin, xend = xmax, y = y, yend = y),
+               inherit.aes = FALSE, linewidth = 0.6) +
+  geom_segment(data = tuk_df2,
+               aes(x = xmin, xend = xmin, y = y_tick, yend = y),
+               inherit.aes = FALSE, linewidth = 0.6) +
+  geom_segment(data = tuk_df2,
+               aes(x = xmax, xend = xmax, y = y_tick, yend = y),
+               inherit.aes = FALSE, linewidth = 0.6) +
+  geom_text(data = tuk_df2,
+            aes(x = xmid, y = y - 0.00005, label = stars),
+            inherit.aes = FALSE, vjust = 0, size = 8) +
+  coord_cartesian(clip = "off") +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    axis.text.x = element_text(angle = 20, hjust = 1, size = 14),
+    plot.margin = margin(5.5, 5.5, 5.5, 25)
+  )
+
+# If you want to save:
+ggsave(here(plotpath, "fire_frg_tukey_gls.pdf"), bxp2, width = 10, height = 6)
+
+```
+
+```{r}
+df = mod_sf_unique
+df <- df %>% mutate(admixed = ifelse(Q > 0.01, 1, 0))
+
+# admixed is binomial so use glm with family = binomial
+admix_fit <- glm(admixed ~ csi_past + glacier + gHM + bio1 + tmean_dif + evt + fire_recent * fire_frq, data = df, family = "binomial")
+car::Anova(admix_fit, type = 2)
+admix_fit %>% broom::tidy() %>% filter(p.value < 0.05)
+
+# Emmeans check on fire_recent
+emmeans(admix_fit, ~ fire_recent | fire_frq, mode = "df.error") |>
+  pairs() %>%  
+  summary(infer = TRUE)
+```
+
 
 # DUMP
 ```{r}
