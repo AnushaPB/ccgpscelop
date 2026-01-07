@@ -9,76 +9,255 @@ outpath <- here("analysis", "genetic_diversity", "outputs")
 # Read in heterozygosity files
 nonsyn_het <- 
   get_het("allnonsyn.het") %>%
-  rename(Ho_nonsyn = Ho) %>%
+  mutate(Ho_nonsyn = 1 - `O(HOM)`/`N(NM)`) %>%
   select(SampleID, Ho_nonsyn)
 syn_het <-
   get_het("allsyn.het") %>%
-  rename(Ho_syn = Ho) %>%
+  mutate(Ho_syn = 1 - `O(HOM)`/`N(NM)`) %>%
   select(SampleID, Ho_syn)
+geanonsyn_het <-
+  get_het("nonsyn.het") %>%
+  mutate(Ho_geanonsyn = 1 - `O(HOM)`/`N(NM)`) %>%
+  select(SampleID, Ho_geanonsyn)
+
 het_df <- 
   get_het("58-Sceloporus_chr.het") 
-het_df <- left_join(het_df, nonsyn_het) %>% left_join(syn_het)
-het_df$resids <- residuals(lm(het_df$Ho_nonsyn ~ het_df$Ho))
-het_df$resids2 <- residuals(lm(het_df$Ho_nonsyn ~ het_df$Ho_syn))
 
-library(sf)
-het_df <- inner_join(het_df, get_coords(sf = TRUE)) %>% st_as_sf()
+het_df <- left_join(het_df, nonsyn_het) %>% left_join(geanonsyn_het) %>% left_join(syn_het) %>% 
+# Scale
+  mutate(
+    Ho_scaled = as.numeric(scale(Ho)),
+    Ho_nonsyn_scaled = as.numeric(scale(Ho_nonsyn)),
+    Ho_geanonsyn_scaled = as.numeric(scale(Ho_geanonsyn)),
+    Ho_syn_scaled = as.numeric(scale(Ho_syn)))
+
+
 ```
 
 ```{r}
-ca <- get_ca()
-plt1 <-
-  ggplot(het_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = Ho), pch = 21, cex = 2) +
-  scale_fill_viridis_c(option = "turbo") +
-  theme_void()
+library(terra)
+library(sf)
+model_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+future <- rast(here("analysis", "gea", "outputs", "scelop_adaptive_env_layers","env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))[[2]]
+names(future)
+current <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))[["CHELSA_bio1_1981-2010_V.2.1"]]
+coords <- get_coords(sf = TRUE)
+df <- left_join(coords, het_df, by = "SampleID")
+df$future_bio1 <- extract(future, df, ID = FALSE, method = "bilinear")[,1]
+df$current_bio1 <- extract(current, df, ID = FALSE, method = "bilinear")[,1]
+df$future_change <- df$future_bio1 - df$current_bio1
 
-plt2 <-
-  ggplot(het_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = Ho_nonsyn), pch = 21, cex = 2) +
-  scale_fill_viridis_c(option = "turbo") +
-  theme_void()
+model_df <- left_join(model_df, df %>% st_drop_geometry() %>% dplyr::select(SampleID, future_change, current_bio1, Ho_nonsyn), by = "SampleID")
+names(model_df)
+```
 
-plt3 <-
-  ggplot(het_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = Ho_syn), pch = 21, cex = 2) +
-  scale_fill_viridis_c(option = "turbo") +
-  theme_void()
+```{r}
+# COME BACK AND USE MOD_SF_UNIQUE
+nonsyn_model_df <-
+  model_df %>%
+  mutate(
+    glacier = factor(glacier, levels = c("OutsideGlacier", "InsideGlacier")),
+    fire_recent = factor(fire_recent, levels = c("Unburned", "Burned")),
+    fire_frq = factor(fire_frq, levels = c("Infrequent/No Fire Regime", "Intermediate Frequency", "High Frequency")),
+    evt = relevel(as.factor(evt), ref = "Shrubland")
+  )
 
-plt4 <-
-  ggplot(het_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = resids), pch = 21, cex = 2) +
-  scale_fill_gradient2(
-    low = "orange3",
-    high = "cyan3",
-    mid = "white",
-    midpoint = 0
+numeric_vars <- c("csi_past", "tmean_dif", "bio1")
+nonsyn_model_df_scaled <-
+  nonsyn_model_df %>%
+  mutate(across(all_of(numeric_vars), ~as.numeric(scale(.x))))
+
+model_nonsyn <- lm(Ho_nonsyn ~ poly(csi_past, 2, raw = TRUE) + tmean_dif + bio1 + fire_frq*fire_recent + evt, data = nonsyn_model_df_scaled)
+summary(model_nonsyn)
+
+car::Anova(model_nonsyn)
+
+emmeans(model_nonsyn, ~ fire_recent | fire_frq) %>% pairs(infer = TRUE)
+emmeans(model_nonsyn, ~ fire_frq) %>% pairs(infer = TRUE)
+emmeans(model_nonsyn, ~ evt) %>% pairs(infer = TRUE) %>% data.frame() %>% filter(p.value < 0.05)
+```
+
+```{r}
+wingen_r <- 
+  terra::rast(here(outpath, "Ho_nonsyn_kriged_masked.tif")) %>% 
+  as.data.frame(xy = TRUE, na.rm = TRUE) 
+names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
+
+ca_proj <- get_ca() %>% st_transform(3310)
+
+
+scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1) {
+  aesthetic <- match.arg(aesthetic)
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  rng   <- r_max - r_min
+  lims  <- c(r_min - rng*extend_scale, r_max + rng*extend_scale)
+
+  pal <- rev(MetBrewer::met.brewer("Hiroshige", type = "continuous"))
+  if (aesthetic == "fill") {
+    ggplot2::scale_fill_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  } else {
+    ggplot2::scale_colour_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  }
+}
+```
+
+```{r}
+library(ggpubr)
+model_sf <- left_join(get_coords(sf = TRUE), model_df)
+# A: wingen map of heterozygosity 
+pltA <- 
+  ggplot(wingen_r) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
+  geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
+  scale_met_cont(c(model_df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  labs(fill = "Non-synonymous\nheterozygosity") +
+  theme_void() +
+  geom_sf(data = model_sf, shape = 21, aes(fill = Ho_nonsyn), colour = "#00000087", size = 2) +
+  theme(
+    plot.margin = margin(1, 1, 1, 1, unit = "mm"),
+    legend.position = "right",
+    legend.key.height = unit(0.7, "cm"),
+    legend.key.width  = unit(0.7, "cm"),
+    legend.title = element_text(size = 16),
+    legend.text  = element_text(size = 14),
+    plot.margin = margin(5,5,5,25)
+  )
+
+
+# B: Predicted vs observed values for non-synonymous Ho
+pltB <-
+  ggplot(model_df, aes(x = predict(model_nonsyn), y = Ho_nonsyn)) +
+  geom_point(aes(col = Ho_nonsyn), shape = 16, size = 2) +
+  geom_smooth(method = "lm", colour = "black") +
+  scale_met_cont(c(model_df$Ho_nonsyn, wingen_r$layer), aesthetic = "colour", extend_scale = 0.1) +
+  theme_classic() +
+  labs(x = "Predicted non-synonymous heterozygosity", y = "Observed non-synonymous heterozygosity", col = "Non-synonymous\nheterozygosity") +
+  ggpubr::stat_cor(size = 6) +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    plot.margin = margin(5,5,5,25)
+  )
+
+# C: Plot of non-syn vs genome-wide Ho
+pltC <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn)) +
+  geom_point(size = 2, aes(col = future_change)) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  scale_color_viridis_c(option = "plasma") +
+  labs(
+    x = "Genome-wide heterozygosity",
+    y = "Non-synonymous heterozygosity",
+    col = "Future\nclimate\nchange"
   ) +
-  theme_void()
+  theme_classic() +
+  theme(
+    plot.margin = margin(1, 1, 1, 1, unit = "mm"),
+    legend.position = "right",
+    legend.key.height = unit(0.8, "cm"),
+    legend.key.width  = unit(0.8, "cm"),
+    legend.title = element_text(size = 16),
+    legend.text  = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    plot.margin = margin(5,5,5,25)
+  )
 
-plt5 <-
-  ggplot(het_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(fill = resids2), pch = 21, cex = 2) +
-  scale_fill_gradient2(
-    low = "orange3",
-    high = "cyan3",
-    mid = "white",
-    midpoint = 0
+# Plot of future-change vs non-syn Ho
+pltD <- 
+  ggplot(df, aes(x = future_change, y = Ho_nonsyn, color = future_change)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  labs(x = "Future climate change",
+       y = "Non-synonymous heterozygosity", col = "Future\nclimate\nchange") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 14),
+    plot.margin = margin(5,5,5,25)
   ) +
-  theme_void()
+  scale_color_viridis_c(option = "plasma")
+#hiroshige_cols <- rev(c("#042346", "#295580", "#6bb2cc", "#9cd3dd", "#fecd6d", "#f7a957", "#ec7b4c", "#f04f32"))
 
+# extract legends
+legA <- cowplot::get_legend(pltA + theme(legend.position = "right"))
+legC <- cowplot::get_legend(pltC + theme(legend.position = "right"))
 
+# drop legends from panels
+pltA_noleg <- pltA + theme(legend.position = "none")
+pltC_noleg <- pltC + theme(legend.position = "none")
 
-pdf(here(plotpath, "nonsyn_vs_syn_het.pdf"), width = 12, height = 8)
-cowplot::plot_grid(plt1, plt2, plt3, NULL, plt4, plt5, nrow = 2, align = "hv")
+# rows: (A, B, legendA) and (C, D, legendC)
+row1 <- cowplot::plot_grid(pltA_noleg, pltB, nrow = 1, align = "hv", labels = c("A", "B"), label_size = 18)
+row2 <- cowplot::plot_grid(pltC_noleg, pltD, nrow = 1, align = "hv", labels = c("C", "D"), label_size = 18)
+legends <- cowplot::plot_grid(legA, legC, ncol = 1, align = "v")
+rows <- cowplot::plot_grid(row1, row2, ncol = 1, align = "v")
+final <- cowplot::plot_grid(
+  rows, legends,
+  ncol = 2,
+  rel_widths = c(1, 0.25),
+  align = "hv"
+)
+
+png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"),
+    width = 11.5, height = 9.5, units = "in", res = 300)
+final
 dev.off()
 ```
 
+
+```{r}
+# Plot all variables
+all_vars <- c("csi_past", "tmean_dif", "bio1", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
+interact <- rep(TRUE, length(all_vars))
+interact[4] <- FALSE
+
+new_df_scaled <- nonsyn_model_df_scaled %>% dplyr::select(Ho = Ho_nonsyn, all_of(all_vars))
+new_df <- nonsyn_model_df %>% dplyr::select(Ho = Ho_nonsyn, all_of(all_vars))
+final_model_nonsyn <- lm(Ho ~ poly(csi_past, 2, raw = TRUE) + tmean_dif + bio1 + fire_frq * fire_recent + glacier + gHM + evt, data = new_df_scaled)
+summary(final_model_nonsyn)
+# Partial residuals 
+plts_residual_y <- 
+  purrr::map2(
+    all_vars,
+    interact,
+    # Use unscaled data for plotting
+    ~plot_mod(.x, "Ho", new_df, model = final_model_nonsyn, col_var = "Ho_original", residual = TRUE, interact = .y)
+  ) %>% 
+  map(~ .x + theme(plot.margin = margin(10, 10, 10, 25))) %>%
+  map(~ .x + ylab("Residual non-synonymous heterozygosity"))
+
+# B: Raw values
+plts_raw_y <- 
+  purrr::map2(
+    all_vars,
+    interact, 
+    # Use unscaled data for plotting
+    ~plot_mod(.x, "Ho", new_df, model = final_model_nonsyn, col_var = "Ho_original", residual = FALSE, bump_legend = 0.1, interact = .y)
+  ) %>% 
+  map(~ .x + theme(plot.margin = margin(10, 10, 10, 25))) %>%
+  map(~ .x + ylab("Observed non-synonymous heterozygosity"))
+
+plt_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 3, align = "v", labels = LETTERS[1:length(plts_residual_y)], label_size = 18, rel_widths = 1)
+
+plt_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 3, align = "v", labels = LETTERS[1:length(plts_raw_y)], label_size = 18)
+
+png(here(plotpath, "figure_Ho_nonsyn_allvars_residual.png"), height = 14, width = 15, res = 300, units = "in")
+plt_residual
+dev.off()
+
+png(here(plotpath, "figure_Ho_nonsyn_allvars_raw.png"), height = 14, width = 15, res = 300, units = "in")
+plt_raw
+dev.off()
+```
+
+
+# old:
 ```{r}
 pop_df <- 
   read_csv(here("analysis", "admixture", "outputs", "Q8.csv")) %>% 
