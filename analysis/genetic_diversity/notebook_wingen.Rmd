@@ -138,6 +138,100 @@ names(weighted_mask_Ho) <- "Ho"
 writeRaster(weighted_mask_Ho, here(outpath, "Ho_kriged_masked.tif"), overwrite = TRUE)
 ```
 
+# Non-synonymous heterozygosity map (Ho_nonsyn) -----------------------------
+
+```{r}
+# 1) Read non-syn het + compute Ho_nonsyn
+nonsyn_het <-
+  get_het("allnonsyn.het") %>%
+  mutate(Ho_nonsyn = 1 - `O(HOM)` / `N(NM)`) %>%
+  select(SampleID, Ho_nonsyn)
+
+# 2) Join to coords (keep geometry) + drop NAs
+coords_nonsyn <-
+  coords %>%
+  left_join(nonsyn_het, by = "SampleID") %>%
+  drop_na(Ho_nonsyn)
+
+# 3) Project
+coords_proj <- st_transform(coords_nonsyn, 3310)
+ca_proj     <- st_transform(ca, 3310)
+
+# 4) Raster template
+lyr <- coords_to_raster(coords_proj, buffer = 10, res = 10000)
+
+# 5) Windowed mean of Ho_nonsyn
+custom_mean <- function(x) mean(x, na.rm = TRUE)
+window_nonsyn <- window_general(
+  coords_proj$Ho_nonsyn,
+  coords = coords_proj,
+  lyr = lyr,
+  wdim = 5,
+  min_n = 1,
+  stat = custom_mean
+)
+names(window_nonsyn) <- c("Ho_nonsyn", "sample_count")
+
+writeRaster(window_nonsyn, here(outpath, "Ho_nonsyn_window.tif"), overwrite = TRUE)
+
+# 6) Kriging (weighted + unweighted)
+source(here("analysis", "genetic_diversity", "functions_wingen.R"))
+weighted_results <- krig_gd2(window_nonsyn[[1]], window_nonsyn[[2]])
+weighted_krig    <- weighted_results$prediction
+
+unweighted_krig  <- krig_gd2(window_nonsyn[[1]])$prediction
+
+# 7) Mask to species range (or CA if you prefer)
+range_map <- get_range()
+weighted_mask   <- mask(weighted_krig, range_map)
+unweighted_mask <- mask(unweighted_krig, range_map)
+
+# 8) Plot helper (reuses your palette function pattern)
+col_function <- function(values, extend_scale = 0.1) {
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  limits <- c(
+    r_min - (r_max - r_min) * extend_scale,
+    r_max + (r_max - r_min) * extend_scale
+  )
+  scale_fill_gradientn(
+    colors = rev(MetBrewer::met.brewer("Hiroshige", type = "continuous")),
+    limits = limits,
+    oob = scales::squish
+  )
+}
+
+custom_plot <- function(r, coords = NULL, extend_scale = 0.1, fill_lab = "Non-synonymous Ho") {
+  r_df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)
+  names(r_df)[3] <- "layer"
+
+  plt <- ggplot(r_df) +
+    geom_sf(data = ca_proj, fill = "gray90", col = NA) +
+    geom_tile(aes(x = x, y = y, fill = layer), color = NA) +
+    col_function(r_df$layer, extend_scale = extend_scale) +
+    labs(fill = fill_lab) +
+    theme_void()
+
+  if (!is.null(coords)) {
+    plt <- plt +
+      geom_sf(data = coords, pch = 21, aes(fill = Ho_nonsyn), col = "#00000087", cex = 1.1)
+  }
+
+  plt
+}
+
+# 9) Export plots + raster
+pdf(here(plotpath, "Ho_nonsyn_maps.pdf"), width = 5, height = 5)
+custom_plot(weighted_mask)
+custom_plot(unweighted_mask)
+custom_plot(window_nonsyn)
+custom_plot(weighted_mask, coords = coords_proj)
+custom_plot(window_nonsyn, coords = coords_proj)
+dev.off()
+
+names(weighted_mask) <- "Ho_nonsyn"
+writeRaster(weighted_mask, here(outpath, "Ho_nonsyn_kriged_masked.tif"), overwrite = TRUE)
+```
 # ROH
 ```{r ROH, fig.width = 7, fig.height = 7}
 roh <- get_roh()

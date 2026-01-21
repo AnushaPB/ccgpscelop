@@ -4,7 +4,10 @@ source(here("general_functions.R"))
 source(here("analysis", "gea", "functions_selection_stats.R"))
 outpath <- here("analysis", "gea", "outputs")
 
-# Get non-synonymous GEA variants in genes 
+# Get all non-synonymous variants
+all_nonsyn <- read_csv(here(outpath, "nonsynonymous.csv"))
+
+# Get non-synonymous GEA variants
 genes_nonsyn <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 
 # Get all annotated genes
@@ -13,14 +16,15 @@ all_genes <-read_csv(here("analysis", "gea", "outputs", "all_genes_list.csv"))
 # Filter to only include genes with non-synonymous GEA variants
 genes_org <- 
   all_genes %>% 
-  # TODO: this shouldn't reall need to be two steps
+  # TODO: this shouldn't really need to be two steps
   filter(full_name %in% genes_nonsyn$full_name) 
 
-print(paste("Number of GEA SNPs in genes:", nrow(genes_nonsyn))) # 8,860
-print(paste("Number of unique genes with GEA SNPs:", length(unique(genes_nonsyn$full_name)))) # 4,958
-print(paste("Number of unique GEA gene names:", nrow(genes_org %>% distinct(gene_name)))) # 3,442
+print(paste("Number of  Non-synonymous GEA SNPs in genes:", nrow(genes_nonsyn))) # 8,860
+print(paste("Number of unique genes with Non-synonymous GEA SNPs:", length(unique(genes_nonsyn$full_name)))) # 4,958
+print(paste("Number of unique Non-synonymous GEA gene names:", nrow(genes_org %>% distinct(gene_name)))) # 3,522
 print(paste("Number of all genes:", nrow(all_genes))) # 18,670
 print(paste("Number of all unique gene names:", nrow(all_genes %>% distinct(gene_name)))) # 13,136
+print(paste("Number of non-synonymous SNPs:", nrow(all_nonsyn))) # 216,156
 
 # PLOTTING RDA
 # IMPORTANT: NEED TO DO BY SCAFFOLD!!!!!!

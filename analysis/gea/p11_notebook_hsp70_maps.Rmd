@@ -1,0 +1,158 @@
+```{r}
+library(tidyverse)
+library(here)
+library(sf)
+library(vcfR)
+
+source(here("general_functions.R"))
+source(here("analysis", "gea", "functions_selection_stats.R"))
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+ca <- get_ca()
+```
+
+```{r}
+# Get non-synonymous GEA SNPs
+genes_nonsyn <- get_gea_genes(nonsyn = TRUE)
+
+# Load dosage data
+dos <- read_table(here(outpath, "nonsyn.raw"))
+
+# Load coords and model dataframe
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% dos$IID) %>% 
+  st_transform(3310) 
+
+# Subset to only samples in coords
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == coords$SampleID))
+
+# CORRECT DOS NAMES
+colnames(dos) <- gsub("_[A-Z]$", "", colnames(dos))
+```
+
+```{r}
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")) 
+coords_df <- left_join(coords, mod_df)
+gene_loci <- 
+  genes_nonsyn %>% filter(grepl("Hsp70", full_name) | grepl("heat shock 70", full_name)) %>% pull(locus)
+gene_dos <- dos[, gene_loci]
+gene_dos$SampleID <- dos$IID
+
+nona_dos <- 
+  gene_dos %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), median(., na.rm = TRUE), .)))
+
+gene_pca <- prcomp(dplyr::select(nona_dos, -SampleID))
+gene_loadings <- as_tibble(gene_pca$rotation, rownames = "locus")
+
+gene_df <- 
+  coords_df %>% 
+  left_join(gene_dos, by = "SampleID") %>%
+  mutate(PC1 = gene_pca$x[, 1], PC2 = gene_pca$x[,2]) %>%
+  drop_na()
+
+nona_dos <- nona_dos %>% filter(SampleID %in% gene_df$SampleID)
+
+cor(gene_df$bio1, gene_df$NDVI) # =0.11
+
+library(ggpubr)
+pdf(here(plotpath, "gene_map.pdf"), width = 8, height = 4)
+plt1 <- ggpartial("bio1", "PC1", c("NDVI", "bio1"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+plt2 <- ggpartial("NDVI", "PC1", c("bio1", "NDVI"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+
+summary(lm(PC1 ~ bio1 + NDVI, data = gene_df))
+
+cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
+  cor_result <- cor.test(.x, gene_df$bio1)
+  tibble(r = cor_result$estimate, p = cor_result$p.value)
+})
+cor_results$locus <- colnames(select(nona_dos, -SampleID))
+
+cor_results %>% arrange(desc(abs(r)))
+#        r          p locus             
+#    <dbl>      <dbl> <chr>             
+# 1  0.289 0.00000249 chr9_25931322_C_T 
+# 2 -0.266 0.0000156  chr9_25931133_G_A 
+# 3 -0.256 0.0000320  chr1_366334536_G_C
+# 4 -0.193 0.00191    chr5_2244723_G_A   
+
+
+pdf(here(plotpath, "hsp70_pca.pdf"), width = 10, height = 5)
+plt1 <- 
+  ggplot(gene_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = PC1), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = -1)) +
+  theme_void() 
+plt2 <- 
+  ggplot(gene_df) +
+  geom_hline(yintercept = 0, color = "gray", linetype = "solid") +
+  geom_vline(xintercept = 0, color = "gray", linetype = "solid") +
+  # annotate("text", x = max(hsp70df$PC1), y = 0.1, label = "PC1", hjust = -0.1, vjust = 0.1, color = "gray") +
+  # annotate("text", x = 0.1, y = max(hsp70df$PC2), label = "PC2", vjust = 0.1, color = "gray") +
+  geom_point(aes(x = PC1, y = PC2, fill = PC1), pch = 21) +
+  geom_segment(data = gene_loadings, aes(x = 0, y = 0, xend = PC1 * 5, yend = PC2 * 5), 
+         arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+  geom_text(data = gene_loadings, aes(x = PC1 * 5, y = PC2 * 5, label = locus), 
+        hjust = 0.5, vjust = -0.5, color = "black") +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = -1)) +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+```
+
+# Future climate change prediction
+```{r}
+library(terra)
+future_bio1 <- rast(here("data", "env", "chelsa_future", "CHELSA_bio1_2071-2100_gfdl-esm4_ssp585_V.2.1.tif"))
+current_bio1 <- rast(here("data", "env", "chelsa", "CHELSA_bio1_1981-2010_V.2.1.tif"))
+
+gene_df$bio1_future <- extract(future_bio1, gene_df)[,2]
+gene_df$bio1_current <- extract(current_bio1, gene_df)[,2]
+
+pc_mod <- lm(PC1 ~ bio1_current, data = gene_df)
+gene_df$PC1_future <- predict(pc_mod, newdata = gene_df %>% select(bio1_current = bio1_future))
+
+snp_df <- 
+  gene_df %>% 
+  select(starts_with("chr")) %>% 
+  pivot_longer(starts_with("chr"), names_to = "locus", values_to = "dosage")
+
+gene_df$gene_Ho <- 
+  select(gene_df, starts_with("chr")) %>% 
+  st_drop_geometry() %>%
+  mutate(across(starts_with("chr"), ~ ifelse(. == 1, 1, 0))) %>% 
+  rowMeans()
+
+pdf(here(plotpath, "hsp70_future_map.pdf"), width = 6, height = 6)
+ggplot(snp_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = dosage), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = 1)) +
+  facet_wrap(~locus) +
+  theme_void()
+ggplot(gene_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = PC1), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = 1)) +
+  theme_void()
+ggplot(gene_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = PC1_future), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = 1)) +
+  theme_void() 
+ggplot(gene_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = gene_Ho), pch = 21) +
+  scale_fill_gradientn(colors=MetBrewer::met.brewer("Hiroshige", direction = 1)) +
+  theme_void()
+dev.off()
+```

@@ -176,7 +176,6 @@ cor_results %>% arrange(desc(abs(r)))
 # 13 -0.0572 0.474    Scaffold_13__1_contigs__length_49873245_13301778_T_C
 ```
 
-
 ```{r}
 mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
 coords_df <- left_join(coords, mod_df)

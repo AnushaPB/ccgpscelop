@@ -12,6 +12,7 @@ csq <- read_csv(here(outpath, "csq.csv"))
 nonsyn <- csq %>% filter(grepl("missense|stop_gained|start_lost", csq))
 syn <- csq %>% filter(csq == "synonymous")
 exons <- csq %>% filter(csq != "intron")
+nonsyn <- csq %>% filter(grepl("missense|stop_gained|start_lost", csq))
 
 # GET CSQ OF GEA SNPS --------------------------------------------------------------------------------
 

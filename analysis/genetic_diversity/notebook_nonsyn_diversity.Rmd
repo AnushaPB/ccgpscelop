@@ -210,7 +210,12 @@ final
 dev.off()
 ```
 
-
+```{r}
+test_df <- mod_df %>% mutate(fire_frq = relevel(fire_frq, ref = "High Frequency"))
+mod <- lm(f_2, data = test_df)
+summary(mod) 
+car::Anova(mod, type = 2)
+```
 ```{r}
 # Plot all variables
 all_vars <- c("csi_past", "tmean_dif", "bio1", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
