@@ -10,7 +10,7 @@ SMCPP_CMD="docker run --rm \
              terhorst/smcpp:latest"
 
 # CREATE UNCALLABLE SITES FILES -----------------------------------------------------------------------
-# smcpp needs a bed file of sites that could not be called so that it properly identifies homozygous regions
+# smcpp needs a bed file of sites that could not be called so that it properly identifies homozygous regions. The callable sites bed file comes from Erik's SNP Archer pipeline. Here we create the uncallable sites bed file by subtracting the callable sites from the entire genome.
 
 # create paths
 GENOME="${REPO_ROOT}/data/genome/rSceOcc1.20250428.p_ctg_chr_names.fna.gz"
