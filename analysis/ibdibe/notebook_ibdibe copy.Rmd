@@ -53,19 +53,34 @@ stopifnot(gendist_coords$SampleID == row.names(genedist))
 bioclim <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))
 bio1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]]
 ndvi <- rast(here("data", "env", "california_ndvi_mean_2000_2020.tif"))
+
+# Get paleoclimate layers
+source(here("analysis", "genetic_diversity", "functions_paleovars.R"))
+lig <- get_paleovars("lig")[["lig"]][["bio_1"]]/10
+names(lig) <- "LIGTemperature"
+lgm <- rast(here("data", "env", "california_chelsa_pmip_ccsm4.tif"))
+names(lgm) <- "LGMTemperature"
+
+# Get gHM layers
+ghm <- rast(here("data", "env", "california_global_human_modification_2016.tif"))
+
+# Get fire layers # CHANGE PATHS
+model_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+fri <- rast(here("analysis", "wildfire", "california_fri.tif"))
+vdep <- rast(here("analysis", "wildfire", "california_vdep.tif"))
+fri_1km <- rast(here("analysis", "wildfire", "california_fri_aggregate1km.tif"))
 ```
 
 ```{r}
 envlist <- list(
-  `Temperature` = bio1,
-  `NDVI` = ndvi
+  `Current_temperature` = bio1,
+  `Current_NDVI` = ndvi,
+  `LIG_temperature` = lig,
+  `LGM_temperature` = lgm,
+  `Human_modification` = ghm
 )
 
-envlist <- map(envlist, ~{
-  terra::project(.x, "EPSG:3310")
-})
-
-agg_lyr <- envlist[[1]]
+agg_lyr <- terra::aggregate(bio1, fact = 4, fun = mean)
 ca <- get_ca()
 env_agg <- map(envlist, function(x) {
   x <- terra::resample(x, agg_lyr, method = "bilinear")
@@ -75,53 +90,35 @@ envstack <- rast(env_agg)
 
 # GDM
 ```{r, eval = FALSE}
-coords_proj <- 
-  gendist_coords[,c("x", "y")] %>% 
-  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
-  st_transform(3310)
-
+coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326) 
 env <- 
   map(envlist, ~{
     terra::extract(.x, coords_proj)[,2]
   }) %>% 
   bind_cols() %>%
   mutate(SampleID = gendist_coords$SampleID) %>%
-  select(Temperature, NDVI)
+  left_join(model_df) %>%
+  select(fire_severity, fire_frequency, Current_temperature, Current_NDVI, LIG_temperature, LGM_temperature, lh, eh, mh, Human_modification) 
 
 cor(env, use = "pairwise.complete.obs")
 
 source(here("analysis", "ibdibe", "gdm.R")) # BUG IN GDM PACKAGE, USING FIXED VERSION
-gdm <- gdm_do_everything(gendist = gendist, coords = st_coordinates(coords_proj), env = env, quiet = TRUE, model = "best", nperm = 99)
+gdm <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env, quiet = TRUE, model = "best", nperm = 99)
 
 print(gdm$coeff_df)
 ```
 
 ```{r}
 # Final variables
-env_sub <- env[, c("Temperature")]
-gdm_sub <- gdm_do_everything(gendist = gendist, coords = st_coordinates(coords_proj), env = env_sub, quiet = TRUE, model = "full")
+env_sub <- env[, c("LIG_temperature", "LGM_temperature")]
+gdm_sub <- gdm_do_everything(gendist = gendist, coords = gendist_coords[,c("x", "y")], env = env_sub, quiet = TRUE, model = "full")
 
-print(gdm_sub$coeff_df)
-#     predictor coefficient
-# 1  Geographic  0.04487945 = 4.49x10^-2
-# 2 Temperature  0.01175265 = 1.18x10^-2
-
-# Get variance explained
-gdm_sub$model$explained
-# Confirming explained
-explained_check <- (1 - (gdm_sub$model$gdmdeviance / gdm_sub$model$nulldeviance)) * 100
-print(explained_check)
-print(gdm_sub$model$explained)
-
-envstack_proj <- envstack %>% terra::project("EPSG:3310")
-pdf(here(plotpath, "gdm_out.pdf"))
-maps <- gdm_map(gdm_sub$model, envstack_proj, coords_proj, plot_vars = FALSE)
+coords_proj <- gendist_coords[,c("x", "y")] %>% st_as_sf(coords = c("x", "y"), crs = 4326)
+pdf(here("gdm_out.pdf"))
+envstack[["fire_severity"]] <- envstack[[1]]
+env_agg[["fire_severity"]] <- env_agg[[1]]
+maps <- gdm_map(gdm_sub$model, envstack, coords_proj, plot_vars = FALSE)
 dev.off()
-```
-
-```{r}
-# Get prettier diss plotting functions
-source(here("analysis", "ibdibe", "functions_ibdibe.R"))
 
 coords_rgb <-
   cbind(coords_proj, terra::extract(maps$pcaRastRGB, coords_proj, ID = FALSE)) %>%
@@ -134,15 +131,20 @@ rgb_df <-
 
 rgb_map <-
   ggplot(rgb_df) +
-  geom_sf(data = ca %>% st_transform(3310), fill = NA) +
-  geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
+  geom_sf(data = ca) +
+  #geom_raster(aes(x = x, y = y, fill = rgb(PC1, PC2, PC3))) +
   geom_sf(data = coords_rgb, aes(fill = rgb(PC1, PC2, PC3)), col = "black", pch = 21, alpha = 1, cex = 3) +
   theme_void() +
   scale_fill_identity() +
   theme(legend.position = "none")
 
+```
+```{r}
+# Get prettier diss plotting functions
+source(here("analysis", "ibdibe", "functions_ibdibe.R"))
+
 rgb_legend <- 
-  gdm_pc(gdm_sub$model, envstack_proj, coords_proj, scl = 0.5) +
+  gdm_pc(gdm_sub$model, env_agg, coords_proj, scl = 1) +
   theme(
     plot.background = element_rect(fill = NA, color = NA),       # transparent background
     panel.background = element_rect(fill = NA, color = NA)
@@ -156,18 +158,20 @@ rgb_plt <-
             x = 0.5, y = 0.5, 
             width = 0.45, height = 0.45)  # inset
 
-plt1 <- gdm_plot_diss(gdm_sub$model, type = "predicted", line = TRUE) + 
-    ggplot2::annotate("text", x = 0.09, y = 0.04, label = paste0(round(gdm_sub$model$explained, 1), "%", "\nDeviance explained"), size = 5, fontface = "bold", col = "tomato2") 
-
+plt1 <- gdm_plot_diss(gdm_sub$model) 
 sig_vars <- gdm_sub$coeff_df$predictor[gdm_sub$coeff_df$predictor != "Geographic"] 
-plt2 <- gdm_plot_isplines(gdm_sub$model, scales = "free_x", env = env[,sig_vars], coords = coords_proj, nrow = 1)
+plt2 <- gdm_plot_isplines(gdm_sub$model, scales = "free_x", env = env[,sig_vars], coords = coords, nrow = 1)
 plt1 <- plt1 + theme(plot.margin = margin(t = 20, r = 5, b = 5, l = 20))
 plt2 <- plt2 + theme(plot.margin = margin(t = 20, r = 5, b = 5, l = 20))
 
-group1 <- plot_grid(plt1, plt2, ncol = 1, labels = c("A", "B"), label_size = 16, align  = "hv", rel_widths = c(1, 0.8))
+group1 <- plot_grid(plt1, plt2, ncol = 1, labels = c("A", "B"), label_size = 16)
 
-png(here(plotpath, "gdm_outputs.png"), width = 12*300*0.9, height = 7*300*0.9, res = 300)
-plot_grid(group1, rgb_plt, ncol = 2, rel_widths = c(0.45, 0.55), labels = c("", "C"), label_size = 16)
+pdf(here(plotpath, "gdm_outputs.pdf"), width = 15, height = 7)
+plot_grid(group1, rgb_plt, ncol = 2, rel_widths = c(1, 0.8), labels = c("", "C"), label_size = 16) 
+dev.off()
+
+png(here(plotpath, "gdm_outputs.png"), width = 15*300*0.9, height = 7*300*0.9, res = 300)
+plot_grid(group1, rgb_plt, ncol = 2, rel_widths = c(1, 0.8), labels = c("", "C"), label_size = 16)
 dev.off()
 
 ```
