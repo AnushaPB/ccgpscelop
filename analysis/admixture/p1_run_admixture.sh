@@ -14,7 +14,7 @@ cp ../../data/ccgp_data/$PREFIX.bed .
 cp ../../data/ccgp_data/$PREFIX.bim .
 cp ../../data/ccgp_data/$PREFIX.fam .
 
-# Remove beckii individuals (TEMPORARY)
+# Remove beckii individuals
 awk '{print "0", $1}' ../../data/beckii_sampleids.txt > ../../data/beckii_sampleids_plink.txt
 plink --bfile $PREFIX --remove ../../data/beckii_sampleids_plink.txt --make-bed --out $PREFIX.tmp
 mv $PREFIX.tmp.bed $PREFIX.bed

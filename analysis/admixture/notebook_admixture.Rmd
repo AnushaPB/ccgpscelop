@@ -54,11 +54,12 @@ coords <- get_coords(all = TRUE)
 ```{r}
 cv <- get_cv(K = 2:15)
 
-png(here(plotpath, "cv_error.png"), width = 10, height = 5, units = "in", res = 300)
+png(here(plotpath, "cv_error.png"), width = 6, height = 3, units = "in", res = 300)
 ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
   geom_point() +
   geom_line() +
-  theme_bw()
+  theme_classic() +
+  labs(x = "K value", y = "Cross-validation error") 
 dev.off()
 ```
 
@@ -140,7 +141,7 @@ writeRaster(max_admix, here("analysis", "admixture", "outputs", "max_admix.tif")
 ```{r}
 library(scatterpie)
 ca_longlat <- st_transform(ca, 4326)
-plts <-
+pie_plts <-
   df %>%
   group_by(K) %>%
   group_split() %>%
@@ -167,7 +168,7 @@ plts <-
   })
 
 pdf(here(plotpath, "admixture_pie_charts.pdf"), width = 6, height = 6)
-plts
+pie_plts
 dev.off()
 ```
 
@@ -229,6 +230,124 @@ ggplot(distinct(df8, SampleID, cluster, geometry, X, Y)) +
   theme_void()
 dev.off()
 ```
+
+### Figure
+```{r}
+K_use <- 8
+Kvals <- 2:15
+
+# Color scales
+hiroshige_cols <- rev(c("#042346", "#295580", "#6bb2cc", "#9cd3dd", "#fecd6d", "#f7a957", "#ec7b4c", "#f04f32"))
+ordered_pops <- c(8, 6, 2, 4, 3, 7, 1, 5)
+ordered_cols <- c(hiroshige_cols[1:3], hiroshige_cols[4:6], hiroshige_cols[7:8])
+new_pops <- 1:8
+fill_cols <- setNames(hiroshige_cols, new_pops)
+
+ca <- get_ca() %>% st_transform(3310)
+
+coords3310 <- get_coords(sf = TRUE) %>% st_as_sf(coords = c("x","y"), crs = 4326) %>% st_transform(3310)
+coords_tbl <- coords3310 %>% st_coordinates()  %>% as_tibble() %>% mutate(SampleID = coords3310$SampleID)
+coords_sf <- coords3310 %>% select(SampleID, geometry)
+
+qmat8 <- get_Q(K = K_use, qmat_only = TRUE) 
+qmat8_reordered <- qmat8[, ordered_pops]
+names(qmat8_reordered) <- paste0("V", new_pops)
+
+plt_bar <- 
+  structure_plot(qmat8_reordered, legend = FALSE) + 
+  scale_fill_manual(values = fill_cols) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 14),
+    plot.margin = margin(t = 5, r = 5, b = 5, l = 20)
+  ) 
+
+cv <- get_cv(K = Kvals)
+
+plt_cv <- ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
+  geom_point() +
+  geom_line() +
+  theme_classic() +
+  labs(x = "K", y = "CV error") +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 14)
+  )
+
+Q8_long <- 
+  get_Q(K = K_use) %>%
+  arrange(across(starts_with("V"))) %>%
+  mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
+  pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q") %>%
+  mutate(PopGroup = gsub("V", "", PopGroup)) %>%
+  left_join(coords_sf, by = "SampleID") %>%
+  st_as_sf() %>%
+  mutate(cluster = as.character(cluster), PopGroup = as.character(PopGroup)) %>%
+  # Replace with new pop order
+  mutate(
+    cluster = as.character(match(as.numeric(cluster), ordered_pops)),
+    PopGroup = as.character(match(as.numeric(PopGroup), ordered_pops))
+  )
+
+qdf8 <- 
+  Q8_long %>% 
+  group_by(SampleID) %>% 
+  summarize(score = 1 - max(Q, na.rm = TRUE), .groups = "drop")
+
+plt_admix <- ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = qdf8, aes(color = score), size = 1.5) +
+  coord_sf(datum = NA) +
+  theme_void() +
+  scale_color_gradient(low = "skyblue2", high = "red2") +
+  labs(color = "Admixture\nscore") +
+  theme(
+    legend.position = "inside",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 14),
+    legend.justification = c(1, 1),
+    legend.background = element_blank(),
+    legend.position.inside = c(1.2, 0.95)
+  )
+
+pie_df <-
+  Q8_long %>%
+  bind_cols(st_coordinates(.)) %>%
+  st_drop_geometry() %>%
+  drop_na(Q) %>%
+  group_by(SampleID, X, Y, PopGroup) %>%
+  summarize(Q = mean(Q), .groups = "drop") %>%
+  pivot_wider(names_from = PopGroup, values_from = Q, values_fill = 0)
+
+plt_pie <- ggplot() +
+  geom_sf(data = ca) + 
+  geom_scatterpie(
+    data = st_drop_geometry(pie_df),
+    aes(x = X, y = Y, group = SampleID),
+    cols = as.character(1:8),
+    pie_scale = 0.7
+  ) +
+  theme_void() +
+  labs(fill = "Population") +
+  scale_fill_manual(values = fill_cols) +
+  theme(
+    legend.position = "inside",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 14),
+    legend.justification = c(1, 1),
+    legend.background = element_blank(),
+    legend.position.inside = c(0.9, 0.95)
+  )
+
+group1 <- cowplot::plot_grid(plt_cv, plt_admix, ncol = 1, rel_heights = c(0.45, 0.55), labels = c("B","C"), label_size = 14)
+group2 <- cowplot::plot_grid(plt_pie, group1, nrow = 1, rel_widths = c(0.55, 0.45), labels = c("A",""), label_size = 14)
+group3 <- cowplot::plot_grid(group2, plt_bar, ncol = 1, rel_heights = c(0.8, 0.2), labels = c("","D"), label_size = 14)
+
+png(here(plotpath, "figure_admixture.png"), width = 9.5, height = 7, units = "in", res = 300)
+group3
+dev.off()
+```
+
 ## Write out Q files 
 ```{r}
 # FOR LINEAR MODELS: 
@@ -310,13 +429,16 @@ k8 <-
 stopifnot(all(k8$group == paste0("V", k8$cluster)))
 
 # Filter for individuals with low max Q values (admixed individuals)
-k8 %>%
+admixed <- 
+  k8 %>%
   filter(Q < 0.8) 
+print(paste("Number of admixed individuals (Q < 0.8):", nrow(admixed)))
 
 # Filter out admixed individuals
 k8_filter <- 
   k8 %>%
-  filter(Q > 0.8) 
+  filter(!(Q < 0.8)) 
+print(paste("Number of individuals after filtering admixed individuals:", nrow(k8_filter)))
 
 # Count individuals per population
 pop_count <-
