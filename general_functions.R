@@ -97,7 +97,7 @@ get_range <- function(){
   range_map <-
     st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>%
     st_transform(3310)# %>%
-    # st_intersection(get_ca() %>% st_transform(3310))
+    st_intersection(get_ca() %>% st_transform(3310))
 }
 
 get_dem <- function(r = FALSE) {
@@ -275,7 +275,18 @@ make_pretty_names <- function(vars){
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
     if (grepl("Q", x)) return("Admixture")
     if (grepl("tmean_dif", x)) return("Contemporary temperature change")
-    if (grepl("fire", x)) return("Wildland fire frequency")
+    if (grepl("log_fri", x)) return("Log(fire return interval + 1)")
+    if (grepl("fire_severity", x)) return("Log(percent high-severity fire + 1)")
+    if (grepl("fri", x)) return("Fire return interval")
+    if (grepl("pfs_replac", x)) return("Percent of high-severity fire")
+    if (grepl("pfs_surfac", x)) return("Percent of low-severity fire")
+    if (grepl("pfs_mixed", x)) return("Percent of mixed-severity fire")
+    if (grepl("lffi", x)) return("Longest fire-free interval (1984-2022)")
+    if (grepl("frg", x)) return("Historical fire regime group")
+    if (grepl("frq", x)) return("Historical fire frequency")
+    if (grepl("fire_recent", x)) return("Contemporary fire")
+    if (grepl("vdep", x)) return("Vegetation departure")
+    if (grepl("evt", x)) return("Contemporary vegetation")
     if (grepl("resid", x)) return("Residuals")
     if (grepl("genes_ho", x) | grepl("Ho_gea", x)| grepl("gea_Ho", x)) return("Adaptive heterozygosity")
     if (grepl("Ho_syn", x)) return("Synonymous heterozygosity")
