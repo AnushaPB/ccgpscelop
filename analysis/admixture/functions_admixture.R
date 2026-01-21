@@ -52,31 +52,25 @@ get_Q <- function(K, id = "58-Sceloporus_pruned_0.6_thinned_10kb_chr", qmat_only
   return(qmat)
 }
 
-structure_plot <- function(qmat, sort_by_Q = TRUE, legend = TRUE) {
+structure_plot <- function(qmat, legend = TRUE) {
   # Get K
   K <- ncol(qmat)
 
   dat <- as.data.frame(qmat)
   dat <- dat %>%
-    tibble::rownames_to_column(var = "order")
-
-  if (sort_by_Q) {
-    gr <- apply(qmat, MARGIN = 1, which.max)
-    gm <- max(gr)
-    gr.o <- order(sapply(1:gm, FUN = function(g) mean(qmat[, g])))
-    gr <- sapply(gr, FUN = function(i) gr.o[i])
-    or <- order(gr)
-
-    dat <- dat %>%
-      dplyr::arrange(factor(order, levels = or))
-    dat$order <- factor(dat$order, levels = dat$order)
-  }
+    tibble::rownames_to_column(var = "order") %>%
+    mutate(
+      population = apply(qmat, 1, which.max),
+      score = 1 - apply(qmat, 1, max, na.rm = TRUE)
+    )
 
   # Make into tidy df
   gg_df <-
     dat %>%
-    tidyr::pivot_longer(names_to = "cluster", values_to = "Q_value", -c(order)) %>%
-    dplyr::mutate(cluster = gsub("V", "", cluster))
+    tidyr::pivot_longer(names_to = "cluster", values_to = "Q_value", -c(order, score, population)) %>%
+    dplyr::mutate(cluster = gsub("V", "", cluster)) %>%
+    arrange(population, score) %>%
+    mutate(order = factor(order, levels = unique(order)))
 
   # Build plot using helper function
   plt <- ggbarplot_helper(gg_df) + scale_fill_manual(values = viridis::turbo(K))
@@ -99,7 +93,7 @@ structure_plot <- function(qmat, sort_by_Q = TRUE, legend = TRUE) {
 ggbarplot_helper <- function(gg_df) {
   gg_df %>%
     ggplot2::ggplot(ggplot2::aes(x = order, y = Q_value, fill = cluster)) +
-    ggplot2::geom_bar(stat = "identity", col = "darkgray", size = 0.3) +
+    ggplot2::geom_bar(stat = "identity", col = NA) +
     ggplot2::scale_y_continuous(expand = c(0,0)) +
     ggplot2::scale_x_discrete(expand = c(0,0)) +
     ggplot2::ylab("Q") +
