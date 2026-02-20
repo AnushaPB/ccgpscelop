@@ -50,8 +50,9 @@ rda_varloadings <-
   mutate(chr = factor(chr, levels = paste0("chr", 1:10))) 
 
 # Get RDA loadings for significant loci
-# TO DO FIGURE OUT DIFFERENCE BETWEEN THESE TWO:
+# significant outlier SNPs + additional linked/LD-tagged SNPs
 gea_sig1 <- read_csv(here(outpath, "bio1ndvi_rda_ids.csv"))
+# significant outlier SNPs only
 gea_sig2 <- read_csv(here(outpath, "bio1ndvi_significant_snps_unlinked.csv"))
 
 gea <- gea_sig2
@@ -67,19 +68,20 @@ rda_genes <-
   right_join(rda_sig_z) 
 
 # Regex pattern for fast binary match
-goi <- get_goi_names()
-goi <- goi[goi != "Heat shock 70"] # Remove general HSP70
-pattern <- str_c(goi, collapse = "|")
-goi_df <- data.frame(goi_name = names(goi), goi = goi, stringsAsFactors = FALSE)
+goi <- read_csv(here("analysis", "gea", "outputs", "genes_of_interest.csv")) %>% select(gene_name, scaffold, locus)
+# Get SNPs that are non-synonymous and in genes of interest
+goi_rda <- 
+  rda_genes %>%
+  inner_join(goi) %>%
+  mutate(goi = gene_name)
+
+# Combine for plotting
 gg_df <- 
   rda_genes %>%
-  mutate(
-    goi = ifelse(str_detect(full_name, pattern), str_extract(full_name, pattern), NA)
-  ) %>%
-  left_join(goi_df) %>%
-  drop_na(RDA1, RDA2)
+  bind_rows(goi_rda) %>%
+  distinct() 
 
-goi_gg_df <- gg_df %>% filter(!is.na(goi_name))
+goi_gg_df <- gg_df %>% filter(!is.na(goi))
 
 # Calculate 3 SD cutoffs
 cutoffs <-
@@ -135,13 +137,25 @@ rda_varloadings_mean <-
   )
 
 plotpath <- here("analysis", "gea", "plots")
-pdf(here(plotpath, "goi_rda.pdf"), width = 6, height = 5)
+
+# Fix chr levels
+rda_z <- rda_z %>% mutate(chr = factor(chr, levels = paste0("chr", 1:10)))
+rda_varloadings <- rda_varloadings %>% mutate(chr = factor(chr, levels = paste0("chr", 1:10)))
+goi_gg_df <- goi_gg_df %>% mutate(chr = factor(chr, levels = paste0("chr", 1:10)))
+
+range(rda_z$RDA1)
+
+png(here(plotpath, "goi_rda.png"), width = 5.5, height = 5, units = "in", res = 300)
 zscale = 8
 
 ggplot() +
   #geom_point(data = rda_sample, aes(x = RDA1, y = RDA2), col = "gray", alpha = 0.5) +
   geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
   geom_text(data = rda_varloadings_mean, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 4, vjust = 1, hjust = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", size = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.5) +
+  annotate("text", x = min(rda_z$RDA1), y = 0, vjust = -1, label = "RDA1", size = 5) +
+  annotate("text", x = 0, y = max(rda_z$RDA2), hjust = 1.1, label = "RDA2", size = 5) +
   geom_segment(data = rda_varloadings_mean, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
                arrow = arrow(length = unit(0.2, "cm"))) +
   scale_color_identity() +
@@ -152,89 +166,46 @@ ggplot() +
   geom_point(data = goi_gg_df, aes(x = RDA1, y = RDA2), col = "coral") +
   ggrepel::geom_text_repel(
     data = goi_gg_df,
-    aes(x = RDA1, y = RDA2, label = goi_name),
+    aes(x = RDA1, y = RDA2, label = goi),
     size = 4, col = "coral", max.overlaps = Inf
   ) +
+  coord_cartesian(clip = "off") +
   labs(col = "Genes of interest", fill = "SNP\ncount") +
-  theme_void() 
-
-ggplot() +
-  #geom_point(data = rda_sample, aes(x = RDA1, y = RDA2), col = "gray", alpha = 0.5) +
-  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
-  geom_text(data = rda_varloadings_mean, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 4, vjust = 1, hjust = 1) +
-  geom_segment(data = rda_varloadings_mean, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
-               arrow = arrow(length = unit(0.2, "cm"))) +
-  scale_color_identity() +
-  scale_fill_gradientn(
-    colours = gray.colors(100, start = 1, end = 0)
-  ) +
-  geom_point(data = goi_gg_df, aes(x = RDA1, y = RDA2), col = "coral") +
-  ggrepel::geom_text_repel(
-    data = goi_gg_df,
-    aes(x = RDA1, y = RDA2, label = goi_name),
-    size = 4, col = "coral", max.overlaps = Inf
-  ) +
-  labs(col = "Genes of interest", fill = "SNP\ncount") +
-  theme_void() 
+  theme_void()  +
+  theme(plot.margin = margin(t = 30, r = 30, b = 30, l = 30, unit = "pt"))
 dev.off()
 
-pdf(here(plotpath, "goi_rda_by_chr.pdf"), width = 14, height = 5)
+png(here(plotpath, "goi_rda_by_chr.png"), width = 2.5 * 3, height = 2.5 * 4  + 0.5, units = "in", res = 300)
 zscale = 8
 ggplot() +
-  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 1) +
-  stat_ellipse(data = rda_z, aes(x = RDA1, y = RDA2), level = 0.99, linetype = "dashed", size = 0.5) +
-  geom_text(data = rda_varloadings, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 3, vjust = 1) +
+  #stat_ellipse(data = rda_z, aes(x = RDA1, y = RDA2), level = 0.99, linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, size = 0.5, col = "gray50", lwd = 0.25) +
+  geom_vline(xintercept = 0, size = 0.5, col = "gray50", lwd = 0.25) +
+  annotate("text", x = min(rda_z$RDA1), y = 0, vjust = -1, hjust = 0.9, label = "RDA1", size = 3.5, col = "gray50") +
+  annotate("text", x = 0, y = min(rda_z$RDA2), hjust = 1.1, vjust = 2, label = "RDA2", size = 3.5, col = "gray50") +
+  geom_hex(data = rda_z, aes(x = RDA1, y = RDA2), binwidth = 0.2, alpha = 0.9) +
   geom_segment(data = rda_varloadings, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
-               arrow = arrow(length = unit(0.2, "cm"))) +
+               arrow = arrow(length = unit(0.2, "cm")), col = "coral") +
+  geom_text(data = rda_varloadings, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 4, vjust = 1, col = "coral") +
   scale_color_identity() +
   scale_x_continuous(expand = expansion(mult = 0.2)) +  # 5% margin
   scale_y_continuous(expand = expansion(mult = 0.2)) +
-  scale_fill_gradientn(
-    trans = "log10",
-    colours = gray.colors(100, start = 1, end = 0)
-  ) +
-  geom_point(data = goi_gg_df, aes(x = RDA1, y = RDA2), col = "coral") +
+  scale_fill_viridis_c(option = "mako", direction = -1, trans = "log10") +
+  geom_point(data = goi_gg_df, aes(x = RDA1, y = RDA2), col = "black") +
   ggrepel::geom_text_repel(
-    data = drop_na(gg_df, goi_name),
-    aes(x = RDA1, y = RDA2, label = goi_name),
-    size = 4, col = "coral", max.overlaps = Inf
+    data = drop_na(goi_gg_df, goi),
+    aes(x = RDA1, y = RDA2, label = goi),
+    size = 4, col = "black", max.overlaps = Inf
   ) +
   labs(fill = "SNP count") +
   theme_void() +
-  facet_wrap(~chr, scales = "free", nrow = 2) +
+  facet_wrap(~chr, scales = "free", ncol = 3) +
   theme(
+    legend.position = "top",
     panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5), 
-    plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt"),
+    strip.text = element_text(size = 14)
   )
 
-
-ggplot() +
-  #geom_hex(data = rda_sample, aes(x = RDA1, y = RDA2), bins = 50, alpha = 0.5) +
-  geom_text(data = rda_varloadings, aes(x = RDA1 * zscale, y = RDA2 * zscale, label = var), size = 3, vjust = 1) +
-  geom_segment(data = rda_varloadings, aes(x = 0, y = 0, xend = RDA1 * zscale, yend = RDA2 * zscale),
-               arrow = arrow(length = unit(0.2, "cm"))) +
-  scale_color_identity() +
-  scale_fill_gradientn(
-    trans = "log10",
-    colours = gray.colors(100, start = 1, end = 0)
-  ) +
-  geom_point(data = goi_gg_df, aes(x = RDA1, y = RDA2), col = "coral") +
-  ggrepel::geom_text_repel(
-    data = drop_na(gg_df, goi_name),
-    aes(x = RDA1, y = RDA2, label = goi_name),
-    size = 4, col = "coral", max.overlaps = Inf
-  ) +
-  geom_point(data = top_rda, aes(x = RDA1, y = RDA2), col = "blue", size = 3) +
-  ggrepel::geom_text_repel(
-    data = top_rda,
-    aes(x = RDA1, y = RDA2, label = locus),
-    size = 5, col = "blue", max.overlaps = Inf
-  ) +
-  labs(fill = "SNP count") +
-  theme_void() +
-  facet_wrap(~chr, scales = "free", nrow = 2) +
-  theme(
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5), 
-    plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt")
-  )
 dev.off()
+

@@ -12,6 +12,8 @@ plotpath <- here("analysis", "gea", "plots")
 ```{r}
 genes_nonsyn <- get_gea_genes(nonsyn = TRUE)
 
+genes_nonsyn %>% distinct(gene_name) %>% filter(!grepl("egapxtmp", gene_name)) %>% write_tsv(here("ALL_GENES.tsv"))
+
 search <- function(x, y = NULL, strict = FALSE) {
   if (is.null(y)) y <- genes_nonsyn
   # Create different case versions of x
@@ -184,9 +186,63 @@ search("TRPA1") # transient receptor potential cation channel subfamily A member
 search("Transient receptor potential cation channel subfamily A member 1") 
 search("TRPM8") 
 ```
+
+# Genes from literature
 ```{r}
-# Tick related for sceloporus clearing parasite
-search("Factor B") c
-search("Properdin") 
-search("Complement")
+# Genes to look for from literature
+lit_genes <- read_tsv(here("analysis", "gea", "genes_from_literature.txt"))
+
+# Create df
+goi_df <- 
+  genes_nonsyn %>% 
+  filter(gene_name %in% lit_genes$gene) %>%
+  # Move gene_name to first column
+  select(gene_name, everything()) %>%
+  # Remove egapxtmp genes
+  filter(!grepl("egapxtmp", gene_name))
+
+# Confirm that all genes in discussion section are in the goi list
+discussed_genes <- c(
+  "ITPR2",
+  "NPFFR2",
+  "TRPV1",
+  "TRPA1",
+  "HSPA2", # Hsp70
+  "HSPA12B" # Hsp70
+)
+
+all(discussed_genes %in% goi_df$gene_name) # TRUE
+
+write_csv(goi_df, here(outpath, "genes_of_interest.csv"))
+```
+
+```{r}
+trpm4 <- 
+  goi_df %>% 
+  filter(gene_name == "TRPM4")
+
+png(here(plotpath, "TRPM4.png"), width = 6, height = 4, units = "in", res = 300)
+ggplot(trpm4) +
+  # Plot bar that is gene with gene_start and gene_end
+  geom_segment(aes(x = gene_start, xend = gene_end, y = 0, yend = 0), size = 5, color = "steelblue") +
+  # Plot mutations as vertical lines
+  geom_segment(aes(x = position, xend = position, y = -0.5, yend = 0.5), color = "darkred") +
+  labs(title = "TRPM4 Gene with Nonsynonymous Mutations",
+       x = "Genomic Position",
+       y = "") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+dev.off()
+
+```
+
+
+```{r}
+# Write out Table S7 
+# With gene, description, chr, position
+goi_table <- 
+  lit_genes %>%
+  filter(gene %in% goi_df$gene_name) 
+write_tsv(goi_table, here(outpath, "Table_S7.txt"))
 ```

@@ -6,7 +6,7 @@ library(vcfR)
 
 source(here("general_functions.R"))
 source(here("analysis", "gea", "functions_selection_stats.R"))
-outpath <- here("analysis", "gea", "outputs_contaminated_genome")
+outpath <- here("analysis", "gea", "outputs")
 plotpath <- here("analysis", "gea", "plots")
 ca <- get_ca()
 ```
@@ -16,7 +16,7 @@ ca <- get_ca()
 df <- read_csv(here(outpath, "bio1ndvi_gea_genes_nonsyn.csv"))
 
 # Load dosage data
-dos <- read_table(here(outpath, "genes.raw"))
+dos <- read_table(here(outpath, "nonsyn.raw"))
 
 # Load coords and model dataframe
 coords <- 
@@ -100,7 +100,9 @@ plot_genes <- function(gene, gene_name = NULL, df){
 }
 
 # Get genes of interest
-genes <- get_goi_names()
+genes <- read_csv(here("analysis", "gea", "outputs", "genes_of_interest.csv")) %>% pull(gene_name)
+genes <- unique(genes)
+names(genes) <- genes
 
 # Make plots for SNPs in genes of interest
 plt_list <- imap(genes, \(x, i) plot_genes(gene = x, gene_name = i, df)) %>% compact()
@@ -181,7 +183,7 @@ mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.cs
 coords_df <- left_join(coords, mod_df)
 
 gene_loci <- 
-  df %>% filter(grepl("TRPM8", full_name)) %>% pull(locus)
+  df %>% filter(grepl("TRPM4", full_name)) %>% pull(locus)
 dos <- dos[dos$IID %in% coords_df$SampleID, ]
 gene_dos <- dos[, gene_loci]
 gene_dos$SampleID <- dos$IID
@@ -192,28 +194,105 @@ nona_dos <-
 
 gene_pca <- prcomp(select(nona_dos, -SampleID)) 
 
+pop_df <- get_pops()
 gene_df <- 
   coords_df %>% 
   right_join(gene_dos, by = "SampleID") %>%
   mutate(PC1 = gene_pca$x[, 1]) %>%
-  drop_na()   
+  drop_na() %>%
+  left_join(pop_df, by = "SampleID")
 nona_dos <- nona_dos %>% filter(SampleID %in% gene_df$SampleID)
 
 pdf(here(plotpath, "gene_map2.pdf"), width = 8, height = 4)
-plt1 <- ggpartial("bio1", "PC1", c("NDVI", "bio1"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
-plt2 <- ggpartial("NDVI", "PC1", c("bio1", "NDVI"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+plot_genes(gene = "TRPM4", gene_name = "TRPM4", df)
+# plt1 <- ggpartial("bio1", "PC1", c("NDVI", "bio1", "tmean_dif"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+# plt2 <- ggpartial("NDVI", "PC1", c("bio1", "NDVI", "tmean_dif"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+# plt3 <- ggpartial("tmean_dif", "PC1", c("bio1", "NDVI", "tmean_dif"), gene_df, col = "PC1") + scale_color_viridis_c(option = "turbo")
+
+plt1 <- ggplot(gene_df, aes(x = tmean_dif, y = PC1)) +
+  geom_point(aes(col = PC1)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+plt2 <- ggplot(gene_df, aes(x = csi_past, y = PC1)) +
+  geom_point(aes(col = PC1)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+
 cowplot::plot_grid(plt1, plt2, nrow = 1)
 
-ggplot(gene_df, aes(y = chr5_7801341_G_A, x = bio1)) +
-  geom_smooth(method = "lm") +
-  geom_point()
 
-ggplot(gene_df, aes(y = chr5_7801341_G_A, x = tmean_dif)) +
-  geom_smooth(method = "lm") +
-  geom_point()
+plt1 <- ggplot(gene_df, aes(x = tmean_dif, y = chr6_21609105_G_A)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor() +
+  facet_wrap()
+plt2 <- ggplot(gene_df, aes(x = csi_past, y = chr6_21609105_G_A)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+
 dev.off()
 
-summary(lm(PC1 ~ bio1, data = gene_df))
+
+pdf(here(plotpath, "gene_map2.pdf"), width = 8, height = 4)
+ggplot(gene_df) +
+  geom_sf(aes(col = cluster))
+
+plt1 <- ggplot(gene_df, aes(x = tmean_dif, y = chr6_21608971_G_A)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+plt2 <- ggplot(gene_df, aes(x = csi_past, y = chr6_21608971_G_A)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+
+
+
+pdf(here(plotpath, "gene_map2.pdf"), width = 8, height = 4)
+gene_df2 <- gene_df %>% filter(!cluster %in% c(6,8))
+plt1 <- ggplot(gene_df2, aes(x = tmean_dif, y = PC1)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+plt2 <- ggplot(gene_df2, aes(x = bio1, y = PC1)) +
+  geom_point(aes(col = cluster)) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_viridis_d(option = "turbo") +
+  theme_classic() +
+  ggpubr::stat_cor()
+
+plt2 <- ggplot(gene_df, aes(x = evt, y = PC1)) +
+  geom_boxplot() +
+  # add points
+  geom_jitter(aes(col = cluster), width = 0.2, height = 0) +
+  theme_classic() +
+  ggpubr::stat_cor() +
+  theme(
+    # rotate
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+cowplot::plot_grid(plt1, plt2, nrow = 1)
+dev.off()
+
+summary(lm(scale(PC1) ~ scale(bio1) + scale(NDVI) + scale(gHM) + scale(csi_past) + glacier + scale(tmean_dif) + fire_frq * (fire_recent) + evt, data = gene_df)) %>%
+  broom::tidy() %>%
+  filter(p.value < 0.05)
 
 cor_results <- map_dfr(select(nona_dos, -SampleID), ~{
   cor_result <- cor.test(.x, gene_df$bio1)
