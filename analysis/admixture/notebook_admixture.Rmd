@@ -232,26 +232,131 @@ dev.off()
 ```
 
 ### Figure
+
+
+Add PCA results:
+```{r}
+ca <- get_ca() %>% st_transform(3310)
+Q8_long <- 
+  get_Q(K = K_use) %>%
+  arrange(across(starts_with("V"))) %>%
+  mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
+  pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q") %>%
+  mutate(PopGroup = gsub("V", "", PopGroup)) %>%
+  left_join(get_coords(sf = TRUE), by = "SampleID") %>%
+  st_as_sf() %>%
+  mutate(cluster = as.character(cluster), PopGroup = as.character(PopGroup)) %>%
+  # Replace with new pop order
+  mutate(
+    cluster = as.character(match(as.numeric(cluster), ordered_pops)),
+    PopGroup = as.character(match(as.numeric(PopGroup), ordered_pops))
+  ) %>%
+  st_transform(3310)
+
+pca_df <- 
+  read_table(here(outpath, "58-Sceloporus_pca.eigenvec"), col_names = c("FID", "SampleID", "PC1", "PC2", "PC3")) %>%
+  left_join(Q8_long %>% distinct(SampleID, cluster, geometry), by = "SampleID") %>%
+  ungroup() %>%
+  mutate(
+    R = scales::rescale(PC1, to = c(0, 1)),
+    G = scales::rescale(PC2, to = c(0, 1)),
+    B = scales::rescale(PC3, to = c(0, 1)),
+    rgb = rgb(R, G, B)
+  ) %>%
+  st_as_sf()
+
+pca_map <- ggplot(pca_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(fill = rgb), size = 2.5, alpha = 0.9, pch = 21) +
+  scale_fill_identity() +
+  theme_void()
+
+minmax_buffer <- function(x) max(abs(c(min(x), max(x)))) + 0.03
+
+pca_eigenval <- 
+  read_table(here(outpath, "58-Sceloporus_pca.eigenval"), col_names = "eigenval") %>%
+  mutate(PC = paste0("PC", row_number())) %>% 
+  # Calculate variance explained
+  mutate(var_explained = eigenval / sum(eigenval) * 100)
+PC1_label <- paste0("PC1 (", round(pca_eigenval$var_explained[1], 2), "%)")
+PC2_label <- paste0("PC2 (", round(pca_eigenval$var_explained[2], 2), "%)")
+PC3_label <- paste0("PC3 (", round(pca_eigenval$var_explained[3], 2), "%)")
+
+pca_plot1 <- ggplot(pca_df, aes(PC1, PC2)) +
+  geom_hline(yintercept = 0, linewidth = 0.4, col = "gray") +
+  geom_vline(xintercept = 0, linewidth = 0.4, col = "gray") +
+  annotate("text", x = 0, y = minmax_buffer(pca_df$PC2), label = PC2_label, vjust = 1.5, hjust = -0.1, size = 5, col = "gray50") +
+  annotate("text", x = max(pca_df$PC1), y = 0, label = PC1_label, vjust = -0.5, hjust = 0.2, size = 5, col = "gray50") +
+  geom_point(aes(fill = rgb), size = 2.5, alpha = 0.9, pch = 21) +
+  scale_fill_identity() +
+  scale_x_continuous(limits = c(-minmax_buffer(pca_df$PC1), minmax_buffer(pca_df$PC1)), expand = c(0,0)) +
+  scale_y_continuous(limits = c(-minmax_buffer(pca_df$PC2), minmax_buffer(pca_df$PC2)), expand = c(0,0)) +
+  theme_void() +
+  theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10))
+
+pca_plot2 <- ggplot(pca_df, aes(PC2, PC3)) +
+  geom_hline(yintercept = 0, linewidth = 0.4, col = "gray") +
+  geom_vline(xintercept = 0, linewidth = 0.4, col = "gray") +
+  annotate("text", x = 0, y = minmax_buffer(pca_df$PC3), label = PC3_label, vjust = 1.5, hjust = -0.1, size = 5, col = "gray50") +
+  annotate("text", x = max(pca_df$PC2), y = 0, label = PC2_label, vjust = -0.5, hjust = 0.2, size = 5, col = "gray50") +
+  geom_point(aes(fill = rgb), size = 2.5, alpha = 0.9, pch = 21) +
+  scale_fill_identity() +
+  scale_x_continuous(limits = c(-minmax_buffer(pca_df$PC2), minmax_buffer(pca_df$PC2)), expand = c(0,0)) +
+  scale_y_continuous(limits = c(-minmax_buffer(pca_df$PC3), minmax_buffer(pca_df$PC3)), expand = c(0,0)) +
+  theme_void() +
+  theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10))
+
+pca_plot3 <- ggplot(pca_df, aes(PC1, PC3)) +
+  geom_hline(yintercept = 0, linewidth = 0.4, col = "gray") +
+  geom_vline(xintercept = 0, linewidth = 0.4, col = "gray") +
+  annotate("text", x = 0, y = minmax_buffer(pca_df$PC3), label = PC3_label, vjust = 1.5, hjust = -0.1, size = 5, col = "gray50") +
+  annotate("text", x = max(pca_df$PC1), y = 0, label = PC1_label, vjust = -0.5, hjust = 0.2, size = 5, col = "gray50") +
+  geom_point(aes(fill = rgb), size = 2.5, alpha = 0.9, pch = 21) +
+  scale_fill_identity() +
+  scale_x_continuous(limits = c(-minmax_buffer(pca_df$PC1), minmax_buffer(pca_df$PC1)), expand = c(0,0)) +
+  scale_y_continuous(limits = c(-minmax_buffer(pca_df$PC3), minmax_buffer(pca_df$PC3)), expand = c(0,0)) +
+  theme_void() +
+  theme(plot.margin = margin(t = 10, r = 10, b = 10, l = 10))
+
+png(here(plotpath, "pca.png"), width = 15, height = 5, units = "in", res = 300)
+cowplot::plot_grid(pca_plot1, pca_plot2, pca_plot3, pca_map, nrow = 1)
+dev.off()
+```
+
+
 ```{r}
 K_use <- 8
 Kvals <- 2:15
 
-# Color scales
-hiroshige_cols <- rev(c("#042346", "#295580", "#6bb2cc", "#9cd3dd", "#fecd6d", "#f7a957", "#ec7b4c", "#f04f32"))
+# Make color scales based on mean RGB values for each population
+# And reorder populations to make them ordered geographically
 ordered_pops <- c(8, 6, 2, 4, 3, 7, 1, 5)
-ordered_cols <- c(hiroshige_cols[1:3], hiroshige_cols[4:6], hiroshige_cols[7:8])
-new_pops <- 1:8
-fill_cols <- setNames(hiroshige_cols, new_pops)
+
+# create a lookup: old cluster -> new cluster
+cluster_map <- setNames(seq_along(ordered_pops), ordered_pops)
+
+pop_cols <-
+  pca_df %>% 
+  mutate(
+    cluster_new = cluster_map[as.character(cluster)],
+    cluster_new = factor(cluster_new, levels = seq_along(ordered_pops)),
+  ) %>%
+  sf::st_drop_geometry() %>%
+  group_by(cluster) %>%
+  summarise(across(c(R, G, B), mean), .groups = "drop") %>%
+  mutate(rgb = rgb(R, G, B)) %>%
+  # Subtract a little to pop 1 to make it more distinct (darker)
+  mutate(rgb = ifelse(cluster == 1, "#07353b", rgb)) 
+
+fill_cols <- setNames(pop_cols$rgb, pop_cols$cluster)
+#         1         2         3         4         5         6         7         8 
+# "#07353b" "#0F7885" "#7FD987" "#ABF0B5" "#DEA0F0" "#F4228D" "#C5CF22" "#DC8B18" 
 
 ca <- get_ca() %>% st_transform(3310)
 
-coords3310 <- get_coords(sf = TRUE) %>% st_as_sf(coords = c("x","y"), crs = 4326) %>% st_transform(3310)
-coords_tbl <- coords3310 %>% st_coordinates()  %>% as_tibble() %>% mutate(SampleID = coords3310$SampleID)
-coords_sf <- coords3310 %>% select(SampleID, geometry)
-
 qmat8 <- get_Q(K = K_use, qmat_only = TRUE) 
 qmat8_reordered <- qmat8[, ordered_pops]
-names(qmat8_reordered) <- paste0("V", new_pops)
+names(qmat8_reordered) <- paste0("V", 1:8)
 
 plt_bar <- 
   structure_plot(qmat8_reordered, legend = FALSE) + 
@@ -274,21 +379,6 @@ plt_cv <- ggplot(cv, aes(x = K, y = cv_error, group = 1)) +
     axis.text = element_text(size = 14)
   )
 
-Q8_long <- 
-  get_Q(K = K_use) %>%
-  arrange(across(starts_with("V"))) %>%
-  mutate(SampleID = factor(SampleID, levels = unique(SampleID))) %>%
-  pivot_longer(starts_with("V"), names_to = "PopGroup", values_to = "Q") %>%
-  mutate(PopGroup = gsub("V", "", PopGroup)) %>%
-  left_join(coords_sf, by = "SampleID") %>%
-  st_as_sf() %>%
-  mutate(cluster = as.character(cluster), PopGroup = as.character(PopGroup)) %>%
-  # Replace with new pop order
-  mutate(
-    cluster = as.character(match(as.numeric(cluster), ordered_pops)),
-    PopGroup = as.character(match(as.numeric(PopGroup), ordered_pops))
-  )
-
 qdf8 <- 
   Q8_long %>% 
   group_by(SampleID) %>% 
@@ -307,7 +397,7 @@ plt_admix <- ggplot() +
     legend.text = element_text(size = 14),
     legend.justification = c(1, 1),
     legend.background = element_blank(),
-    legend.position.inside = c(1.2, 0.95)
+    legend.position.inside = c(1.1, 1)
   )
 
 pie_df <-
@@ -338,13 +428,27 @@ plt_pie <- ggplot() +
     legend.background = element_blank(),
     legend.position.inside = c(0.9, 0.95)
   )
+```
 
+```{r}
 group1 <- cowplot::plot_grid(plt_cv, plt_admix, ncol = 1, rel_heights = c(0.45, 0.55), labels = c("B","C"), label_size = 14)
 group2 <- cowplot::plot_grid(plt_pie, group1, nrow = 1, rel_widths = c(0.55, 0.45), labels = c("A",""), label_size = 14)
 group3 <- cowplot::plot_grid(group2, plt_bar, ncol = 1, rel_heights = c(0.8, 0.2), labels = c("","D"), label_size = 14)
+group4 <- cowplot::plot_grid(pca_map, pca_plot1, pca_plot2, pca_plot3, nrow = 2, labels = c("E","F","G","H"), label_size = 14)
+group5 <- cowplot::plot_grid(group3, group4, nrow = 2, rel_heights = c(0.5, 0.5))
 
-png(here(plotpath, "figure_admixture.png"), width = 9.5, height = 7, units = "in", res = 300)
+png(here(plotpath, "figure_structure.png"), width = 9, height = 15, units = "in", res = 300)
+group5
+dev.off()
+
+
+png(here(plotpath, "figure_admixture.png"), width = 9, height = 15/2, units = "in", res = 300)
 group3
+dev.off()
+
+
+png(here(plotpath, "figure_pca.png"), width = 9, height = 15/2, units = "in", res = 300)
+cowplot::plot_grid(pca_map, pca_plot1, pca_plot2, pca_plot3, nrow = 2, labels = LETTERS[1:4], label_size = 14)
 dev.off()
 ```
 
