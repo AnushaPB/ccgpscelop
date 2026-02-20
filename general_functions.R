@@ -96,7 +96,7 @@ get_coords <- function(sf = FALSE, all = FALSE) {
 get_range <- function(){
   range_map <-
     st_read(here("data", "rWFLIx_CONUS_HabMap_2001v1", "rWFLIx_CONUS_Range_2001v1.shp")) %>%
-    st_transform(3310)# %>%
+    st_transform(3310) %>%
     st_intersection(get_ca() %>% st_transform(3310))
 }
 
