@@ -281,7 +281,7 @@ tmean_mod_df %>%
 ```{r}
 ca_proj_buffer <-  ca_proj %>% st_transform(5070) %>% st_buffer(dist = 10000) # buffer to ensure full coverage when cropping 
 
-evt_og <- rast("analysis/wildfire/LF2016_EVT_200_CONUS/Tif/LC16_EVT_200.tif") 
+evt_og <- rast(here("data", "env", "LF2016_EVT_200_CONUS", "Tif", "LC16_EVT_200.tif")) 
 evt <- crop(evt_og, ca_proj_buffer)
 # EVT PHYS is EVT physiogomy 
 # It is a good balance between detail and generalization that still captures relevant vegetation types for sceloporus habitat
@@ -373,33 +373,33 @@ evt_mod_df %>%
 
 # Hypothesis 7: Genetic diversity explained by historical fire regime
 ```{r}
-# Historical fire regime data
-# Fire Return Interval (FRI)
 ca_proj <- get_ca() %>% st_transform(3310)
 ca_proj_buffer <-  ca_proj %>% st_transform(5070) %>% st_buffer(dist = 10000) # buffer to ensure full coverage when cropping 
 
-fri_og <- rast("analysis/wildfire/LF2016_FRI_200_CONUS/Tif/LC16_FRI_200.tif") 
+# Historical fire regime data
+# Fire Return Interval (FRI)
+fri_og <- rast(here("data", "env", "LF2016_FRI_200_CONUS", "Tif", "LC16_FRI_200.tif")) 
 fri <- crop(fri_og, ca_proj_buffer)
 
 # Percent Fire Severity (PFS) 
-pfs_og <- rast("analysis/wildfire/LF2016_PFS_200_CONUS/Tif/LC16_PFS_200.tif")
+pfs_og <- rast(here("data", "env", "LF2016_PFS_200_CONUS", "Tif", "LC16_PFS_200.tif"))
 pfs <- crop(pfs_og, ca_proj_buffer)
 
 # Vegetation Departure (VDep)
-vdep_og <- rast("analysis/wildfire/LF2016_VDep_200_CONUS/Tif/LC16_VDep_200.tif")
+vdep_og <- rast(here("data", "env", "LF2016_VDep_200_CONUS", "Tif", "LC16_VDep_200.tif"))
 vdep <- crop(vdep_og, ca_proj_buffer)
 
 # Fire regime group (FRG) + vegetation group (BPS)
-bps_og <- rast("analysis/wildfire/LF2016_BPS_200_CONUS/Tif/LC16_BPS_200.tif")
+bps_og <- rast(here("data", "env", "LF2016_BPS_200_CONUS", "Tif", "LC16_BPS_200.tif"))
 bps <- crop(bps_og, ca_proj_buffer)
 
 # Longest fire free interval from 1984-2022
-lffi_og <- rast("analysis/wildfire/conus_fire_history_metrics_1984_2020/conus_1984_2020_LFFI.tif")
+lffi_og <- rast(here("data", "env", "conus_fire_history_metrics_1984_2020", "conus_1984_2020_LFFI.tif"))
 lffi <- crop(lffi_og, ca_proj_buffer)
 names(lffi) <- "lffi"
 
 # Recent fire frequency (FRQ) from 1984-2022
-frq_og <- rast("analysis/wildfire/conus_fire_history_metrics_1984_2020/conus_1984_2020_FRQ.tif")
+frq_og <- rast(here("data", "env", "conus_fire_history_metrics_1984_2020", "conus_1984_2020_FRQ.tif"))
 frq <- crop(frq_og, ca_proj_buffer)
 names(frq) <- "frq"
 
@@ -842,19 +842,6 @@ high_corr_pairs
 ```
 
 ```{r}
-#Make nice correlation plot
-cor_vars <- c("gHM", "bio1", "csi_past", "tmean_dif")
-r <- stats::cor(mod_df[, setdiff(numeric_mod_vars, c("x", "y"))], use = "pairwise.complete.obs")
-rownames(r) <- colnames(r) <- make_pretty_names(rownames(r))
-r[lower.tri(r, diag = TRUE)] <- NA
-
-library(corrplot)
-png(here(plotpath, "correlation_plot.png"), width = 10*300, height = 10*300, units = "px", res = 300)
-corrplot(r, method = "ellipse", type = "upper", tl.col = "black", tl.srt = 45, diag = FALSE, addCoef.col = "black", number.cex = 0.8)
-dev.off()
-```
-
-```{r}
 #-----------------------------
 # Helpers: detect variable type
 #-----------------------------
@@ -965,7 +952,7 @@ plot_A_cont_cont <- function(df){
     geom_tile(color = "white", linewidth = 0.3) +
     geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))), size = 4) +
     scale_fill_gradientn(
-      name = "Pearson r",
+      name = "Pearson's r",
       colours = c(viridis::mako(3, direction = 1, begin = 0.4, end = 0.9), "white", viridis::rocket(3, direction = -1, begin = 0.4, end = 0.9)),
       limits = c(-1, 1),
       oob = scales::squish,
@@ -1322,7 +1309,7 @@ ols_model2 <- lm(f_2, data = mod_sf_unique_scaled)
 
 # Compare OLS vs GLS
 anova(gls_model2, ols_model2) # GLS significantly better, but absolute AIC difference is small
-AIC(gls_model2) - AIC(ols_model2) # -5.3
+AIC(gls_model2) - AIC(ols_model2) # -7.68
 
 # Compare GLS models
 anova(gls_model1, gls_model2) # No significant difference between models
@@ -1331,8 +1318,8 @@ anova(gls_model1, gls_model2) # No significant difference between models
 moran_ols <- moran.test(residuals(ols_model2), lw_8)
 # Moran's I for GLS normalized residuals
 moran_gls <- moran.test(residuals(gls_model2), lw_8)
-print(moran_ols) # 0.128
-print(moran_gls) # 0.128
+print(moran_ols) # 0.145
+print(moran_gls) # 0.145
 
 # Based on these results I am picking ols_model2 to be the final model
 final_model <- ols_model2
@@ -1380,7 +1367,13 @@ contrast(emm, method = "pairwise") # No adjustment because there are only two le
 # Test for differences between vegetation groups
 emm <- emmeans(final_model, specs = "evt")
 tk <- contrast(emm, method = "tukey", adjust = "tukey") %>% as.data.frame()
-common_evt <- mod_sf_unique_scaled %>% group_by(evt) %>% summarise(n = n()) %>% arrange(desc(n)) %>% filter(n > 10) %>% pull(evt)
+common_evt <- 
+  mod_sf_unique_scaled %>% 
+  group_by(evt) %>% 
+  summarise(n = n()) %>%
+  arrange(desc(n)) %>% 
+  filter(n > 10) %>% 
+  pull(evt)
 tk %>%
   filter(p.value < 0.05)
 
@@ -1600,7 +1593,7 @@ plot_mod <- function(x, y, df, model, mod_vars,
       labs(x = "Contemporary fire", fill = "Historical fire frequency") +
       scale_fill_manual(values = c("white", "gray60", "gray30")) 
 
-    scale_y <- ifelse(residual, 1.1, 1.5)
+    scale_y <- ifelse(residual, 1.1, 1.4)
     plt <- plt + ylim(NA, max(df[[y]])*scale_y)
 
   } else if (x == "fire_frq") {
@@ -1682,6 +1675,9 @@ plot_mod <- function(x, y, df, model, mod_vars,
       )
     }
 
+    scale_y <- ifelse(residual, NA, 1.4) # Set to same scale as FRQ
+    plt <- plt + ylim(NA, max(df[[y]])*scale_y)
+
   } else if (x == "evt" | x == "glacier") {
     emm  <- emmeans(model, specs = x)
     pairs_df <- 
@@ -1758,7 +1754,7 @@ plot_mod <- function(x, y, df, model, mod_vars,
         legend.title = element_text(size = 16),
         legend.text = element_text(size = 14),
         legend.justification = c(1, 1),
-        legend.background = element_blank(),
+        legend.background = element_rect(fill = rgb(1,1,1,0.5), color = "black"), 
         legend.position.inside = c(legend.position.inside.x + bump_legend, 1)
       )
   }
@@ -1823,7 +1819,8 @@ plts_residual_y <- purrr::map(
   vars_to_plot,
   # Use unscaled data for plotting
   # Keep fire_frq simple
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = TRUE, interact = TRUE)
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = TRUE, interact = TRUE) + 
+  theme(plot.margin = margin(7, 7, 7, 7))
 )
 
 # B: Raw values
@@ -1831,7 +1828,8 @@ plts_raw_y <- purrr::map(
   vars_to_plot,
   # Use unscaled data for plotting
   # Keep fire_frq simple
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, interact = TRUE)
+  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, interact = TRUE) + 
+  theme(plot.margin = margin(7, 7, 7, 7))
 )
 
 # C: predicted vs observed 
@@ -1878,7 +1876,7 @@ plts_residual_y <-
     # Use unscaled data for plotting
     ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = TRUE, interact = .y)
   ) %>% 
-  map(~ .x + theme(plot.margin = margin(5.5, 5.5, 5.5, 25)))
+  map(~ .x + theme(plot.margin = margin(7, 7, 7, 7)))
 
 # B: Raw values
 plts_raw_y <- 
@@ -1888,7 +1886,7 @@ plts_raw_y <-
     # Use unscaled data for plotting
     ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, bump_legend = 0.1, interact = .y)
   ) %>% 
-  map(~ .x + theme(plot.margin = margin(5.5, 5.5, 5.5, 25)))
+  map(~ .x + theme(plot.margin = margin(7, 7, 7, 7)))
 
 plt_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 3, align = "v", labels = LETTERS[1:length(plts_residual_y)], label_size = 18, rel_widths = 1)
 
@@ -2173,10 +2171,9 @@ plot_continuous_pair <- function(df, x, y, breaks = 5, poly2 = FALSE, xlab = NUL
     geom_text(
       data = label_df,
       aes(x = x_bin, y = prop_hi + 0.1, label = paste0(n_hi, "/", n)),
-      colour = "red2", size = 7, fontface = 2, inherit.aes = FALSE
+      colour = "red2", size = 7, inherit.aes = FALSE
     ) +
     scale_fill_manual(values = col_pal) +
-    scale_color_manual(values = col_pal_text) +
     scale_x_discrete(labels = bl$lab, expand = c(0, 0)) +
     scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
     theme_classic() +
@@ -2218,13 +2215,12 @@ plot_categorical_pair <- function(df, x, y, xlab = NULL, ylab = NULL, q = "Q", t
     geom_text(
       data = label_df,
       aes(x = .data[[x]], y = prop_hi + 0.1, label = paste0(n_hi, "/", n)),
-      colour = "red2", size = 7, fontface = 2, inherit.aes = FALSE
+      colour = "red2", size = 7, inherit.aes = FALSE
     ) +
     theme_classic() +
     scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
     scale_fill_manual(values = col_pal) +
-    scale_color_manual(values = col_pal_text) +
-    labs(x = xlab %||% x, y = "P(admixture score > 0.10)", fill = "", col = "") +
+    labs(x = xlab %||% x, y = "P(admixture score > 0.10)", fill = "") +
     theme(
       legend.position = "none",
       axis.title = element_text(size = 18),
@@ -2470,6 +2466,7 @@ admix_df %>% filter(SampleID %in% outlier$SampleID)
 q8[which(id$X2 %in% outlier$SampleID),]
 ```
 
+# Check fire variables
 ```{r}
 # Check relationship between fire count and Ho in areas of intermediate frequency fire
 check_df <- 
@@ -2707,136 +2704,8 @@ readr::write_tsv(tab_S6, file.path(out_dir, "Table_S6_evt_contrasts.tsv"))
 list.files(out_dir, pattern = "^Table_S[2-6].*\\.tsv$", full.names = TRUE)
 
 ```
+
 # Variance partioning analysis
-```{r}
-get_R2 <- function(mod) summary(mod)$r.squared
-
-labs    <- attr(terms(final_model), "term.labels")
-R2_full <- get_R2(final_model)
-
-varpart_df <-
-  labs %>%
-  map_dfr(function(term_i) {
-    m_red   <- update(final_model, as.formula(paste(". ~ . -", term_i)))
-    m_alone <- update(final_model, as.formula(paste(". ~", term_i)))
-
-    R2_red   <- get_R2(m_red)
-    R2_alone <- get_R2(m_alone)
-
-    R2_unique <- R2_full - R2_red
-    R2_shared <- R2_alone - R2_unique
-
-    tibble(
-      term      = term_i,
-      R2_alone  = R2_alone,
-      R2_unique = R2_unique,
-      R2_shared = R2_shared
-    )
-  }) %>%
-  arrange(desc(R2_unique))
-
-varpart_pretty_df <-
-  varpart_df %>%
-  mutate(term = ifelse(grepl("\\:", term), "Recent fire:historical fire frequency", make_pretty_names(term))) %>%
-  rename("R2 alone" = R2_alone,
-         "R2 unique" = R2_unique,
-         "R2 shared" = R2_shared) %>%
-  arrange(desc(`R2 alone`))
-varpart_pretty_df
-```
-
-```{r}
-block_varpart <- function(model, blocks) {
-  stopifnot(inherits(model, "lm"))
-  stopifnot(is.list(blocks), length(blocks) > 0)
-
-  get_R2 <- function(mod) summary(mod)$r.squared
-  R2_full <- get_R2(model)
-
-  model_terms <- attr(terms(model), "term.labels")
-  missing <- setdiff(unlist(blocks), model_terms)
-  if (length(missing) > 0) {
-    stop(
-      "These block terms are not in the model:\n  ",
-      paste(missing, collapse = ", "),
-      "\n\nModel terms are:\n  ",
-      paste(model_terms, collapse = " | ")
-    )
-  }
-
-  imap_dfr(blocks, function(terms_vec, block_name) {
-    # Drop all terms in the block: ". ~ . - a - b - c"
-    drop_rhs <- paste(paste0("-", terms_vec), collapse = " ")
-    m_red <- update(model, as.formula(paste(". ~ .", drop_rhs)))
-
-    # Fit model with just block of terms
-    m_block <- update(model, as.formula(paste(". ~", paste(terms_vec, collapse = " + "))))
-
-    R2_red <- get_R2(m_red)
-    R2_unique <- R2_full - R2_red
-
-    tibble(
-      block = block_name,
-      terms = paste(terms_vec, collapse = " + "),
-      R2_block = get_R2(m_block),
-      R2_unique = R2_unique,
-      pct_of_full_R2 = if (R2_full > 0) 100 * R2_unique / R2_full else NA_real_
-    )
-  }) %>%
-    arrange(desc(R2_unique))
-}
-
-
-blocks1 <- list(
-  `historical fire regime`         = c("fire_frq"),
-  `contemporary fire`              = c("fire_recent", "fire_frq:fire_recent"),
-  `contemporary climate + habitat` = c("evt", "bio1"),
-  `contemporary climate change`    = c("tmean_dif"),
-  `paleoclimate change`      = c("poly(csi_past, 2, raw = TRUE)")
-)
-
-blocks1_nointeract <- list(
-  `historical fire regime`         = "fire_frq",
-  `contemporary fire`              = "fire_recent",
-  `contemporary vegetation`        = "evt",
-  `contemporary climate`           = "bio1",
-  `contemporary climate change`    = "tmean_dif",
-  `paleoclimate change`            = "poly(csi_past, 2, raw = TRUE)"
-)
-
-blocks2 <- list(
-  `historical`         = c("fire_frq", "poly(csi_past, 2, raw = TRUE)"),
-  `contemporary`       = c("fire_recent", "tmean_dif", "bio1", "evt")
-)
-
-blocks3 <- list(
-  `fire`                       = c("fire_frq", "fire_recent", "fire_frq:fire_recent"),
-  `climate change`             = c("poly(csi_past, 2, raw = TRUE)", "tmean_dif")
-)
-
-blocks4 <- list(
-  `fine scale`               = c("fire_frq", "fire_frq:fire_recent", "fire_recent", "evt"),
-  `coarse scale`             = c("poly(csi_past, 2, raw = TRUE)", "tmean_dif", "bio1")
-)
-
-blocks5 <- list(
-  `historical`         = c("fire_frq", "poly(csi_past, 2, raw = TRUE)"),
-  `contemporary`       = c("fire_recent", "tmean_dif")
-)
-
-
-block_varpart(no_interact_model, blocks1_nointeract)
-
-block_varpart(no_interact_model, blocks2)
-
-block_varpart(final_model, blocks3)
-
-block_varpart(final_model, blocks4)
-
-library(gstat)
-library(sp)
-```
-
 ```{r}
 # Calculate shared variance
 block_varpart_exact_shared <- function(model, blocks) {
@@ -2944,155 +2813,14 @@ dev.off()
 vp %>% mutate_at(vars(R2_unique, R2_full), ~ round(. * 100, 2))
 ```
 
-```{r}
-pairwise_block_R2s <- function(model, blocks) {
-  get_R2 <- function(m) summary(m)$r.squared
-
-  # fit model with only these RHS terms
-  fit_rhs <- function(rhs_terms) {
-    rhs <- if (length(rhs_terms) == 0) "1" else paste(rhs_terms, collapse = " + ")
-    update(model, as.formula(paste(". ~", rhs)))
-  }
-
-  block_names <- names(blocks)
-
-  combn(block_names, 2, simplify = FALSE) %>%
-    map_dfr(function(pair) {
-      A <- pair[1]; B <- pair[2]
-      terms_A  <- blocks[[A]]
-      terms_B  <- blocks[[B]]
-      terms_AB <- c(terms_A, terms_B)
-
-      mA  <- fit_rhs(terms_A)
-      mB  <- fit_rhs(terms_B)
-      mAB <- fit_rhs(terms_AB)
-
-      R2_AB <- get_R2(mAB)
-      R2_A  <- get_R2(mA)
-      R2_B  <- get_R2(mB)
-
-      tibble(
-        block_A = A,
-        block_B = B,
-        R2_AB = R2_AB,
-        R2_A  = R2_A,
-        R2_B  = R2_B,
-        unique_A = R2_AB - R2_B,
-        unique_B = R2_AB - R2_A,
-        shared = R2_A + R2_B - R2_AB
-      )
-    })
-}
-
-pairwise_block_R2s(final_model, blocks1) %>% select(block_A, block_B, shared) 
-pairwise_block_R2s(final_model, blocks2)
-pairwise_block_R2s(final_model, blocks3)
-pairwise_block_R2s(final_model, blocks4)
-
-```
-
-```{r}
-
-# binary 0/1 predictors
-sem_df <- mod_sf_unique_scaled
-sem_df$fire_recent01 <- ifelse(mod_sf_unique_scaled$fire_recent == "Burned", 1, 0)
-sem_df$glacier01     <- ifelse(mod_sf_unique_scaled$glacier == "InsideGlacier", 1, 0)
-# polynomial terms (since lavaan can’t do poly() inside syntax)
-sem_df$csi_past_1 <- as.numeric(scale(mod_sf_unique_scaled$csi_past, center = TRUE, scale = FALSE))
-sem_df$csi_past_2 <- sem_df$csi_past_1^2
-sem_df$fire_frq <- ordered(
-  sem_df$fire_frq,
-  levels = c("No Fire/Low Frequency", "Intermediate Frequency", "High Frequency")
-)
-# Convert evt to 0 and 1 matrix for each category
-pc_evt <- model.matrix(~ evt - 1, data = mod_sf_unique_scaled)
-pc_evt <- prcomp(pc_evt)
-sem_df$evt_pc1 <- as.numeric(scale(pc_evt$x[, 1]))
-sem_df$evt_pc2 <- as.numeric(scale(pc_evt$x[, 2]))
-
-
-sem_mod <- '
-  evt_pc1 ~ fire_frq + csi_past_1 + bio1
-  evt_pc2 ~ fire_frq + csi_past_2 + bio1
-
-  fire_recent01 ~ fire_frq + bio1 + tmean_dif
-
-  Ho ~ evt_pc1 + evt_pc2
-  Ho ~ fire_frq + fire_recent01
-  Ho ~ csi_past_1 + csi_past_2
-  Ho ~ bio1 + tmean_dif + glacier01 + gHM
-'
-
-fit <- sem(sem_mod, data = sem_df, estimator = "MLR", missing = "fiml")
-#summary(fit, standardized = TRUE, fit.measures = TRUE)
-```
-
-## Characteristic spatial scale test
-```{r}
-vg <- variogram(csi_past ~ 1, data = mod_sf_unique)
-vg_fit <- fit.variogram(vg, vgm("Gau"))
-vg_fit[2,3]/1000
-
-vg <- variogram(fire_frq ~ 1, data = mod_sf_unique)
-vg_fit <- fit.variogram(vg, vgm("Gau"))
-vg_fit[2,3]/1000
-
-vg <- variogram(fire_recent ~ 1, data = mod_sf_unique)
-vg_fit <- fit.variogram(vg, vgm("Sph"))
-vg_fit[2,3]/1000
-
-fit_var <- function(spdf, var){
-  f <- formula(paste(var, "~ 1"))
-  vg <- variogram(f, spdf)
-
-  fits <- list(
-    Gau = fit.variogram(vg, vgm("Gau")),
-    Sph = fit.variogram(vg, vgm("Sph")),
-    Exp = fit.variogram(vg, vgm("Exp"))
-  )
-
-  # drop failed fits
-  fits <- compact(fits)
-
-  # AIC from WSS (standard geostat practice)
-  aic <- map_dbl(fits, function(f) {
-    n <- nrow(vg)
-    k <- length(f$psill) + 1   # sill(s) + range
-    rss <- attr(f, "SSErr")
-    n * log(rss / n) + 2 * k
-  })
-
-  best_fit <- fits[[which.min(aic)]]
-
-  return(data.frame(range_km = best_fit[2, 3]/1000))
-}
-
-cat_variogram_range <- function(spdf, class, model = "Gau") {
-  levels <- unique(spdf[[class]])
-  names(levels) <- levels
-  map(levels, function(level) {
-    spdf$ind <- as.numeric(spdf[[class]] == level)
-    fit_var(spdf, "ind")
-  }) %>% bind_rows(.id = "level")
-}
-
-cat_vars <- c("fire_frq", "fire_recent", "evt")
-names(cat_vars) <- cat_vars
-range_cat <- 
-  map(cat_vars, ~cat_variogram_range(mod_sf_unique, class = .x)) %>%
-  bind_rows(.id = "var")
-
-num_vars <- c("csi_past", "tmean_dif", "bio1")
-names(num_vars) <- num_vars
-range_num <- map(num_vars, ~fit_var(mod_sf_unique, .x)) %>% bind_rows(.id = "var")
-
-range_result <- bind_rows(range_num, range_cat)
-range_result
-```
-
 # Plot maps of variables
 ```{r}
 plot_points_map <- function(var, df) {
+  df$fire_frq <- factor(
+    df$fire_frq,
+    levels = c("No Fire/Low Frequency","Intermediate Frequency","High Frequency"),
+    labels = c("Low/No Fire","Intermediate","High")
+  )
   plt_var <- 
     ggplot() +
     geom_sf(data = ca_proj) +
@@ -3115,11 +2843,14 @@ plot_points_map <- function(var, df) {
         plt_var + 
         geom_sf(data = df, aes_string(fill = var, shape = var), size = 2) +
         scale_shape_manual(values = c(21, 24, 22)[1:length(unique(df[[var]]))]) + 
-        labs(shape = gsub(" ", "\n", stringr::str_to_sentence(make_pretty_names(var)))) 
+        labs(shape = gsub(" ", "\n", stringr::str_to_sentence(make_pretty_names(var)))) + 
+        scale_fill_viridis_d(option = "turbo", begin = 0.25, end = 0.75, direction = -1)
     } else {
-      plt_var <- plt_var + geom_sf(data = df, aes_string(fill = var), size = 2, shape = 21)
-    }
-    plt_var <- plt_var + scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9, direction = -1)
+      plt_var <- 
+        plt_var + 
+        geom_sf(data = df, aes_string(fill = var), size = 2, shape = 21) + 
+        scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9, direction = -1)
+    }    
   }
   plt_var <- plt_var + labs(fill = gsub(" ", "\n", stringr::str_to_sentence(make_pretty_names(var)))) 
 }

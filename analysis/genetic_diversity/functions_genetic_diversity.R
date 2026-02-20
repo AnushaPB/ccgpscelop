@@ -5,6 +5,7 @@ get_het <- function(file = "58-Sceloporus_chr.het"){
   callable <- read.csv(here("data_processing", "callable_counts.csv"))
   callable_sites <- callable %>% pull(callable_sites)
 
+  message("Loading heterozygosity data from ", file)
   het <- format_het(here("analysis", "genetic_diversity", "outputs", file), callable_sites = callable_sites)
   
   if ("IID" %in% names(het)) het$SampleID <- het$IID
