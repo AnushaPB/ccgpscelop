@@ -93,6 +93,7 @@ cor(env, use = "pairwise.complete.obs")
 source(here("analysis", "ibdibe", "gdm.R")) # BUG IN GDM PACKAGE, USING FIXED VERSION
 gdm <- gdm_do_everything(gendist = gendist, coords = st_coordinates(coords_proj), env = env, quiet = TRUE, model = "best", nperm = 99)
 
+
 print(gdm$coeff_df)
 ```
 
