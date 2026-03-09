@@ -1,0 +1,226 @@
+---
+title: "FEEMS"
+output:
+  github_document:
+    toc: TRUE
+---
+```{r}
+library("here")
+library("sf")
+library("terra")
+library("ggpubr")
+library("tidyverse")
+source(here("analysis", "sdm", "paleovars.R"))
+source(here("analysis", "feems", "feems.R"))
+source(here("general_functions.R"))
+
+# Load data
+ca <- get_ca()
+feems <- get_feems(crop = TRUE, nodes = TRUE)
+nodes <- feems$nodes
+edges <- feems$edges
+
+# Set-up color palette
+d <- max(c(abs(min(edges$w_trans, na.rm = TRUE)), abs(max(edges$w_trans, na.rm = TRUE))))
+color_palette <- c("#994000", "#CC5800", "#FF8F33", "#FFAD66", "#FFCA99", "#FFE6CC", "#FBFBFB", "#CCFDFF", "#99F8FF", "#66F0FF", "#33E4FF", "#00AACC", "#007A99")
+
+ggplot() +  geom_sf(data = ca, fill = "#f0f0f0", color="black")   +
+  geom_sf(data = edges, aes(col = w_trans), lwd = 1) +
+  geom_sf(data = ca, fill = NA, color="black")   +
+  geom_sf(data = nodes, aes(cex = nsamp), fill = NA, col = "black", pch = 21) +
+  labs(col = "log10(w)", cex = "Sample size") +
+  scale_color_gradientn(colors = color_palette, limits = c(-d, d)) +
+  theme_void()
+```
+
+```{r}
+# Create an empty raster
+feems_vect <- vect(edges)
+# Create an empty raster
+r <- rast(ext(feems_vect), resolution = 0.01)
+# Rasterize the shapefile
+r <- rasterize(feems_vect, r, field = "w")
+# Define the moving window 
+window <- matrix(1, nrow = 15, ncol = 15)
+# Run the moving window analysis
+r_moving_window <- focal(r, w = window, fun = mean, na.rm = TRUE)
+r_df <- as.data.frame(r_moving_window, xy = TRUE, ID = FALSE)
+
+ggplot() +
+  geom_sf(data = ca, fill = NA, color="black")   +
+  geom_raster(data = r_df, aes(x = x, y = y, fill = log(focal_mean)), lwd = 1) +
+  #geom_sf(data = coords) +
+  scale_fill_gradientn(colors = color_palette, limits = c(-d, d), na.value = NA) +
+  theme_void()
+```
+
+# Resistance
+```{r}
+env_list <- get_paleovars()
+list2env(env_list, envir = .GlobalEnv)
+
+edges <- edges %>% mutate(wpos = case_when(w_trans > 0 ~ w_trans), wneg = case_when(w_trans < 0 ~ w_trans))
+
+env_list <- env_list[!(names(env_list) == "mis19")]
+
+env_df_vals <- map(env_list, ~ {
+  avg <- terra::extract(.x, edges, fun = mean, na.rm = TRUE)
+  return(data.frame(edges[, c("w_trans", "wpos", "wneg")], avg))
+})
+
+diff_vars <- names(env_list) %>% setdiff("cur")
+diff_vals <- map(diff_vars, ~ {
+  diff <- cur - get(.x)
+  avg <- terra::extract(diff, edges, fun = mean, na.rm = TRUE)
+  return(data.frame(edges[, c("w_trans", "wpos", "wneg")], avg))
+})
+
+env_df_vals <- c(env_df_vals, diff_vals)
+names(env_df_vals) <- c(names(env_list), paste0("dif_", diff_vars))
+
+cor_vals <- 
+  map(env_df_vals, ~ {
+    cordf <- .x %>% select(w_trans, wpos, wneg, contains("bio")) %>% drop_na(w_trans)
+    res <- cor(select(cordf, contains("bio")), select(cordf, w_trans, wpos, wneg), use = "pairwise.complete.obs")
+    df <- 
+      data.frame(res) %>% 
+      mutate(var = row.names(res)) %>% 
+      pivot_longer(c("w_trans", "wpos", "wneg"), names_to = "w", values_to = "r") %>%
+      pivot_wider(names_from = var, values_from = r)
+  }) 
+
+cor_df <- 
+  cor_vals %>% 
+  bind_rows(.id = "timeperiod") %>% 
+  pivot_longer(contains("bio")) %>%
+  mutate(timeperiod = factor(timeperiod, levels = names(cor_vals))) %>%
+  mutate(bioclim = as.factor(as.numeric(gsub("bio_", "", name))))
+
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = value)) +
+  geom_tile() +
+  labs(fill = expression(r[w])) +
+  facet_wrap(~w) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+ggplot(cor_df, aes(x = bioclim, y = timeperiod, fill = abs(value))) +
+  geom_tile() +
+  facet_wrap(~w) +
+  scale_fill_viridis_c(option = "rocket", direction = -1) +
+  labs(fill = expression(r[w])) +
+  theme_minimal()
+
+# bio3 and 4 pop up
+# bio3 = isothermality
+# bio4 = temperature seasonality
+```
+
+```{r}
+# note: strong patterns dissapear with log(w), check this out
+mega_df <- bind_rows(env_df_vals, .id = "timeperiod")
+
+filter_df <- 
+  mega_df %>% 
+  filter(!grepl("dif", timeperiod) & timeperiod != "mis19") 
+
+ggplot(filter_df, aes(bio_3, wpos)) +
+    geom_point(alpha = 0.3, cex = 2) +
+    #geom_hex() +
+    facet_wrap(~timeperiod, scales = "free") +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() 
+
+ggplot(filter_df, aes(bio_3, wpos)) +
+    geom_point(alpha = 0.3, cex = 0.5) +
+    facet_wrap(~timeperiod, scales = "free") +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic()  
+
+cur_df <- filter_df %>% filter(timeperiod == "cur")
+
+# bio3 and bio4 are strongly correlated
+cor(cur_df$bio_3, cur_df$bio_4)
+# choosing bio3
+summary(lm(w_trans ~ bio_3, data = cur_df))
+summary(lm(wpos ~ bio_3, data = cur_df))
+summary(lm(wneg ~ bio_3, data = cur_df))
+
+filter2_df <- filter_df %>% filter(w_trans > 0)
+ggplot(filter2_df, aes(bio_3, w_trans)) +
+    geom_point(alpha = 0.3, cex = 1.5, pch = 16) +
+    facet_wrap(~timeperiod, scales = "free") +
+    stat_regline_equation(
+      aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+      formula = y ~ x
+    ) +
+    geom_smooth(method = "lm") +
+    stat_cor(label.y = 0) +
+    theme_classic() 
+
+env_sf <- 
+  bind_cols(st_geometry(edges), env_df_vals[["cur"]]) %>% 
+  st_as_sf()
+
+plt1 <- 
+  ggplot(env_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = wpos)) +
+  scale_color_viridis_c(option = "magma", na.value = "lightgray") +
+  theme_void()
+
+plt2 <- 
+  ggplot(env_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = wneg)) +
+  scale_color_viridis_c(option = "magma", na.value = "lightgray") +
+  theme_void()
+
+plt3 <- 
+  ggplot(env_sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = bio_3)) +
+  scale_color_viridis_c(option = "magma") +
+  theme_void()
+
+gridExtra::grid.arrange(plt1, plt2, plt3, nrow = 1)
+```
+
+# Elevation
+```{r}
+dem <- get_dem(r = TRUE)
+avg <- terra::extract(dem, edges, fun = mean, na.rm = TRUE)
+dem_df <- data.frame(elevation = avg, edges)
+
+summary(lm(wpos ~ elevation, data = dem_df))
+summary(lm(wneg ~ elevation, data = dem_df))
+
+ggplot(dem_df, aes(elevation, wpos)) +
+  geom_point(alpha = 0.3, cex = 1.5, pch = 16) +
+  stat_regline_equation(
+    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = 0) +
+  theme_classic() 
+
+ggplot(dem_df, aes(elevation, wneg)) +
+  geom_point(alpha = 0.3, cex = 1.5, pch = 16) +
+  stat_regline_equation(
+    aes(label =  paste(after_stat(eq.label), after_stat(adj.rr.label), sep = "~~~~")),
+    formula = y ~ x
+  ) +
+  geom_smooth(method = "lm") +
+  stat_cor(label.y = -3) +
+  theme_classic() 
+```

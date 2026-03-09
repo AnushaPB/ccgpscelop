@@ -44,13 +44,72 @@ stopifnot(all(dos$IID == coords$SampleID))
 # CORRECT DOS NAMES (remove trailing _[A-Z] from dos names, but keep the rest)
 colnames(dos) <- gsub("_[A-Z]$", "", colnames(dos))
 ```
+```{r}
+# Get full genome PCA
+pca_full <- 
+  read_table(here("analysis", "angrypancake", "data", "58-Sceloporus_pca.eigenvec"), col_names = c("FID", "SampleID", "PC1", "PC2", "PC3")) %>% 
+  left_join(coords) %>%
+  st_as_sf()
+
+
+
+pca_rgb <- pca_full %>%
+  mutate(
+    # Rescale each PC to 0–1 for RGB mapping
+    R = scales::rescale(PC1, to = c(0, 1)),
+    G = scales::rescale(PC2, to = c(0, 1)),
+    B = scales::rescale(PC3, to = c(0, 1)),
+    # Create an RGB color string
+    rgb_col = rgb(R, G, B)
+  )
+
+ca <- get_ca()
+
+plt_rgb <- 
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(data = pca_rgb, aes(fill = rgb_col), pch = 21, size = 2) +
+  scale_fill_identity() +
+  theme_void()
+
+pca_full_plt <-
+  ggplot(pca_full) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = PC1), pch = 21, size = 2, color = "black") +
+  scale_fill_viridis_c(option = "turbo") +
+  theme_void()  +
+  labs(fill = "Full PC1")
+
+pca_full_plt2 <-
+  ggplot(pca_full) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = PC2), pch = 21, size = 2, color = "black") +
+  scale_fill_viridis_c(option = "turbo") +
+  theme_void()  +
+  labs(fill = "Full PC2")
+
+pca_full_plt3 <-
+  ggplot(pca_full) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = PC3), pch = 21, size = 2, color = "black") +
+  scale_fill_viridis_c(option = "turbo") +
+  theme_void()  +
+  labs(fill = "Full PC3")
+
+pdf(here(plotpath, "full_genome_pca_maps.pdf"), width = 5, height = 5)
+plt_rgb
+pca_full_plt
+pca_full_plt2
+pca_full_plt3
+dev.off()
+```
 
 ```{r}
 # Get HSP gene loci
 # This filter makes sure to catch things like "heat shock 70 kDA protein", but exclude things like "heat shock transcription factor"
 hsp <- 
   df %>% 
-  #filter(grepl("heat shock", full_name) & grepl("protein", full_name) & grepl("70", full_name))
+  #filter((grepl("heat shock", full_name) & grepl("protein", full_name) & grepl("70", full_name)) | grepl("HSPA", full_name)) 
   filter(grepl("heat shock", full_name) & grepl("protein", full_name))
 
 gene_struc_hsp <- 
@@ -111,19 +170,35 @@ gene_loadings <-
 pc_df <- 
   coords %>% 
   left_join(gene_dos, by = "SampleID") %>%
-  mutate(PC1 = gene_pca$x[, 1], PC2 = gene_pca$x[,2]) 
+  mutate(PC1 = gene_pca$x[, 1], PC2 = gene_pca$x[,2], PC3 = gene_pca$x[,3]) 
 
 gene_df <-
   pc_df %>%
   pivot_longer(starts_with("chr"), names_to = "locus", values_to = "dos")
 
-plt2 <-
+plt2a <-
   ggplot(gene_df) +
-  geom_sf(data = ca) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
   geom_sf(aes(fill = PC1), pch = 21, size = 2, color = "black") +
   scale_fill_viridis_c(option = "turbo") +
-  theme_void() +
-  theme(legend.position = "bottom")
+  theme_void()  +
+  labs(fill = "HSP PC1")
+
+plt2b <-
+  ggplot(gene_df) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = PC2), pch = 21, size = 2, color = "black") +
+  scale_fill_viridis_c(option = "turbo") +
+  theme_void()  +
+  labs(fill = "HSP PC2")
+
+plt2c <-
+  ggplot(gene_df) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = PC3), pch = 21, size = 2, color = "black") +
+  scale_fill_viridis_c(option = "turbo") +
+  theme_void()  +
+  labs(fill = "HSP PC3")
 
 gene_loadings_unique <- gene_loadings %>% distinct(PC1, PC2, gene_name)
 plt3 <- 
@@ -190,17 +265,83 @@ plt7 <-
   theme_classic() +
   ggpubr::stat_cor()
 
+plt8 <-
+  ggplot(pca_full, aes(x = bio1, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  theme_classic() +
+  ggpubr::stat_cor()
+
+plt9 <-
+  ggplot(pca_full, aes(x = ndvi, y = PC1)) +
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  theme_classic() +
+  ggpubr::stat_cor()
+
+hsp_rgb <- pc_df %>%
+  mutate(
+    # Rescale each PC to 0–1 for RGB mapping
+    R = scales::rescale(PC1, to = c(0, 1)),
+    G = scales::rescale(PC2, to = c(0, 1)),
+    B = scales::rescale(PC3, to = c(0, 1)),
+    # Create an RGB color string
+    rgb_col = rgb(R, G, B)
+  )
+
+plt_hsp_rgb <- 
+  ggplot() +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(data = hsp_rgb, aes(fill = rgb_col), pch = 21, size = 2) +
+  scale_fill_identity() +
+  theme_void()
+
+plt_hsp_legend <-
+  ggplot(hsp_rgb) +
+  geom_point(aes(x = bio1, y = ndvi, color = rgb_col), size = 2) +
+  scale_color_identity() +
+  theme_classic() +
+  labs(x = "Temperature", y = "NDVI")
+
 pdf(here(plotpath, "hsp70_locus_maps.pdf"), width = 12, height = 12)
 plt1
 dev.off()
 
+
+pdf(here(plotpath, "hsp70_rgb.pdf"), width = 10, height = 5)
+cowplot::plot_grid(plt_hsp_rgb, plt_hsp_legend)
+dev.off()
+
 pdf(here(plotpath, "hsp70_pca_maps.pdf"), width = 5, height = 5)
-plt2
+plt_hsp_rgb
+plt2a
+plt2b
+plt2c
+pca_full_plt
 plt3
 plt4
 plt5
 plt6
 plt7
+plt8
+plt9
+dev.off()
+```
+```{r}
+summary(lm(PC1 ~ bio1 + ndvi, data = pc_df)) # R2 = 0.22
+mod_df <- left_join(st_drop_geometry(pc_df), dplyr::select(pca_full, SampleID, PC1_full = PC1), by = "SampleID")
+summary(lm(PC1 ~ bio1 + ndvi + PC1_full, data = mod_df)) # R2 = 0.76, ndvi + PC1_full only
+summary(lm(PC2 ~ bio1 + ndvi + PC1_full, data = mod_df)) # R2 = 0.28, ndvi + PC1_full only
+summary(lm(PC3 ~ bio1 + ndvi + PC1_full, data = mod_df)) # R2 = 0.12, bio1 only
+
+pdf(here(plotpath, "hsp70_pca_models.pdf"))
+resid_y <- lm(PC3 ~ ndvi + PC1_full, data = mod_df)$residuals
+resid_x <- lm(bio1 ~ ndvi + PC1_full, data = mod_df)$residuals
+ggplot(mod_df, aes(x = resid_x, y = resid_y)) +
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  theme_classic() +
+  ggpubr::stat_cor()
 dev.off()
 ```
 
@@ -271,11 +412,8 @@ predict_allele <- function(snp, coords, current, future, maxdist = 50000, admix_
 
   # Model current allele presence/absence
   current_df <- data.frame(allele_ref = snp %in% c(0, 1), allele_alt = snp %in% c(1, 2), current_vals)
-  # mod_ref <- glm(allele_ref ~ bio1, data = current_df, family = binomial)
-  # mod_alt <- glm(allele_alt ~ bio1, data = current_df, family = binomial)
-  
-  mod_ref <- randomForest(as.factor(allele_ref) ~ bio1, data = current_df)
-  mod_alt <- randomForest(as.factor(allele_alt) ~ bio1, data = current_df)
+  mod_ref <- glm(allele_ref ~ bio1, data = current_df, family = binomial)
+  mod_alt <- glm(allele_alt ~ bio1, data = current_df, family = binomial)
 
   # Predict current distribution
   current_map_ref <- terra::predict(current, mod_ref, type = "response")
@@ -357,31 +495,6 @@ predict_allele <- function(snp, coords, current, future, maxdist = 50000, admix_
       ifel(future_map_bin == 0, d_current_ref, d_current_alt))
   adapt_met <- adapt_distance <= maxdist
 
-  # Get sources
-  find_source <- function(fut_targets, cur_targets) {
-    # Identify cells of type
-    type <- unique(values(cur_targets, na.rm = TRUE))[1]
-    cur_targets[cur_targets == fut_targets | cur_targets == 0.5 | fut_targets == 0.5] <- NA
-    fut_targets[fut_targets == cur_targets | fut_targets == 0.5 | cur_targets == 0.5] <- NA
-    cells_current <- which(values(cur_targets) == 1)
-    cells_future <- which(values(fut_targets) == type)
-
-    # Get coordinates of those cells
-    coords_current <- xyFromCell(cur_targets, cells_current)
-    coords_future <- xyFromCell(fut_targets, cells_future)
-
-    # Convert to SpatVector
-    v_current <- vect(coords_current, type = "points", crs = crs(cur_targets))
-    v_future  <- vect(coords_future,  type = "points", crs = crs(future_map_bin))
-
-    # Find nearest type cell in current for each type cell in future
-    # (using fast nearest-neighbor search)
-    nn_index <- terra::nearest(v_current, v_future)
-
-    # Get the corresponding cell IDs in r2
-    nearest_cell_ids <- cells_r2[nn_index]
-  }
-
   # MOVING
   # Future targets: where each allele will exist in the FUTURE
   fut_ref_targets <- ifel(future_map_bin_ref == 1, 1, NA)
@@ -417,9 +530,9 @@ future_agg <- aggregate(future, 5)
 
 availability <- 
   map(snp_names, ~{
-    # .x = "chr10_20210652_T_C"
+    # .x = "chr9_25931322_C_T"
     snp <- dos %>% pull(.x)
-    predict_allele(snp, coords, current_agg, future_agg, maxdist = 10000, admix_thresh = 0.1)
+    predict_allele(snp, coords, current = current_agg, future = future_agg, maxdist = 10000, admix_thresh = 0.1)
   }, .progress = TRUE) 
 
 ca <- 
@@ -736,221 +849,80 @@ ggplot(mega_count_df) +
 dev.off()
 ```
 
-
-# BIVARIATE
+# Calculate mismatch
 ```{r}
-library(biscale)
-dim = 4
-data <- bi_class(gg_df, x = adapt_distance, y = move_distance, style = "quantile", dim = dim)
-r_df <- as.data.frame(dist_stack, xy = TRUE) %>% drop_na()
-data2 <- bi_class(r_df, x = adapt_distance, y = move_distance, style = "quantile", dim = dim)
-map2 <- 
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") + 
-  geom_raster(data = drop_na(data2), mapping = aes(x = x, y = y, fill = bi_class), show.legend = FALSE) +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank())
-map1 <- 
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") + 
-  geom_sf(data = drop_na(data), mapping = aes(fill = bi_class), col = "black", show.legend = FALSE, pch = 21, cex = 2) +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank())
-legend <- 
-  bi_legend(
-    pal = "DkBlue2",
-    dim = dim,
-    xlab = "Adapt",
-    ylab = "Move",
-    size = 8
-  )
-bivplot <- cowplot::plot_grid(map1, legend, rel_widths = c(4, 1))
-bivplot2 <- cowplot::plot_grid(map2, legend, rel_widths = c(4, 1))
-# TO MAKE THIS BETTER NEED TO PUT ON SAME SCALE
-pdf(here(plotpath, "hsp_bivariate_plot.pdf"), width = 6, height = 4)
-bivplot
-bivplot2
-dev.off()
-```
+snp_names <- names(avail_stack[[1]])
+names(snp_names) <- snp_names
+mismatch <-
+  map(snp_names, ~{
+    snp_pred <- extract(avail_stack$current_bin[[.x]], coords, ID = FALSE, method = "bilinear")[,1]
+    adapt_dist <- extract(avail_stack$adapt_distance[[.x]], coords, ID = FALSE, method = "bilinear")[,1]
+    diff <- extract(avail_stack$diff[[.x]], coords, ID = FALSE, method = "bilinear")[,1]
 
-```{r}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(biscale)
-library(cowplot)
-library(grid)   # unit()
-library(terra)
+    snp_obs <- gene_dos %>% pull(.x)
+    mismatch <- snp_pred != snp_obs
+    result <- coords %>% mutate(mismatch = mismatch, adapt_dist = adapt_dist, diff = diff) 
+  }) %>%
+  bind_rows(.id = "locus") %>%
+  group_by(SampleID) %>%
+  summarize(
+    mismatch_prop = mean(mismatch, na.rm = TRUE), 
+    mean_adapt_dist = mean(adapt_dist, na.rm = TRUE),
+    diff = mean(diff, na.rm = TRUE)
+  ) %>%
+  left_join(read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))) %>%
+  st_as_sf()
 
-# --- 1) Choose a shared scale (km) and fixed breaks ---
-dim <- 2
-max_km <- ceiling(max(
-  gg_df$adapt_distance, gg_df$move_distance,
-  global(dist_stack$adapt_distance, "max", na.rm=TRUE)[[1]],
-  global(dist_stack$move_distance,  "max", na.rm=TRUE)[[1]],
-  na.rm = TRUE
-) / 10) * 10             # round up to a nice number (10 km here)
+summary(lm(mismatch_prop ~ Ho, data = mismatch))
 
-breaks <- seq(0, max_km, length.out = dim + 1)
+pdf(here(plotpath, "hsp_mismatch_vs_het.pdf"), width = 5, height = 5)
+ggplot(mismatch, aes(x = Ho, y = mismatch_prop)) +
+  geom_point(aes(fill = mismatch_prop), pch  = 21) +
+  geom_smooth(method = "lm")  +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  theme_classic() +
+  ggpubr::stat_cor() 
 
-# helper: equal-interval classification to "i-j" strings biscales expects
-bi_class_equal <- function(df, x, y, breaks) {
-  xi <- cut(df[[x]], breaks = breaks, include.lowest = TRUE, labels = FALSE)
-  yi <- cut(df[[y]], breaks = breaks, include.lowest = TRUE, labels = FALSE)
-  df$bi_class <- factor(paste(xi, yi, sep = "-"),
-                        levels = as.vector(outer(1:dim, 1:dim, paste, sep = "-")))
-  df
-}
+ggplot(mismatch) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = mismatch_prop), pch = 21) +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  coord_sf() +
+  theme_void() 
 
-# --- 2) Points (gg_df) on equal bins ---
-data_pt <- gg_df %>%
-  bi_class_equal(x = "adapt_distance", y = "move_distance", breaks = breaks)
+ggplot(mismatch, aes(x = Ho, y = mean_adapt_dist)) +
+  geom_point(aes(fill = mean_adapt_dist), pch  = 21) +
+  geom_smooth(method = "lm")  +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  theme_classic() +
+  ggpubr::stat_cor()
 
-# --- 3) Raster grid on equal bins ---
-r_df <- as.data.frame(dist_stack, xy = TRUE) %>% drop_na(adapt_distance, move_distance)
-data_rs <- bi_class_equal(r_df, x = "adapt_distance", y = "move_distance", breaks = breaks)
+ggplot(mismatch, aes(x = Q, y = mean_adapt_dist)) +
+  geom_point(aes(fill = mean_adapt_dist), pch  = 21) +
+  geom_smooth(method = "lm")  +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  theme_classic() +
+  ggpubr::stat_cor()
 
-# also compute difference for the 0-isoline
-r_df$move_minus_adapt <- r_df$move_distance - r_df$adapt_distance
+ggplot(mismatch) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = mean_adapt_dist), pch = 21) +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  coord_sf() +
+  theme_void() 
 
-# --- 4) Plot: points map + legend ---
-map1 <-
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") +
-  geom_sf(data = drop_na(data_pt), aes(fill = bi_class), color = "black", pch = 21, size = 2, show.legend = FALSE) +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank()) +
-  labs(subtitle = paste0("Equal bins on 0–", max_km, " km (", dim, "×", dim, ")"))
-
-legend <-
-  bi_legend(
-    pal  = "DkBlue2",
-    dim  = dim,
-    xlab = "Adapt (km)",
-    ylab = "Move (km)",
-    size = 8
-  )
-
-bivplot <- cowplot::plot_grid(map1, legend, rel_widths = c(4, 1))
-
-# --- 5) Plot: raster map + 0-contour where move == adapt ---
-map2 <-
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") +
-  geom_raster(data = drop_na(data_rs), aes(x = x, y = y, fill = bi_class), show.legend = FALSE) +
-  # 0-level contour of (move - adapt): move > adapt above the line, < below
-  geom_contour(data = r_df, aes(x = x, y = y, z = move_minus_adapt),
-               breaks = 0, linewidth = 0.4, color = "black") +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank()) +
-  labs(subtitle = paste0("Equal bins on 0–", max_km, " km; black line: move = adapt"))
-
-bivplot2 <- cowplot::plot_grid(map2, legend, rel_widths = c(4, 1))
-
-# --- 6) Save ---
-pdf(here(plotpath, "hsp_bivariate_plot_equalbins.pdf"), width = 6, height = 4)
-bivplot
-bivplot2
-dev.off()
-
-```
-
-```{r}
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(biscale)
-library(cowplot)
-library(grid)   # unit()
-library(terra)
-
-# -------- log helpers --------
-# use log10(1 + x) so zeros are OK and the scale is interpretable
-logify  <- function(x) log10(1 + x)
-unlog10 <- function(x) (10^x) - 1
-
-# --- 1) Shared LOG scale and fixed breaks ---
-dim <- 2
-
-# compute global max in LINEAR km first (across points + raster)
-max_km <- max(
-  gg_df$adapt_distance, gg_df$move_distance,
-  global(dist_stack$adapt_distance, "max", na.rm=TRUE)[[1]],
-  global(dist_stack$move_distance,  "max", na.rm=TRUE)[[1]],
-  na.rm = TRUE
-)
-
-# convert to LOG10(1+km) and make equal-width breaks there
-max_log <- logify(max_km)
-breaks_log <- seq(0, max_log, length.out = dim + 1)
-
-# helper: classify two columns using LOG breaks -> "i-j" bi_class
-bi_class_logbins <- function(df, x, y, breaks_log) {
-  xi <- cut(logify(df[[x]]), breaks = breaks_log, include.lowest = TRUE, labels = FALSE)
-  yi <- cut(logify(df[[y]]), breaks = breaks_log, include.lowest = TRUE, labels = FALSE)
-  df$bi_class <- factor(paste(xi, yi, sep = "-"),
-                        levels = as.vector(outer(1:dim, 1:dim, paste, sep = "-")))
-  df
-}
-
-# --- 2) Points on LOG bins ---
-data_pt <- gg_df %>%
-  bi_class_logbins(x = "adapt_distance", y = "move_distance", breaks_log = breaks_log)
-
-# --- 3) Raster grid on LOG bins ---
-r_df <- as.data.frame(dist_stack, xy = TRUE) %>%
-  drop_na(adapt_distance, move_distance)
-
-data_rs <- bi_class_logbins(r_df, x = "adapt_distance", y = "move_distance", breaks_log = breaks_log)
-
-# equality boundary (keep in linear km)
-r_df$move_minus_adapt <- r_df$move_distance - r_df$adapt_distance
-
-# --- 4) Plots ---
-map1 <-
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") +
-  geom_sf(data = drop_na(data_pt), aes(fill = bi_class), color = "black",
-          pch = 21, size = 2, show.legend = FALSE) +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank()) +
-  labs(subtitle = paste0("Equal-width bins in log10(1+km), ",
-                         dim, "×", dim, "; max ≈ ", round(max_km), " km"))
-
-legend <-
-  bi_legend(
-    pal  = "DkBlue2",
-    dim  = dim,
-    xlab = "Adapt (log10(1+km))",
-    ylab = "Move (log10(1+km))",
-    size = 8
-  )
-
-bivplot <- cowplot::plot_grid(map1, legend, rel_widths = c(4, 1))
-
-map2 <-
-  ggplot() +
-  geom_sf(data = ca, col = "lightgray", fill = "lightgray") +
-  geom_raster(data = drop_na(data_rs), aes(x = x, y = y, fill = bi_class), show.legend = FALSE) +
-  # exact boundary (move == adapt) in linear units
-  geom_contour(data = r_df, aes(x = x, y = y, z = move_minus_adapt),
-               breaks = 0, linewidth = 0.4, color = "black") +
-  bi_scale_fill(pal = "DkBlue2", dim = dim) +
-  bi_theme() +
-  theme(axis.title = element_blank()) +
-  labs(subtitle = "Bins in log10(1+km); black line: move = adapt (linear km)")
-
-bivplot2 <- cowplot::plot_grid(map2, legend, rel_widths = c(4, 1))
-
-# --- 5) Save ---
-pdf(here(plotpath, "hsp_bivariate_plot_logbins.pdf"), width = 6, height = 4)
-bivplot
-bivplot2
+ggplot(mismatch, aes(x = Ho, y = diff)) +
+  geom_point(aes(fill = diff), pch  = 21) +
+  geom_smooth(method = "lm")  +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  theme_classic() +
+  ggpubr::stat_cor()
+ggplot(mismatch) +
+  geom_sf(data = ca, fill = "lightgrey", color = "darkgrey") +
+  geom_sf(aes(fill = diff), pch = 21) +
+  scale_fill_viridis_c(option = "plasma", direction = 1, na.value = "transparent") +
+  coord_sf() +
+  theme_void() 
 dev.off()
 
 ```
