@@ -25,6 +25,7 @@ get_coords <- function(sf = FALSE, all = FALSE) {
   # sample coords
   coords <- read_table(here("data", "ccgp_data", "58-Sceloporus.coords.txt"), col_names = FALSE)
   colnames(coords) <- c("SampleID", "x", "y")
+  original_nsamp <- nrow(coords)
 
   # CORRECTED COORDS:
   cc <- get_corrected_coords()
@@ -72,13 +73,6 @@ get_coords <- function(sf = FALSE, all = FALSE) {
   # If all = TRUE, return coordinates before removing beckii samples, unknown provenance sample, and potentially swapped samples
   if (all) {return(coords)}
 
-  message(
-    "Removing: ", length(beckii_samples), " S. beckii samples, ",
-    length(unknown_samples), " unknown provenance sample, and ",
-    length(swapped_samples), " potentially swapped samples",
-    "\nNumber of samples dropped from VCF during QC: ", ndropped
-  )
-
   # Remove beckii, unknown provenance sample, and potentially swapped samples
   coords <-
     coords %>%
@@ -88,7 +82,14 @@ get_coords <- function(sf = FALSE, all = FALSE) {
     coords <- st_as_sf(coords, coords = c("x", "y"), crs = 4326)
   }
 
-  message(nrow(coords), " samples with coordinates")
+  message(
+    "Removing: ", length(beckii_samples), " S. beckii samples, ",
+    length(unknown_samples), " unknown provenance sample, and ",
+    length(swapped_samples), " potentially swapped samples",
+    "\nNumber of samples dropped from VCF during QC: ", ndropped,
+    "\nNumber of samples with coordinates before filtering: ", original_nsamp,
+    "\nNumber of samples with coordinates after filtering: ", nrow(coords)
+  )
 
   return(coords)
 }
