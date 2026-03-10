@@ -1,0 +1,398 @@
+```{r}
+library(wingen)
+library(here)
+library(sf)
+library(tidyverse)
+library(terra)
+library(vcfR)
+library(cowplot)
+library(furrr)
+source(here("general_functions.R"))
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
+
+# cell_size - distance between opposite edges of hexagon (edge length is cellsize/sqrt(3)). 
+# A length units object can be passed, or an area unit object with area size of hexagonal cell.
+make_hex <- function(coords, cell_size) {
+  st_sf(geometry = st_make_grid(coords, cell_size, what = "polygons", square = FALSE))
+}
+
+area_to_cell_size <- function(area) {
+  length = sqrt((2 * area) / (3 * sqrt(3)))
+  cell_size = length * sqrt(3)
+  return(cell_size)
+}
+
+window_hex <- function(x, coords, grid, stat, rings){
+  result <- furrr::future_map_dbl(1:nrow(grid), ~hex_helper(.x, x = x, coords = coords, grid = grid, stat = stat, rings = rings), .progress = TRUE)
+  grid$stat <- result
+  return(grid)
+}
+
+hex_helper <- function(cell, x, coords, grid, stat, rings = 1) {
+  cells <- hex_window(cell, grid, rings)
+  intersected_coords <- st_intersects(coords, cells, sparse = FALSE)
+  if (all(!intersected_coords)) return(NA)
+  i <- apply(intersected_coords, 1, any)
+  if (is.null(dim(x))) subx <- x[i] else subx <- x[i,]
+  stat(subx)
+}
+
+hex_window <- function(cell, grid, rings = 0){
+  if (rings == 0) return(grid[cell,])
+
+  neighbors <- st_touches(grid[cell,], grid, sparse = TRUE)
+  neighbor_cells <- grid[c(cell, unlist(neighbors)), ]
+
+  if (rings == 1) return(neighbor_cells)
+
+  if (rings > 1){
+    for (i in 1:(rings - 1)){
+      neighbors <- st_touches(neighbor_cells, grid, sparse = TRUE)
+      neighbor_cells <- grid[unique(unlist(neighbors)), ]
+    }
+  }
+
+  return(neighbor_cells)
+}
+
+
+preview_hex <- function(coords, cell_size, rings = 1){
+  grid <- make_hex(coords, cell_size)
+  centroid <- st_centroid(st_union(grid))
+  cell_centroid <- which(st_intersects(grid, centroid, sparse = FALSE))
+  window <- hex_window(cell_centroid, grid, rings)
+  
+  ggplot() +
+    geom_sf(data = grid, fill = "#DEF5E5FF", color = "gray") +
+    geom_sf(data = window, fill = "#357BA2FF") +
+    geom_sf(data = grid[cell_centroid,], fill = "#0B0405FF") +
+    geom_sf(data = coords, pch = 3, col = viridis::magma(1, begin = 0.7)) +
+    theme_void()
+}
+
+calc_mean_het <- function(hetmat) {
+  if (is.null(dim(hetmat))) {
+    gd <- mean(hetmat, na.rm = TRUE)
+  } else {
+    het_by_locus <- colMeans(hetmat, na.rm = TRUE)
+    gd <- mean(het_by_locus, na.rm = TRUE)
+  }
+  names(gd) <- "Ho"
+  return(gd)
+}
+
+```
+
+```{r}
+# Load dosage data
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+dos <- read_table(here("analysis", "gea", "outputs", "nogea_thinned.raw"))
+
+# Load coords and model dataframe
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+mod_df <- left_join(coords, mod_df)
+
+# Subset to only samples in coords
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+dos <- dos[dos$IID %in% coords$SampleID, ]
+
+# Confirm orders are the same
+stopifnot(all(dos$IID == gea_dos$IID))
+stopifnot(all(dos$IID == coords$SampleID))
+
+# Convert to heterozygosity using ifelse for matrices
+het <- dos[, -(1:6)]
+gea_het <- gea_dos[, -(1:6)]
+het <- matrix(ifelse(het == 1, 1, 0), nrow = nrow(het), ncol = ncol(het))
+gea_het <- matrix(ifelse(gea_het == 1, 1, 0), nrow = nrow(gea_het), ncol = ncol(gea_het))
+
+# Confirm conversion works (same number of 1s)
+stopifnot(sum(het == 1, na.rm = TRUE) == sum(dos[, -(1:6)] == 1, na.rm = TRUE))
+stopifnot(sum(gea_het == 1, na.rm = TRUE) == sum(gea_dos[, -(1:6)] == 1, na.rm = TRUE))
+
+# Make test dataset with calculate heterozygosity
+test_df <- data.frame(Ho_gea = rowMeans(gea_het, na.rm = TRUE), Ho = rowMeans(het, na.rm = TRUE), coords)
+```
+
+```{r}
+grid <- make_hex(st_buffer(coords, 110000), cell_size = 10000)
+st_area(grid[1,])
+ca <- get_ca() %>% st_transform(3310)
+png(here(plotpath, "hex.png"), width = 800, height = 800)
+ggplot() + geom_sf(data = grid) + geom_sf(data = ca, fill = NA, col = "red")
+dev.off()
+
+run_wingen <- function(grid, min_n = 1, cache = TRUE) {
+  # Path to save output
+  path = here("analysis", "gea", "outputs", paste0("windowed_ho_gea_hex.shp"))
+
+  # If file exists and cache is TRUE, return the raster
+  if (file.exists(path) && cache) {
+    stack <- rast(path)
+    return(stack)
+  }
+
+
+  # Custom function to run wingen on environmental data
+  run_wingen_env <- function(x){
+    custom <- function(x) mean(x, na.rm = TRUE)
+    w <- window_general(mod_df[[x]], coords, lyr, stat = custom, wdim = wdim, min_n = min_n)
+    return(w[[1]]) 
+  }
+  
+  # Check that order is the same
+  stopifnot(mod_df$SampleID == coords$SampleID)
+
+  # Run wingen on var columns in mod_df
+  mod_vars <- c("NDVI", "gHM", "bio1", "cur_lgm", "lgm_lig", "csi_past", "glacier", "tmean_dif", "Q")
+  names(mod_vars) <- mod_vars
+
+  # Check that all variables are in the model df
+  stopifnot(all(mod_vars %in% names(mod_df)))
+  
+  # Set up parallel processing
+  future::plan("multisession", workers = 10)
+
+  # Run wingen on environmental data
+  wenv <- purrr::map(mod_vars, run_wingen_env, .progress = TRUE)  
+  wenv <- rast(wenv)
+
+  # Run wingen on heterozygosity data
+  whex <- window_hex(het, coords, grid, stat = calc_mean_het, rings = 3)
+  whex_gea <- window_hex(het, coords, grid, stat = calc_mean_het, rings = 2)
+
+  # End parallel process
+  future::plan("sequential")
+  
+  #stack <- c(wg[["Ho"]], wg_gea[["Ho"]], wenv)
+  #names(stack) <- c("Ho", "Ho_gea", names(wenv))
+  if (cache) st_write(whex, path)
+
+  return(stack)
+}
+
+whex_crop <- st_intersection(whex, ca)
+
+pdf(here(plotpath, "hex.pdf"), width = 4, height = 4)
+ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = whex_crop, fill = NA, color = "gray", alpha = 0.4) +
+  geom_sf(data = drop_na(whex_crop), aes(fill = stat), color = rgb(1,1,1,0.05)) +
+  scale_fill_viridis_c(option = "magma", na.value = NA) +
+  labs(fill = "Ho") +
+  theme_void()
+dev.off()
+
+stack <- run_wingen(wdim = 11, min_n = 1, cache = TRUE)
+stack2 <- run_wingen(wdim = 15, min_n = 1, cache = TRUE)
+
+png(here(plotpath, "wingen.png"), width = 1600, height = 1600)
+par(mfrow = c(2, 3))
+plot_gd(stack[[1]], main = "Ho", col = viridis::viridis(100))
+plot_gd(stack[[2]], main = "Ho_gea", col = viridis::viridis(100))
+plot_gd(stack[[3]], main = "tmean_dif", col = viridis::viridis(100))
+
+plot_gd(stack2[[1]], main = "Ho", col = viridis::viridis(100))
+plot_gd(stack2[[2]], main = "Ho_gea", col = viridis::viridis(100))
+plot_gd(stack2[[3]], main = "tmean_dif", col = viridis::viridis(100))
+dev.off()
+```
+
+# Models
+
+## wdim = 11
+```{r}
+df <- as.data.frame(stack, xy = TRUE)
+scale_df <- df %>% mutate_all(scale)
+lm(Ho ~ tmean_dif + paleo_change + tmean + Q, data = scale_df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif + paleo_change + tmean + Q, data = scale_df) %>% broom::tidy()
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
+test_df$paleo_change <- extract(paleo_change, coords, ID = FALSE)[,1]
+test_df$tmean <- extract(cur, coords, ID = FALSE)[,1]
+test_df$Ho_wg <- extract(stack[["Ho"]], coords, ID = FALSE)[,1]
+test_df$Ho_gea_wg <- extract(stack[["Ho_gea"]], coords, ID = FALSE)[,1]
+
+test_df <- 
+  test_df %>% 
+  left_join(q) %>%
+  mutate_at(vars(Ho_wg, Ho_gea_wg, tmean_dif, paleo_change, tmean, Q), scale)
+lm(Ho_wg ~ tmean_dif + paleo_change + tmean + Q, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif + paleo_change + tmean + Q, data = test_df) %>% broom::tidy()
+
+mod_vars <- c( "paleo_change", "tmean_dif", "tmean", "Q")
+pdf(here(plotpath, "wingen_lm_wdim11.pdf"), width = 12, height = 12)
+plot_list1 <- purrr::map(mod_vars, ~ gglm(.x, "Ho", scale_df))
+partial_plot_list1 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho", mod_vars, drop_na(scale_df)))
+plot_list2 <- purrr::map(mod_vars, ~ gglm(.x, "Ho_gea", scale_df))
+partial_plot_list2 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(scale_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+
+
+plot_list1 <- purrr::map(mod_vars, ~ gglm(.x, "Ho", test_df))
+partial_plot_list1 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho", mod_vars, drop_na(test_df)))
+plot_list2 <- purrr::map(mod_vars, ~ gglm(.x, "Ho_gea", test_df))
+partial_plot_list2 <- purrr::map(mod_vars, ~ ggpartial(.x, "Ho_gea", mod_vars, drop_na(test_df)))
+do.call(plot_grid, c(plot_list1, partial_plot_list1, plot_list2, partial_plot_list2, nrow = 4))
+dev.off()
+
+library(ggpubr)
+ca <- get_ca() %>% st_transform(st_crs(stack))
+plt1 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void() 
+
+plt2 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <- 
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <- 
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange") 
+
+pltB <- 
+  ggplot(df, aes(x = tmean_dif, y = resids)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Contemporary temperature change", y = "Residuals") 
+
+pdf(here("analysis", "gea", "plots", "wingen.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+```
+
+## wdim = 15
+```{r}
+df <- as.data.frame(stack2, xy = TRUE)
+scale_df <- df %>% mutate_all(scale)
+lm(Ho ~ tmean_dif + paleo_change + tmean, data = scale_df) %>% broom::tidy()
+lm(Ho_gea ~ tmean_dif + paleo_change + tmean, data = scale_df) %>% broom::tidy()
+df$resids <- residuals(lm(Ho_gea ~ Ho, data = df))
+
+test_df$tmean_dif <- extract(tmean_dif, coords, ID = FALSE)[,1]
+test_df$paleo_change <- extract(paleo_change, coords, ID = FALSE)[,1]
+test_df$tmean <- extract(cur, coords, ID = FALSE)[,1]
+test_df$Ho_wg <- extract(stack[["Ho"]], coords, ID = FALSE)[,1]
+test_df$Ho_gea_wg <- extract(stack[["Ho_gea"]], coords, ID = FALSE)[,1]
+test_df <- test_df %>% mutate_at(vars(Ho_wg, Ho_gea_wg, tmean_dif, paleo_change, tmean), scale)
+lm(Ho_wg ~ tmean_dif + paleo_change + tmean, data = test_df) %>% broom::tidy()
+lm(Ho_gea_wg ~ tmean_dif + paleo_change + tmean, data = test_df) %>% broom::tidy()
+
+mod_vars <- c("tmean_dif", "paleo_change", "tmean")
+pdf(here(plotpath, "wingen_lm_wdim15.pdf"))
+plot_grid(
+  gglm("paleo_change", "Ho", scale_df),
+  gglm("tmean_dif", "Ho", scale_df),
+  gglm("tmean", "Ho", scale_df),
+  ggpartial("paleo_change", "Ho", mod_vars, drop_na(scale_df)),
+  ggpartial("tmean_dif", "Ho", mod_vars, drop_na(scale_df)),
+  ggpartial("tmean", "Ho", mod_vars, drop_na(scale_df))
+)
+dev.off()
+
+
+library(ggpubr)
+ca <- get_ca() %>% st_transform(st_crs(stack2))
+plt1 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Genome-wide\nheterozygosity") +
+  theme_void()
+
+plt2 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = Ho_gea)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Adaptive\nheterozygosity") +
+  theme_void()
+
+plt3 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = resids)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Residuals") +
+  theme_void()
+
+plt4 <-
+  ggplot(df) + 
+  geom_sf(data = ca) +
+  geom_raster(aes(x = x, y = y, fill = tmean_dif)) +
+  scale_fill_viridis_c(option = "mako") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
+  theme_void()
+
+pltA <-
+  ggplot(df, aes(x = Ho, y = Ho_gea)) +
+  geom_point(aes(col = tmean_dif), alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  scale_color_viridis_c(option = "mako") +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Genome-wide heterozygosity", y = "Adaptive heterozygosity", col = "Contemporary\ntemperature\nchange")
+
+pltB <-
+  ggplot(df, aes(x = tmean_dif, y = resids)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(, method = "lm", se = FALSE) +
+  theme_classic() +
+  stat_cor() +
+  labs(x = "Contemporary temperature change", y = "Residuals")
+
+pdf(here("analysis", "gea", "plots", "wingen2.pdf"), width = 15, height = 3)
+cowplot::plot_grid(plt1, plt2, plt3, plt4, nrow = 1)
+dev.off()
+
+pdf(here("analysis", "gea", "plots", "wingen_model2.pdf"), width = 9.5, height = 4)
+cowplot::plot_grid(pltA, pltB, nrow = 1, rel_widths = c(1, 0.8))
+dev.off()
+```

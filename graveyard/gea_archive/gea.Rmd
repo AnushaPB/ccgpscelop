@@ -1,0 +1,78 @@
+
+```{r}
+library(algatr)
+library(tidyverse)
+library(here)
+source(here("general_functions.R"))
+```
+```{r}
+load_algatr_example()
+#path <- here("58-Sceloporus", "58-Sceloporus_maf05_minDP5_maxDP50_rmsamp60_mm80_rmsamp20_r60.vcf.gz")
+path <- here("data", "raw_data", "QC", "58-Sceloporus.pruned.vcf.gz")
+vcf <- vcfR::read.vcfR(path)
+dos <- vcf_to_dosage(vcf)
+dos_imp <- simple_impute(dos)
+
+coords <- get_coords() %>% filter(SampleID %in% row.names(dos_imp))
+env <- extract(CA_env, coords[,c("x", "y")])
+
+rda <- rda_run(dos_imp, coords = coords[, c("x", "y")], env = env, model = "full")
+rda_sig_p <- rda_getoutliers(rda, naxes = "all", outlier_method = "p", p_adj = "fdr", sig = 0.05, plot = FALSE)
+
+rda_plot(rda, rda_sig_p$rda_snps, rda_sig_p$pvalues, rdaplot = FALSE, manhattan = TRUE)
+
+  
+chrom <- vcf@fix[,1]
+chrom_numbering <- 
+  data.frame(chrom = vcf@fix[,1]) %>%
+  group_by(chrom) %>%
+  count() %>%
+  ungroup() %>%
+  arrange(desc(n)) %>%
+  mutate(chromn = 1:nrow(.)) %>%
+  dplyr::select(-n)
+
+df <- 
+  data.frame(chrom = chrom, p = rda_sig_p$pvalues, pos = 1:length(rda_sig_p$pvalues)) %>%
+  mutate(outlier = case_when(p < 0.05 ~ TRUE, .default = FALSE)) %>%
+  mutate(neglogp = -log(p)) %>%
+  left_join(chrom_numbering)
+
+axis_set <- 
+  df %>%
+  group_by(chromn) %>%
+  summarize(center = mean(pos))
+
+ggplot(filter(df, chromn %in% 1:5)) +
+  geom_point(aes(x = (pos), y = neglogp, col = as.factor(chromn)), cex = 0.5) +
+  #facet_wrap(~chrom, scales = "free_x", nrow = 1, strip.position = "bottom") +
+  geom_hline(aes(yintercept = -log(0.05)), col = "black", linetype = "dashed") +
+  scale_color_manual(values = rep(c("#38a197", "#1d5650"), nrow(df))) +
+  xlab("") +
+  ylab("-log(p)") +
+  theme_classic() +
+  scale_y_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_x_continuous(
+    label = axis_set$chromn,
+    breaks = axis_set$center
+  ) +
+  theme(
+    strip.background = element_blank(), strip.placement = "outside",
+    axis.ticks.x = element_blank(), legend.position = 1)
+
+
+
+ggplot(df) +
+  geom_point(aes(x = (pos), y = neglogp, col = as.factor(chromn)), cex = 0.5) +
+  #facet_wrap(~chrom, scales = "free_x", nrow = 1, strip.position = "bottom") +
+  geom_hline(aes(yintercept = -log(0.05)), col = "black", linetype = "dashed") +
+  scale_color_manual(values = rep(c("#38a197", "#1d5650"), nrow(df))) +
+  xlab("") +
+  ylab("-log(p)") +
+  theme_classic() +
+  scale_y_continuous(limits = c(0, NA), expand = c(0, 0)) +
+  scale_x_continuous(label = axis_set$chromn, breaks = axis_set$center,expand = c(0,0)) +
+  theme(
+    strip.background = element_blank(), strip.placement = "outside",
+    axis.ticks.x = element_blank(), legend.position = 1, axis.text.x = element_blank())
+```
