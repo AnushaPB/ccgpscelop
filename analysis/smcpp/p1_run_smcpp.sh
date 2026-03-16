@@ -183,11 +183,5 @@ for it in $(seq 1 $NUM_ITS); do
   mv *.stderr outputs/it${it}/
 done
 
-[1] 469632
-[2] 469633
-[3] 469634
-[4] 469636
-[5] 469639
-[6] 469642
-[7] 469645
-[8] 469648
+# Finally, move all bed files to outputs/ for organization
+mv *.bed* outputs/
