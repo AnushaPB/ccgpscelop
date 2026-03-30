@@ -5,6 +5,9 @@ BASE_PATH=../../data/ccgp_data
 PLINK=$BASE_PATH/58-Sceloporus_complete_coords_annotated_chr
 PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6_chr
 
+# Calculate how many SNPs in PLINK
+wc -l ${PLINK}.bim #61896673
+
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
 # FID: Family ID

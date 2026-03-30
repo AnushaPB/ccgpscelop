@@ -693,6 +693,7 @@ ols_model <- lm(f, data = mod_sf_unique_scaled)
 performance::check_collinearity(gls_model) 
 performance::check_collinearity(ols_model) 
 # High VIF for fire interaction term, but that is expected; otherwise all our <10
+# (note: VIF may be high for fire_recent/interaction because of the imbalance in the number of burned vs unburned samples within the no fire/low frequency group)
 
 # Compare OLS vs GLS
 anova(gls_model, ols_model) # GLS significantly better, but absolute AIC difference is small
@@ -848,7 +849,7 @@ scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale
 
 df = mod_sf_unique
 model = final_model
-x = "tmean_dif"
+x = "fire_frq"
 y = "Ho"
 col_var = "Ho_original"
 residual = TRUE
@@ -1106,21 +1107,6 @@ plot_mod <- function(x, y, df, model, mod_vars,
           vjust = 0.6
         )
     }
-  } else if {x == "tmean_dif" & interact}{  
-
-    # Calculate switch point for interaction between tmean_dif and bio1 using raw data (not scaled) for interpretability
-    raw_mod <- lm(formula(model), df)
-    b <- coef(raw_mod)
-    switch_point <- -b["tmean_dif"] / b["bio1:tmean_dif"]
-    df$switch_group <- ifelse(df$bio1 < switch_point, paste0("Warm (≥ ", round(switch_point, 2), " °C)"), paste0("Cold (< ", round(switch_point, 2), " °C)"))
-
-    plt <-
-      ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
-      geom_point(aes(col = .data[[col_var]], shape = switch_group), size = 2, show.legend = FALSE) +
-      geom_smooth(method = "lm", colour = "black", aes(linetype = switch_group)) +
-      scale_shape_manual(values = c(1, 16)) +
-      scale_linetype_manual(values = c("dashed", "solid"))
-
   } else {
 
     if (nrow(b_annotation) == 1) {
@@ -1158,7 +1144,7 @@ plot_mod <- function(x, y, df, model, mod_vars,
     ) 
   if (residual)  legend.position.inside.x  <- legend.position.inside.x + 0.1
 
-  if (x == "fire_recent" | (x == "fire_frq" & interact) | (x == "tmean_dif" & interact)) {
+  if (x == "fire_recent" | (x == "fire_frq" & interact)) {
     plt <- 
       plt +
       theme(
@@ -1276,7 +1262,7 @@ dev.off()
 
 ```{r}
 # Plot all variables
-final_model_vars <- c("csi_past", "tmean_dif", "bio1", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
+final_model_vars <- c("csi_past", "tmean_dif", "bio1", "ai", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
 interact <- rep(TRUE, length(final_model_vars))
 interact[4] <- FALSE
 
@@ -1304,11 +1290,11 @@ plt_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 3, align =
 
 plt_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 3, align = "v", labels = LETTERS[1:length(plts_raw_y)], label_size = 18)
 
-png(here(plotpath, "figure_Ho_allvars_residual.png"), height = 13, width = 15, res = 300, units = "in")
+png(here(plotpath, "figure_Ho_allvars_residual.png"), height = 16, width = 15, res = 300, units = "in")
 plt_residual
 dev.off()
 
-png(here(plotpath, "figure_Ho_allvars_raw.png"), height = 13, width = 15, res = 300, units = "in")
+png(here(plotpath, "figure_Ho_allvars_raw.png"), height = 16, width = 15, res = 300, units = "in")
 plt_raw
 dev.off()
 ```
@@ -1493,7 +1479,6 @@ p_term <- p_term + theme(axis.title = element_text(size = 14), axis.text = eleme
 png(here(plotpath, "figure_variograms_side_by_side.png"), height = 8, width = 10, units = "in", res = 300)
 cowplot::plot_grid(cowplot::plot_grid(p_ind_noleg, p_term, ncol = 1, align = "hv", labels = c("A","B"), label_size = 18), leg, nrow = 1, rel_widths = c(1,0.5), align = "v")
 dev.off()
-
 ```
 
 ## Continuous admixture plot
@@ -1683,185 +1668,7 @@ dev.off()
 png(here(plotpath, "admix_figure.png"), height = 7.5, width = 12, res = 300, units = "in")
 plot_grid(admix_csi_plt, admix_fire_plt, nrow = 1, labels = c("A", "B"), label_size = 18)
 dev.off()
-
-
-
 ```
-
-
-## Binned admixture analysis
-```{r}
-
-col_pal <- c("Non-admixed" = "red2", "Admixed" = "skyblue2")
-col_pal_text <- c("Non-admixed" = "pink1", "Admixed" = "skyblue1")
-
-bin_labels <- function(x, breaks = 5, digits = 2) {
-  b <- cut(x, breaks = breaks, include.lowest = TRUE)
-  lev <- levels(b)
-
-  mids <- sapply(lev, \(s) {
-    nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
-    mean(nums)
-  })
-  maxs <- sapply(lev, \(s) {
-    nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
-    max(nums)
-  })
-
-  list(bin = b, lab = sprintf(paste0("%.", digits, "f"), mids), max = maxs)
-}
-
-prop_counts <- function(df, x_bin, group = "admix") {
-  df %>%
-    count({{ x_bin }}, .data[[group]], name = "n") %>%
-    group_by({{ x_bin }}) %>%
-    mutate(prop = n / sum(n)) %>%
-    ungroup()
-}
-
-plot_continuous_pair <- function(df, x, y, breaks = 5, poly2 = FALSE, xlab = NULL, ylab = NULL) {
-  bl <- bin_labels(df[[x]], breaks = breaks)
-  df2 <- df %>% mutate(x_bin = bl$bin)
-  prop_df <- prop_counts(df2, x_bin)
-
-  form <- if (poly2) y ~ poly(x, 2) else y ~ x
-
-  p_scatter <-
-    ggplot(df2, aes(x = .data[[x]], y = .data[[y]])) +
-    geom_point(aes(col = admix)) +
-    geom_smooth(method = "lm", colour = "black", formula = form) +
-    geom_vline(xintercept = bl$max, linetype = "dashed", colour = "gray50") +
-    theme_classic() +
-    labs(x = xlab %||% x, y = ylab %||% y, col = "") +
-    scale_x_continuous(labels = bl$lab, breaks = as.numeric(bl$lab), expand = c(0, 0)) +
-    scale_color_manual(values = col_pal) +
-    theme(
-      axis.title = element_text(size = 18),
-      axis.text  = element_text(size = 16),
-      legend.text = element_text(size = 16),
-      legend.position = "top"
-    )
-
-  p_count <-
-    ggplot(prop_df, aes(x = x_bin)) +
-    geom_col(aes(y = prop, fill = admix)) +
-    geom_text(aes(label = n, y = ifelse(admix == "Admixed", prop + 0.1, 0.9), col = admix),
-              size = 7, fontface = 2) +
-    scale_fill_manual(values = col_pal) +
-    scale_color_manual(values = col_pal_text) +
-    scale_x_discrete(labels = bl$lab, expand = c(0, 0)) +
-    scale_y_continuous(expand = c(0, 0)) +
-    theme_classic() +
-    labs(x = paste0("Binned ", xlab %||% x), y = "Proportion", fill = "") +
-    theme(
-      legend.position = "none",
-      axis.title = element_text(size = 18),
-      axis.text  = element_text(size = 16)
-    )
-
-  list(df = df2, prop_df = prop_df, plt = plot_grid(p_scatter, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.4)))
-}
-
-plot_categorical_pair <- function(df, x, y, xlab = NULL, ylab = NULL) {
-  df2 <- df
-  prop_df <- prop_counts(df2, .data[[x]])
-
-  p_box <-
-    ggplot(df2, aes(x = .data[[x]], y = .data[[y]])) +
-    geom_boxplot() +
-    geom_jitter(aes(col = admix), size = 2, width = 0.2) +
-    theme_classic() +
-    labs(x = xlab %||% x, y = ylab %||% y, col = "") +
-    scale_color_manual(values = col_pal) +
-    theme(
-      axis.title = element_text(size = 18),
-      axis.text  = element_text(size = 16),
-      legend.text = element_text(size = 16),
-      legend.position = "top"
-    )
-
-  p_count <-
-    ggplot(prop_df, aes(x = .data[[x]])) +
-    geom_col(aes(y = prop, fill = admix)) +
-    geom_text(aes(label = n, y = ifelse(admix == "Admixed", prop + 0.1, 0.9), col = admix),
-              size = 7, fontface = 2) +
-    theme_classic() +
-    scale_y_continuous(expand = c(0, 0)) +
-    scale_fill_manual(values = col_pal) +
-    scale_color_manual(values = col_pal_text) +
-    labs(x = xlab %||% x, y = "Proportion", fill = "", col = "") +
-    theme(
-      legend.position = "none",
-      axis.title = element_text(size = 18),
-      axis.text  = element_text(size = 16)
-    )
-
-  list(df = df2, prop_df = prop_df, plt = plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.4)))
-}
-
-`%||%` <- function(a, b) if (!is.null(a)) a else b
-
-bin_df <- 
-  mod_df %>%
-  mutate(admix = factor(as.numeric(Q > 0.10), levels = c(0, 1), labels = c("Non-admixed", "Admixed"))) %>%
-  mutate(fire_frq = factor(fire_frq, levels = c("No Fire/Low Frequency", "Intermediate Frequency", "High Frequency"), labels = c("No Fire/Low", "Intermediate", "High")))
-
-admix_csi   <- plot_continuous_pair(bin_df, x = "csi_past",  y = "Ho", breaks = 5, poly2 = TRUE,
-                                    xlab = "Paleoclimate stability", ylab = "Heterozygosity")
-
-admix_bio1  <- plot_continuous_pair(bin_df, x = "bio1",      y = "Ho", breaks = 5, poly2 = FALSE,
-                                    xlab = "Contemporary temperature", ylab = "Heterozygosity")
-
-admix_tdiff <- plot_continuous_pair(bin_df, x = "tmean_dif", y = "Ho", breaks = 5, poly2 = FALSE,
-                                    xlab = "Contemporary temperature change", ylab = "Heterozygosity")
-
-admix_fire  <- plot_categorical_pair(bin_df, x = "fire_frq", y = "Ho",
-                                     xlab = "Historical fire frequency", ylab = "Heterozygosity")
-
-admix_recent_high <- plot_categorical_pair(filter(bin_df, fire_frq == "High"), x = "fire_recent", y = "Ho",
-                                           xlab = "Contemporary fire (Historical fire frequency = High)", ylab = "Heterozygosity")
-
-admix_fire_plt        <- admix_fire$plt
-admix_csi_plt         <- admix_csi$plt
-admix_bio1_plt        <- admix_bio1$plt
-admix_tmean_dif_plt   <- admix_tdiff$plt
-admix_fire_recent_plt <- admix_recent_high$plt
-
-
-png(here(plotpath, "admix_figure.png"), height = 7, width = 12, res = 300, units = "in")
-plot_grid(admix_csi_plt, admix_fire_plt, nrow = 1, labels = c("A", "B"), label_size = 18)
-dev.off()
-
-png(here(plotpath, "admix_figure.png"), height = 15, width = 20, res = 300, units = "in")
-plot_grid(admix_csi_plt, admix_fire_plt, admix_tmean_dif_plt, admix_fire_recent_plt, admix_bio1_plt, nrow = 2, labels = LETTERS[1:5], label_size = 18)
-dev.off()
-
-# Binomial model for admix
-mod <- glm(admix ~ csi_past_bin + fire_frq, data = bin_df, family = "binomial")
-summary(mod)
-car::Anova(mod, 2)
-
-# Emmeans comparisons between bins
-# Test for differences between fire regime groups
-emm <- emmeans(mod, specs = "fire_frq")
-tk <- contrast(emm, method = "tukey", adjust = "tukey")
-summary(tk, infer = TRUE) %>% data.frame() %>% filter(p.value < 0.05) 
-
-# Test for differences in csi_past bins
-emm <- emmeans(mod, specs = "csi_past_bin")
-tk <- contrast(emm, method = "tukey", adjust = "none")
-summary(tk, infer = TRUE) %>% data.frame() %>% filter(p.value < 0.05)
-
-# Test for difference between intermediate csi_past bin vs rest
-target_bin <- "(0.544,0.686]" 
-emm <- emmeans(mod, specs = "csi_past_bin")
-lvls <- levels(emm)$csi_past_bin
-k <- length(lvls)
-w <- rep(-1/(k-1), k)          # average of "rest"
-w[match(target_bin, lvls)] <- 1
-contrast(emm, list(intermediate_vs_rest = w))
-```
-
 
 ```{r}
 # Check high outlier
@@ -1876,6 +1683,364 @@ q8 <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/
 id <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/58-Sceloporus_pruned_0.6_thinned_10kb_chr.fam", col_names = FALSE)
 admix_df %>% filter(SampleID %in% outlier$SampleID)
 q8[which(id$X2 %in% outlier$SampleID),]
+```
+
+## Climate change interaction plot
+
+
+```{r}
+library(ggeffects)
+
+# Refit model with raw data to get more interpretable interaction plots
+mod_raw <- lm(formula(final_model), data = mod_sf_unique)
+b <- coef(mod_raw)
+
+# Calculate switch point
+# The switch point occurs where the marginal effect of tmean_dif on Ho = 0
+# Taking the derivative with respect to tmean_dif:
+#   dY / d(tmean_dif) = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
+# Setting this equal to zero and solving for bio1:
+#  0 = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
+#   bio1* = -beta_tmean_dif / beta_(bio1:tmean_dif)
+# This value of bio1 defines the point at which the effect of tmean_dif changes sign.
+switch_point <- -b["tmean_dif"] / b["bio1:tmean_dif"]
+
+# Get slopes
+b <- coef(mod_raw)
+V <- vcov(mod_raw)
+bio_seq <- seq(
+  min(mod_sf_unique$bio1, na.rm = TRUE),
+  max(mod_sf_unique$bio1, na.rm = TRUE),
+  length.out = 200
+)
+
+# Create data frame of bio1 values
+slope_df <- 
+  data.frame(bio1 = bio_seq) %>%
+  # Compute slope: dY/d(tmean_dif) = β1 + β_interaction * bio1
+  dplyr::mutate(
+    slope = b["tmean_dif"] + b["bio1:tmean_dif"] * bio1
+  )
+
+# Compute standard error for linear combination
+slope_df$se <- purrr::map_dbl(slope_df$bio1, function(z) {
+  a <- c("tmean_dif" = 1, "bio1:tmean_dif" = z)
+  sqrt(t(a) %*% V[names(a), names(a)] %*% a)
+})
+
+# 95% confidence intervals
+crit <- qt(0.975, df = df.residual(mod_raw))
+slope_df <- slope_df %>%
+  dplyr::mutate(
+    conf.low  = slope - crit * se,
+    conf.high = slope + crit * se
+  )
+
+# Get range where slope is significantly positive
+pos_region <-
+  slope_df %>%
+  dplyr::filter(conf.low > 0)
+
+# Get range where slope is significantly negative
+neg_region <- 
+  slope_df %>%
+  dplyr::filter(conf.high < 0)
+
+# Get boundaries
+pos_min <- min(pos_region$bio1, na.rm = TRUE)
+neg_max <- max(neg_region$bio1, na.rm = TRUE)
+
+# Get min and max of bio1
+bio1_min <- min(mod_sf_unique$bio1, na.rm = TRUE)
+bio1_max <- max(mod_sf_unique$bio1, na.rm = TRUE)
+
+# Split bio1 into
+# min - pos_min
+# pos_min - neg_max
+# neg_max - max
+breaks <- c(bio1_min, neg_max, pos_min, bio1_max)
+
+fmt <- function(x) paste0(round(x, 1), " °C")
+labels <- c(
+  paste0(fmt(bio1_min), " – ", fmt(neg_max)),
+  paste0(fmt(neg_max), " – ", fmt(pos_min)),
+  paste0(fmt(pos_min), " – ", fmt(bio1_max))
+)
+
+interact_df <- mod_sf_unique %>%
+  mutate(
+    bio1_bin = cut(
+      bio1,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  )
+
+slope_df <-
+  slope_df %>%
+  mutate(
+    bio1_bin = cut(
+      bio1,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  )
+
+cols <- c("#6bb2cc", "#f7a957", "#e24923")
+
+plt_map <-
+  ggplot(interact_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = bio1_bin)) +
+  scale_color_manual(values = cols) +
+  theme_void() +
+  labs(col = "Contemporary\ntemperature") +
+  theme(
+    legend.position = "inside", 
+    legend.position.inside = c(0.71, 0.8),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+plt_raw <-
+  ggplot(interact_df, aes(x = tmean_dif, y = Ho, col = bio1_bin)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  theme_minimal() +
+  labs(x = make_pretty_names("tmean_dif"), y = "Observed Heterozygosity") +
+  theme(legend.title = element_blank()) + 
+  facet_wrap(~ bio1_bin, nrow = 1) +
+  scale_color_manual(values = cols) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  theme(
+    legend.position = "none", 
+    panel.background = element_rect(fill = "white", color = "black", linewidth = 1),
+    axis.line = element_blank(),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 12),
+    plot.margin = margin(5, 5, 5, 13),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )   
+
+midpoints <- (breaks[-1] + breaks[-length(breaks)]) / 2
+
+plt_slope <-
+  ggplot(slope_df, aes(x = bio1, y = slope)) +
+  geom_hline(yintercept = 0, col = "gray", lwd = 0.5, linetype = "solid") +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = bio1_bin), alpha = 0.2) +
+  geom_line(linewidth = 1.2, aes(col = bio1_bin)) +
+  geom_vline(xintercept = breaks, linetype = "dashed", color = "black") +
+  geom_text(
+    data = data.frame(x = midpoints, y = max(slope_df$slope, na.rm = TRUE), label = labels),
+    aes(x = x, y = y, label = label),
+    vjust = -1.5,
+    size = 4,
+    color = "black",
+    inherit.aes = FALSE
+  ) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols) +
+  #scale_x_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  labs(
+    x = make_pretty_names("bio1"),
+    y = "Effect of contemporary temperature\nchange on heterozygosity"
+  ) +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(5, 5, 5, 13),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+
+png(here(plotpath, "figure_climate_change_interaction.png"), width = 10, height = 8, units = "in", res = 300)
+group1 <- plot_grid(plt_slope, plt_map, rel_widths = c(0.65, 0.4), labels = c("A", "B"))
+plot_grid(group1, plt_raw, nrow = 2, rel_heights = c(0.55, 0.5), labels = c("", "C"), align = "v")
+dev.off()
+```
+
+```{r}
+library(ggeffects)
+
+# Refit model with raw data to get more interpretable interaction plots
+mod_raw <- lm(formula(final_model), data = mod_sf_unique)
+b <- coef(mod_raw)
+
+# Calculate switch point
+# The switch point occurs where the marginal effect of tmean_dif on Ho = 0
+# Taking the derivative with respect to tmean_dif:
+#   dY / d(tmean_dif) = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
+# Setting this equal to zero and solving for bio1:
+#  0 = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
+#   bio1* = -beta_tmean_dif / beta_(bio1:tmean_dif)
+# This value of bio1 defines the point at which the effect of tmean_dif changes sign.
+switch_point <- -b["tmean_dif"] / b["bio1:tmean_dif"]
+
+# Get slopes
+b <- coef(mod_raw)
+V <- vcov(mod_raw)
+bio_seq <- seq(
+  min(mod_sf_unique$bio1, na.rm = TRUE),
+  max(mod_sf_unique$bio1, na.rm = TRUE),
+  length.out = 200
+)
+
+# Create data frame of bio1 values
+slope_df <- 
+  data.frame(bio1 = bio_seq) %>%
+  # Compute slope: dY/d(tmean_dif) = β1 + β_interaction * bio1
+  dplyr::mutate(
+    slope = b["tmean_dif"] + b["bio1:tmean_dif"] * bio1
+  )
+
+# Compute standard error for linear combination
+slope_df$se <- purrr::map_dbl(slope_df$bio1, function(z) {
+  a <- c("tmean_dif" = 1, "bio1:tmean_dif" = z)
+  sqrt(t(a) %*% V[names(a), names(a)] %*% a)
+})
+
+# 95% confidence intervals
+crit <- qt(0.975, df = df.residual(mod_raw))
+slope_df <- slope_df %>%
+  dplyr::mutate(
+    conf.low  = slope - crit * se,
+    conf.high = slope + crit * se
+  )
+
+# Split bio1 into min, halfway between min and switch point, switch point, halfway between switch point and max, and max
+# compute breakpoints ONCE
+bio_min  <- min(mod_sf_unique$bio1, na.rm = TRUE)
+bio_max  <- max(mod_sf_unique$bio1, na.rm = TRUE)
+
+mid_low  <- (bio_min + switch_point) / 2
+mid_high <- (switch_point + bio_max) / 2
+
+breaks <- c(bio_min, mid_low, switch_point, mid_high, bio_max)
+
+fmt <- function(x) paste0(format(round(x, 2), nsmall = 2), " °C")
+labels <- c(
+  paste0(fmt(bio_min), " – ", fmt(mid_low)),
+  paste0(fmt(mid_low), " – ", fmt(switch_point)),
+  paste0(fmt(switch_point), " – ", fmt(mid_high)),
+  paste0(fmt(mid_high), " – ", fmt(bio_max))
+)
+
+interact_df <- mod_sf_unique %>%
+  mutate(
+    bio1_bin = cut(
+      bio1,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  )
+
+slope_df <-
+  slope_df %>%
+  mutate(
+    bio1_bin = cut(
+      bio1,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  )
+
+# Get midpoint of each break (or you will have five intervals)
+midbreaks <- (breaks[-1] + breaks[-length(breaks)]) / 2
+preds <- ggeffects::ggpredict(
+  mod_raw,
+  terms = c(
+    "tmean_dif [all]",
+    paste0("bio1 [", paste(midbreaks, collapse = ", "), "]")
+  ),
+  data = mod_sf_unique
+)
+ 
+
+cols <- c("#042346","#6bb2cc", "#f7a957", "#e22323")
+
+plt_slope <-
+  ggplot(slope_df, aes(x = bio1, y = slope)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = bio1_bin), alpha = 0.2) +
+  geom_line(linewidth = 1.2, aes(col = bio1_bin)) +
+  geom_hline(yintercept = 0, col = "gray") +
+  geom_vline(xintercept = breaks, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = switch_point, linetype = "dashed", color = "red") +
+  annotate("text", x = switch_point, y = max(slope_df$slope), color = "red", vjust = 0, hjust = 1.1, label = paste0(round(switch_point, 2), " °C")) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  labs(
+    x = make_pretty_names("bio1"),
+    y = "Effect of climate change"
+  ) +
+  theme(legend.position = "none")
+
+plt_interact <-
+  ggplot(preds, aes(x = x, y = predicted, color = group, fill = group)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2, color = NA) +
+  theme_classic() +
+  labs(
+    x = make_pretty_names("tmean_dif"),
+    y = "Predicted heterozygosity",
+  ) +
+  theme(legend.position = "none") +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols)
+
+plt_map <-
+  ggplot(interact_df) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = bio1_bin)) +
+  scale_color_manual(values = cols) +
+  theme_void() +
+  labs(col = "Contemporary\ntemperature") +
+  theme(legend.position = "inside", legend.position.inside = c(0.85, 0.75))
+
+plt_raw <-
+  ggplot(interact_df, aes(x = tmean_dif, y = Ho, col = bio1_bin)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, col = "black") +
+  theme_minimal() +
+  labs(x = make_pretty_names("tmean_dif"), y = "Observed Heterozygosity") +
+  theme(legend.title = element_blank()) + 
+  facet_wrap(~ bio1_bin, nrow = 1) +
+  scale_color_manual(values = cols) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  theme(
+    legend.position = "none", 
+    panel.background = element_rect(fill = "white", color = "black", linewidth = 1),
+    axis.line = element_blank(),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 10),
+    plot.margin = margin(5, 5, 5, 13)
+  )   
+
+png(here(plotpath, "figure_climate_change_interaction.png"), width = 10, height = 6, units = "in", res = 300)
+group1 <- plot_grid(plt_interact, plt_map, ncol = 1, labels = c("B", "D"))
+group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v")
+plot_grid(group2, group1, nrow = 1, rel_widths = c(2, 1))
+dev.off()
+# Where slope is significantly positive
+pos_region <- slope_df %>%
+  dplyr::filter(conf.low > 0)
+
+# Where slope is significantly negative
+neg_region <- slope_df %>%
+  dplyr::filter(conf.high < 0)
+
+# Get boundaries
+pos_min <- min(pos_region$bio1, na.rm = TRUE)
+neg_max <- max(neg_region$bio1, na.rm = TRUE)
 ```
 
 # Check fire variables
