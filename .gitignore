@@ -27,8 +27,26 @@ data_processing/chromosemble/new_vs_old_copy
 *.filter
 *.fasta
 data_processing/sexchr/outputs
-
+data_processing/archive/chromosemble_old_june18/
+graveyard/check_nonsyn/outputs
+graveyard/chromenv/outputs
+graveyard/feems/outputs
+graveyard/feems/TEMP
+*.gtf
+*.ld*
+*.nosex
+*.dbf
+*.prj
+*.shp
+*.shx
+*.pyc
+*.gz
+*.eigenvec
+*.eigenval
+*.err
+*.out
 maxent.jar
+graveyard/data_processing_archive
 
 # Files in analysis except scripts
 # note this pattern is necessary to properly set-up rules:
