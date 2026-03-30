@@ -1,44 +1,27 @@
+# Code for: Climate change and wildfire shape genome-wide diversity
 
 
-### Environmental Data
+```{bash}
 
-Environmental data was from this repo: https://github.com/AnushaPB/calienv
-Created using this file: calienv.Rmd
-Outputs: 
-"california_chelsa_bioclim_1981-2010_V.2.1.tif"
-"california_chelsa_bioclim_1981-2010_V.2.1_pca.tif"
+# Download and process data -----------------------------------------
 
-### Genome Download
+bash data_processing/JOB_DATA_PROCESSING.sh
 
-```bash
-# download genome from ncbi
-mkdir -p genome
-cd genome
-curl -L -o genome.zip "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCA_023333645.1/download?include_annotation_type=GENOME_FASTA"
-unzip genome.zip
-rm genome.zip
-# index genome
-samtools faidx ncbi_dataset/data/GCA_023333645.1/GCA_023333645.1_rSceOcc1.0.p_genomic.fna 
-cd ..
+# Run analyses ------------------------------------------------------
+ 
+## Population structure using ADMIXTURE/PCA
+bash analysis/admixture/JOB_ADMIXTURE.sh
 
-# download undulatus genome from ncbi
-mkdir -p genome_undulatus
-cd genome_undulatus
-curl -L -o genome_undulatus.zip "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/GCF_019175285.1/download?include_annotation_type=GENOME_FASTA"
-unzip genome_undulatus.zip
-rm genome_undulatus.zip
-samtools faidx ncbi_dataset/data/GCF_019175285.1/GCF_019175285.1_SceUnd_v1.1_genomic.fna
+## Isolation by distance and environment using GDM
+bash analysis/ibdibe/JOB_IBDIBE.sh
+
+## Demographic reconstruction using SMC++
+bash analysis/smcpp/JOB_SMCPP.sh
+
+## Genotype-environment association analysis using RDA
+bash analysis/gea/JOB_GEA.sh
+
+## Genetic diversity modelling
+bash analysis/genetic_diversity/JOB_GENETIC_DIVERSITY.sh
+
 ```
-
-### paper dump
-- Glaciation/Artemisiospiza: https://academic.oup.com/biolinnean/article/107/2/332/2701497 
-- Glaciation/Microtus: https://onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-294x.2000.00846.x 
-  - "Previously glaciated regions of North America are occupied by organisms that have colonized since the Pleistocene. These populations characteristically have reduced levels of genetic variation when compared with southerly conspecific populations ( Sage & Wolff 1986; Hayes & Harrison 1992; Meriläet al. 1997 ; Soltis et al. 1997 )."
-  - From references
-    - **Sage RD & Wolff JO (1986) Pleistocene glaciations, fluctuating ranges, and low genetic variability in a large mammal (Ovis dalli) . Evolution, 40, 1092 1095.**
-    - Hayes JP & Harrison RG (1992) Variation in mitochondrial DNA and the biogeographic history of woodrats (Neotoma) of the eastern United States . Systematic Biology, 41, 331 344.
-    - Merilä J, Björkland M, Baker AJ (1997) Historical demography and present day population structure of the greenfinch, Carduelis chloris — an analysis of mtDNA control-region sequences . Evolution, 51, 946 956.
-    - Soltis DE, Gitzendanner MA, Strenge DD, Soltis PS (1997) Chloroplast DNA intraspecific phylogeography of plants from the Pacific Northwest of North America. Plant Systematics and Evolution, 206, 353 373.
-  - https://academic.oup.com/mbe/article/41/3/msae027/7601512?login=true
-	- https://onlinelibrary.wiley.com/doi/full/10.1111/geb.13683
-  - https://www.nature.com/articles/s41597-020-0552-1

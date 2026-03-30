@@ -138,7 +138,7 @@ bio1 <- bioclim[["CHELSA_bio1_1981-2010_V.2.1"]] # mean annual temperature
 ghm <- rast(here("data", "env", "california_global_human_modification_2016.tif")) # global human modification index
 # Global Aridity Index values need to be multiplied by 0.0001 to retrieve the values in the correct units (see documentation: https://doi.org/10.6084/m9.figshare.7504448)
 # Note: higher AI valules = more humid, lower AI = more arid
-ai <- rast(here("data", "env", "Global-AI_ET0_v3_annual", "ai_v3_yr.tif")) %>% crop(ca) * 0.0001
+ai <- rast(here("data", "env", "Global-AI_ET0__annual_v3_1", "ai_v31_yr.tif")) %>% crop(ca) * 0.0001
 
 # Combine into df
 env_mod_df <- data.frame(
@@ -1534,10 +1534,10 @@ admix_label_df <- function(df, x_group, q = "Q", thresh = 0.10) {
     )
 }
 
-plot_continuous_pair <- function(df, x, y, breaks = 5, poly2 = FALSE, xlab = NULL, ylab = NULL,
+plot_continuous_pair <- function(bin_df, x, y, breaks = 5, poly2 = FALSE, xlab = NULL, ylab = NULL,
                                  q = "Q", thresh = 0.10) {
-  bl  <- bin_labels(df[[x]], breaks = breaks)
-  df2 <- df %>% mutate(x_bin = bl$bin)
+  bl  <- bin_labels(bin_df[[x]], breaks = breaks)
+  df2 <- bin_df %>% mutate(x_bin = bl$bin)
 
   prop_df  <- admix_prop_long(df2, x_bin, q = q, thresh = thresh)
   label_df <- admix_label_df(df2, x_bin, q = q, thresh = thresh)
@@ -1584,14 +1584,12 @@ plot_continuous_pair <- function(df, x, y, breaks = 5, poly2 = FALSE, xlab = NUL
   list(df = df2, prop_df = prop_df, plt = plot_grid(p_scatter, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
 }
 
-plot_categorical_pair <- function(df, x, y, xlab = NULL, ylab = NULL, q = "Q", thresh = 0.10) {
-  df2 <- df
-
-  prop_df  <- admix_prop_long(df2, .data[[x]], q = q, thresh = thresh)
-  label_df <- admix_label_df(df2, .data[[x]], q = q, thresh = thresh)
+plot_categorical_pair <- function(bin_df, x, y, xlab = NULL, ylab = NULL, q = "Q", thresh = 0.10) {
+  prop_df  <- admix_prop_long(bin_df, .data[[x]], q = q, thresh = thresh)
+  label_df <- admix_label_df(bin_df, .data[[x]], q = q, thresh = thresh)
 
   p_box <-
-    ggplot(df2, aes(x = .data[[x]], y = .data[[y]])) +
+    ggplot(bin_df, aes(x = .data[[x]], y = .data[[y]])) +
     geom_boxplot() +
     geom_jitter(aes(colour = .data[[q]]), size = 2, width = 0.2) +
     theme_classic() +
@@ -1627,8 +1625,11 @@ plot_categorical_pair <- function(df, x, y, xlab = NULL, ylab = NULL, q = "Q", t
   list(df = df2, prop_df = prop_df, plt = plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
 }
 
+q_df <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
 bin_df <-
   mod_df %>%
+  left_join(q_df %>% select(SampleID, Q), by = "SampleID") %>%
+  mutate(Q = 1 - Q) %>%
   mutate(
     admix = factor(as.numeric(Q > 0.10), levels = c(0, 1), labels = c("Q ≤ 0.10", "Q > 0.10")),
     fire_frq = factor(
@@ -1671,6 +1672,93 @@ dev.off()
 ```
 
 ```{r}
+bin_df
+
+x = "fire_frq"
+y = "Ho"
+q = "Q"
+thresh = 0.10
+
+bin_df$fire_recent <- factor(bin_df$fire_recent, levels = c("Unburned", "Burned"))
+prop_df  <- 
+  bin_df %>%
+    group_by(fire_frq, fire_recent) %>%
+    summarise(
+      n = dplyr::n(),
+      n_hi = sum(.data[[q]] > thresh, na.rm = TRUE),
+      prop_hi = n_hi / n,
+      .groups = "drop"
+    ) %>%
+    transmute(
+      fire_frq, fire_recent,
+      `Q ≤ 0.10` = 1 - prop_hi,
+      `Q > 0.10` = prop_hi
+    ) %>%
+    tidyr::pivot_longer(c(`Q ≤ 0.10`, `Q > 0.10`), names_to = "admix_bin", values_to = "prop") %>%
+    mutate(admix_bin = factor(admix_bin, levels = c("Q ≤ 0.10", "Q > 0.10")))
+
+label_df <- 
+  bin_df %>%
+  group_by(fire_frq, fire_recent) %>%
+  summarise(
+    n = dplyr::n(),
+    n_hi = sum(.data[[q]] > thresh, na.rm = TRUE),
+    prop_hi = n_hi / n,
+    .groups = "drop"
+  )
+
+p_box <-
+  ggplot(bin_df, aes(x = .data[[x]], y = .data[[y]], fill = factor(fire_recent))) +
+  geom_boxplot(position = position_dodge(0.8), alpha = 0.7) +
+  geom_jitter(
+    aes(colour = .data[[q]]),
+    position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8),
+    size = 2) +
+  theme_classic() +
+  labs(x = "Historical fire frequency", y = "Observed heterozygosity", fill = "Recent fire", colour = "Admixture score") +
+  scale_colour_gradient(low = "skyblue2", high = "red2") +
+  scale_fill_manual(values = c("white", "gray")) +
+  theme(
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 16),
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    legend.position = "top",
+    # Make legend wider
+    legend.key.width = unit(1, "cm")
+  )
+
+
+p_count <-
+  ggplot(prop_df, aes(x = fire_recent, y = prop, fill = admix_bin)) +
+  geom_col() +
+  geom_text(
+    data = label_df,
+    aes(x = fire_recent, y = prop_hi + 0.05, label = paste0(n_hi, "/", n)),
+    colour = "red2", size = 7, inherit.aes = FALSE, vjust = 0.01
+  ) +
+  theme_classic() +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  scale_fill_manual(values = col_pal) +
+  facet_wrap(~ fire_frq, strip.position = "bottom") +
+  labs(x = "", y = "P(admixture score > 0.10)", fill = "") +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text.x = element_text(size = 14, angle = 30, hjust = 1),
+    axis.text.y  = element_text(size = 16),
+    strip.placement = "outside",
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    plot.margin = margin(5.5, 5.5, 5.5, 25)
+  )
+
+png(here(plotpath, "admix_figure.png"), height = 9, width = 9, res = 300, units = "in")
+cowplot::plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45))
+dev.off()
+```
+
+```{r}
 # Check high outlier
 admix_df <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
 outlier <- 
@@ -1686,7 +1774,6 @@ q8[which(id$X2 %in% outlier$SampleID),]
 ```
 
 ## Climate change interaction plot
-
 
 ```{r}
 library(ggeffects)
@@ -1811,7 +1898,7 @@ plt_raw <-
   theme_minimal() +
   labs(x = make_pretty_names("tmean_dif"), y = "Observed Heterozygosity") +
   theme(legend.title = element_blank()) + 
-  facet_wrap(~ bio1_bin, nrow = 1) +
+  facet_wrap(~ bio1_bin, nrow = 1, scales = "free") +
   scale_color_manual(values = cols) +
   scale_x_continuous(expand = c(0, 0)) +
   theme_classic() +

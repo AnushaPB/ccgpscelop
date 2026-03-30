@@ -1,0 +1,137 @@
+```{r}
+library(tidyverse)
+library(here)
+library(terra)
+library(sf)
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "functions_genetic_diversity.R"))
+plotpath <- here("analysis", "genetic_diversity", "plots")
+outpath <- here("analysis", "genetic_diversity", "outputs")
+
+# Read in heterozygosity files
+nonsyn_het <- 
+  get_het("allnonsyn.het") %>%
+  mutate(Ho_nonsyn = 1 - `O(HOM)`/`N(NM)`) %>%
+  select(SampleID, Ho_nonsyn)
+syn_het <-
+  get_het("allsyn.het") %>%
+  mutate(Ho_syn = 1 - `O(HOM)`/`N(NM)`) %>%
+  select(SampleID, Ho_syn)
+geanonsyn_het <-
+  get_het("nonsyn.het") %>%
+  mutate(Ho_geanonsyn = 1 - `O(HOM)`/`N(NM)`) %>%
+  select(SampleID, Ho_geanonsyn)
+
+het_df <- 
+  get_het("58-Sceloporus_chr.het") 
+
+het_df <- left_join(het_df, nonsyn_het) %>% left_join(geanonsyn_het) %>% left_join(syn_het) %>% 
+# Scale
+  mutate(
+    Ho_scaled = as.numeric(scale(Ho)),
+    Ho_nonsyn_scaled = as.numeric(scale(Ho_nonsyn)),
+    Ho_geanonsyn_scaled = as.numeric(scale(Ho_geanonsyn)),
+    Ho_syn_scaled = as.numeric(scale(Ho_syn)))
+```
+
+
+```{r}
+wingen_r <- 
+  terra::rast(here(outpath, "Ho_nonsyn_kriged_masked.tif")) %>% 
+  mask(get_range()) %>%
+  as.data.frame(xy = TRUE, na.rm = TRUE) 
+names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
+
+ca_proj <- get_ca() %>% st_transform(3310)
+
+scale_met_cont <- function(values, aesthetic = c("fill", "colour"), extend_scale = 0.1) {
+  aesthetic <- match.arg(aesthetic)
+  r_min <- min(values, na.rm = TRUE)
+  r_max <- max(values, na.rm = TRUE)
+  rng   <- r_max - r_min
+  lims  <- c(r_min - rng*extend_scale, r_max + rng*extend_scale)
+
+  pal <- rev(MetBrewer::met.brewer("Hiroshige", type = "continuous"))
+  if (aesthetic == "fill") {
+    ggplot2::scale_fill_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  } else {
+    ggplot2::scale_colour_gradientn(colors = pal, limits = lims, oob = scales::squish)
+  }
+}
+```
+
+```{r}
+future <- rast(here("analysis", "gea", "outputs", "scelop_adaptive_env_layers","env_fut_2071-2100_GFDL-ESM4_ssp126_ssp585.tif"))[[2]]
+names(future)
+current <- rast(here("data", "env", "california_chelsa_bioclim_1981-2010_V.2.1.tif"))[["CHELSA_bio1_1981-2010_V.2.1"]]
+coords <- get_coords(sf = TRUE)
+df <- left_join(coords, het_df, by = "SampleID")
+df$future_bio1 <- extract(future, df, ID = FALSE, method = "bilinear")[,1]
+df$current_bio1 <- extract(current, df, ID = FALSE, method = "bilinear")[,1]
+df$future_change <- df$future_bio1 - df$current_bio1
+```
+
+```{r}
+library(ggpubr)
+# A: wingen map of heterozygosity 
+pltA <- 
+  ggplot(wingen_r) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
+  geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  labs(fill = "Non-synonymous\nheterozygosity") +
+  theme_void() +
+  geom_sf(data = df, shape = 21, aes(fill = Ho_nonsyn), colour = "#00000087", size = 2) +
+  theme(
+    legend.position = "inside",
+    legend.key.height = unit(0.7, "cm"),
+    legend.key.width  = unit(0.7, "cm"),
+    legend.title = element_text(size = 16),
+    legend.text  = element_text(size = 14),
+    legend.position.inside = c(0.8, 0.8),
+    plot.margin = margin(5,5,5,25)
+  )
+
+
+# N: Plot of non-syn vs genome-wide Ho
+pltB <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn)) +
+  geom_point(size = 2, aes(col = Ho_nonsyn)) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1) +
+  labs(
+    x = "Genome-wide heterozygosity",
+    y = "Non-synonymous heterozygosity"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    plot.margin = margin(5,15,5,15)
+  )
+
+# Plot of future-change vs non-syn Ho
+pltC <- 
+  ggplot(df, aes(x = future_change, y = Ho_nonsyn, color = Ho_nonsyn)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  labs(x = "Future climate change",
+       y = "Non-synonymous heterozygosity") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    plot.margin = margin(5,15,5,15)
+  ) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1) 
+
+
+group1 <- cowplot::plot_grid(pltB, pltC, nrow = 1, labels = c("B", "C"), label_size = 18, align = "hv")
+png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 15, height = 5, units = "in", res = 300)
+cowplot::plot_grid(pltA, group1, nrow = 1, labels = c("A", ""), label_size = 18, rel_widths = c(0.3,0.7))
+dev.off()
+```

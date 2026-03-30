@@ -59,15 +59,16 @@ window_depth_df <-
   rename(MinicoreID = SampleID) %>%
   left_join(meta, by = "MinicoreID") %>%
   left_join(genomewide, by = c("MinicoreID")) %>%
-  mutate(scaled_depth = mean_DP / genomewide_depth)
+  mutate(scaled_depth = mean_DP / genomewide_depth) %>%
+  mutate(NEW_CHROM = ifelse(CHROM == "sex_linked_1", "X Chromosome", "Y Chromosome"))
 
 averaged_by_sex <- 
   window_depth_df %>%
   drop_na(sex) %>%
-  group_by(window, CHROM, sex) %>%
+  group_by(window, NEW_CHROM, sex) %>%
   summarize(scaled_depth = mean(scaled_depth, na.rm=TRUE)) 
 
-pdf(here("data_processing", "sexchr", "sexchr_window_depth.pdf"), width=8, height=4)
+png(here("data_processing", "sexchr", "sexchr_window_depth.png"), width = 8, height = 4, units = "in", res = 300)
 ggplot(window_depth_df) +
   geom_line(
     data = filter(window_depth_df, sex == "male"), # "female" before "male"
@@ -81,5 +82,5 @@ ggplot(window_depth_df) +
   geom_line(data = averaged_by_sex, aes(x = window, y = scaled_depth, col = sex), linewidth = 1) +
   theme_minimal() +
   labs(x = "Genomic Window", y = "Scaled Mean Depth (100kb Windows)") +
-  facet_wrap(~CHROM, ncol = 1)
+  facet_wrap(~NEW_CHROM, ncol = 1)
 dev.off()

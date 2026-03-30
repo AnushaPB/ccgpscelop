@@ -1,0 +1,192 @@
+
+```{r}
+library(tidyverse)
+library(here)
+library(sf)
+source(here("general_functions.R"))
+outpath <- here("analysis", "gea", "outputs")
+plotpath <- here("analysis", "gea", "plots")
+```
+
+```{r}
+wpi <- read_table(here("analysis", "gea", "outputs", "58-Sceloporus_10kb_windowpi.windowed.pi"))
+
+i  <- 
+  wpi %>% 
+  count(CHROM) %>% 
+  arrange(desc(n)) %>% 
+  # Pull out long scaffolds (chr and Scaffold_13)
+  filter(n > 1000) %>% 
+  pull(CHROM)
+
+gg_df <-
+  wpi %>%
+  filter(CHROM %in% i) %>%
+  mutate(CUMSUM = cumsum(BIN_START)) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) 
+
+pdf(here(plotpath, "windowed_pi.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(aes(xintercept = BIN_START, col = PI), alpha = 0.5) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col =expression("Mean " * pi * " (10kb window)"))
+dev.off()
+```
+
+# Look at non-synonymous SNPs of interest
+```{r}
+goi <- read_csv(here(outpath, "Table_S7.csv"))
+
+flank <- 500000
+
+goi_plot_df <- goi %>%
+  mutate(
+    CHROM = scaffold,
+    pos = position,
+    window_start = pmax(0, pos - flank),
+    window_end = pos + flank,
+    snp_id = paste0(gene, ":", CHROM, ":", scales::comma(pos))
+  ) %>%
+  select(gene, CHROM, pos, window_start, window_end, snp_id)
+
+plot_df <- 
+  goi_plot_df %>%
+  inner_join(gg_df, by = "CHROM") %>%
+  filter(BIN_START >= window_start, BIN_START <= window_end) %>%
+  mutate(rel_pos = BIN_START - pos)
+
+# summary across SNPs at each relative position
+ribbon_df <- 
+  plot_df %>%
+  summarise(
+    mean_pi = mean(PI, na.rm = TRUE),
+    sd_pi = sd(PI, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    ymin = mean_pi - sd_pi,
+    ymax = mean_pi + sd_pi
+  )
+
+mean_pi_global <- mean(plot_df$PI, na.rm = TRUE)
+
+png(here(plotpath, "windowed_pi_100kb_around_goi_snps.png"), width = 8, height = 8, units = "in", res = 300)
+ggplot(plot_df, aes(x = BIN_START, y = PI)) +
+  geom_rect(data = ribbon_df, aes(ymin = ymin, ymax = ymax, xmin = -Inf, xmax = Inf), fill = "skyblue2", alpha = 0.2, inherit.aes = FALSE) +
+  geom_hline(yintercept = ribbon_df$mean_pi, linetype = "dashed", col = "skyblue2") +
+  geom_line(linewidth = 0.5) +
+  geom_vline(aes(xintercept = pos), col = "tomato2", linetype = "solid") +
+  scale_x_continuous(labels = scales::scientific) +
+  theme_classic() +
+  facet_wrap(~ snp_id, scales = "free_x", ncol = 3) +
+  labs(
+    x = "Position relative to focal SNP (bp)",
+    y = expression("Mean " * pi * " (10 kb window)")
+  ) +
+  theme(
+    strip.background = element_blank(),
+    strip.text = element_text(size = 9)
+  )
+
+dev.off()
+```
+
+
+# Load GEA data
+```{r}
+gea <- read_csv(here("analysis", "gea", "outputs", "bio1ndvi_gea_gene_snp.csv"))
+
+gea <- 
+  gea %>% 
+  mutate(
+    id = str_extract(full_name, "GNX-\\d+"),
+    name = str_extract(full_name, "(?<=Name=)[^\\[]+"),
+    uniprotid = str_extract(full_name, "(?<=\\[)[^:]+")
+  )
+
+snpcount <- 
+  gea %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(pcount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+```
+
+```{r}
+gea_dos <- read_table(here("analysis", "gea", "outputs", "genes.raw"))
+
+coords <- 
+  get_coords(sf = TRUE) %>% 
+  filter(SampleID %in% gea_dos$IID) %>% 
+  st_transform(3310) %>%
+  # REMOVE CHANNEL ISLAND
+  filter(SampleID != "Scelocci_CCGPMC_MW01-3-14") 
+
+gea_dos <- gea_dos[gea_dos$IID %in% coords$SampleID, ]
+
+# Fix names by removing lagging _letter
+names(gea_dos) <- gsub("_[A-Z]+$", "", names(gea_dos))
+
+# Confirm orders are the same
+stopifnot(all(coords$SampleID == gea_dos$IID))
+```
+
+# Looking at all genes of interest
+
+```{r}
+goi_names <- c("Heat shock", "Inositol 1,4,5-trisphosphate receptor type 1", "Inositol 1,4,5-trisphosphate receptor type 2", "Neuropeptide FF receptor 1", "Calcitonin receptor", "Growth hormone receptor", "Transient receptor potential cation channel subfamily V member 3", "Transient receptor potential cation channel subfamily A member 1", "TRPM8", "Endothelial PAS domain-containing protein 1")
+
+goi <- gea %>% filter(reduce(map(goi_names, ~str_detect(full_name, .x)), `|`)) %>% filter(scaffold %in% snpcount$CHROM)
+goi_dos <- gea_dos[, c("IID", goi$locus)]
+dim(goi_dos)
+
+goibin <- 
+  goi %>%
+  rename(CHROM = scaffold) %>%
+  mutate(CHROM = factor(CHROM, levels = i)) %>%
+  mutate(BIN_START = floor(start / 10000) * 10000) 
+
+goicount <- 
+  goibin %>%
+  group_by(CHROM, BIN_START) %>%
+  summarise(genecount = n()) %>%
+  ungroup() %>%
+  drop_na(CHROM)
+unique(goicount$CHROM)
+
+pdf(here(plotpath, "goi.pdf"), width = 12, height = 10)
+ggplot(gg_df) +
+  geom_vline(data = snpcount, aes(xintercept = BIN_START, col = log(pcount)), alpha = 0.5) +
+  geom_vline(data= goicount, aes(xintercept = BIN_START, alpha = genecount), col = "cyan", lwd = 1) +
+  geom_line(aes(x = BIN_START, y = PI), alpha = 0.9, lwd = 0.5) +
+  scale_x_continuous(labels = scales::comma, expand = c(0, 0)) +
+  scale_y_continuous(labels = scales::comma) +
+  theme_classic() +
+  facet_wrap(~CHROM, scales = "fixed", ncol = 1) +
+  theme(axis.text.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.line.x = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10), legend.position = "bottom") +
+  scale_color_viridis_c(option = "plasma", direction = -1) +
+  labs(y = expression("Mean " * pi * " (10kb window)"), col = "log(# Sig. SNPs) (10kb window)", alpha = "# Genes of interest") 
+dev.off()
+
+goicount %>% group_by(CHROM) %>% summarise(genecount = max(genecount)) %>% arrange(desc(genecount))
+
+bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
+nrow(bed)
+```

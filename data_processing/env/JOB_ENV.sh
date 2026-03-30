@@ -13,3 +13,9 @@ bash get_prism.sh
 # Download and process chelsa data
 bash get_chelsa.sh
 Rscript process_chelsa.R
+
+# Download aridity data
+bash get_aridity.sh
+
+# Download wildfire data
+bash get_wildfire.sh

@@ -240,9 +240,12 @@ dev.off()
 
 ```{r}
 # Write out Table S7 
-# With gene, description, chr, position
+# With gene, function, citations, position
 goi_table <- 
   lit_genes %>%
-  filter(gene %in% goi_df$gene_name) 
-write_tsv(goi_table, here(outpath, "Table_S7.txt"))
+  rename(gene_function = `function`) %>%
+  filter(gene %in% goi_df$gene_name) %>%
+  left_join(goi_df %>% select(gene_name, scaffold, position), by = c("gene" = "gene_name"))
+write_tsv(goi_table, here(outpath, "Table_S7.txt")) # For supplements
+write_csv(goi_table, here(outpath, "Table_S7.csv")) # For analysis
 ```

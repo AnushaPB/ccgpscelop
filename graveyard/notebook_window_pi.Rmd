@@ -131,6 +131,7 @@ goicount %>% group_by(CHROM) %>% summarise(genecount = max(genecount)) %>% arran
 bed <- read.table(here(outpath, "all_genes.bed"), sep="\t", quote="", fill=TRUE, stringsAsFactors=FALSE)
 nrow(bed)
 ```
+
 ### Scaffold13/HSP
 
 ```{r}
