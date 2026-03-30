@@ -26,3 +26,14 @@ wget --no-host-directories --force-directories --input-file=chelsa_future.txt
 mkdir -p ../../data/env/chelsa_future
 mv chelsav2/GLOBAL/climatologies/2071-2100/GFDL-ESM4/ssp585/bio/* ../../data/env/chelsa_future
 #rm -rf chelsav2
+
+# Download CHELSA vpd -----------------------------------------------------------------------
+wget --no-host-directories --force-directories --input-file=chelsa_vpd.txt
+mkdir -p ../../data/env/chelsa_vpd
+mv chelsa02/chelsa/global/climatologies/vpd/1981-2010/* ../../data/env/chelsa_vpd
+rm -rf chelsa02
+
+wget --no-host-directories --force-directories --input-file=chelsa_cmi.txt
+mkdir -p ../../data/env/chelsa_cmi
+mv chelsa02/chelsa/global/climatologies/cmi/1981-2010/* ../../data/env/chelsa_cmi
+rm -rf chelsa02
