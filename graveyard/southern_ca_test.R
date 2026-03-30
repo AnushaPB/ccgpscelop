@@ -39,3 +39,36 @@ library(cowplot)
 png(here("analysis", "genetic_diversity", "plots", "southern_ca_test.png"), width = 10, height = 20, res = 300, units = "in")
 plot_grid(quick_plot("csi_past"), quick_plot("bio1"), quick_plot("tmean_dif"), quick_plot("fire_frq"), quick_plot("fire_recent"), ncol = 1)
 dev.off()
+
+mod <- lm(Ho ~ csi_past + bio1 + tmean_dif + evt + fire_frq * fire_recent + cluster, data = model_df) %>% summary()
+broom::tidy(mod) %>% filter(p.value < 0.05, !term %in% c("(Intercept)"))
+
+
+mod <- lm(Ho ~ csi_past + bio1 + tmean_dif + evt + fire_frq * fire_recent + cluster * tmean_dif, data = model_df) %>% summary()
+broom::tidy(mod) %>% filter(p.value < 0.05, !term %in% c("(Intercept)")) 
+
+broom::tidy(mod) %>% filter(p.value < 0.05, !term %in% c("(Intercept)"))  %>% filter(str_detect(term, "tmean_dif"))
+
+# plot tmean_dif vs Ho by cluster
+pdf(here("tmean_dif_by_cluster.pdf"), width = 10, height = 10)
+plt1 <-
+  ggplot(data = model_df, aes(x = tmean_dif, y = Ho)) +
+  geom_point(aes(color = factor(cluster))) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_classic() +
+  labs(color = "Cluster") +
+  scale_color_manual(values = cluster_cols) +
+  ggpubr::stat_cor() +
+  facet_wrap(~ cluster, scales = "free")
+
+# Map of clusters
+plt2 <- 
+  ggplot(data = model_df, aes(x = x, y = y)) +
+  geom_point(aes(color = factor(cluster))) +
+  theme_classic() +
+  labs(color = "Cluster") +
+  scale_color_manual(values = cluster_cols)
+
+plt2
+plt1
+dev.off()
