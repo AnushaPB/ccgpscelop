@@ -45,6 +45,13 @@ ca_proj <- ca %>% st_transform(3310)
 ```{r}
 coords <- get_coords(sf = TRUE)
 coords_proj <- coords %>% st_transform(crs = st_crs(ca_proj))
+
+# Calculate average sampling distance
+dist_mat <- st_distance(coords_proj)
+avg_dist <- median(dist_mat[lower.tri(dist_mat)])
+# Convert to km
+avg_dist_km <- round(as.numeric(avg_dist) / 1000, 0)
+avg_dist_km # 333
 ```
 
 # Heterozygosity data
@@ -721,14 +728,14 @@ final_model <- lm(f, data = mod_sf_unique_scaled)
 
 # Results
 mod_result <- broom::tidy(final_model)
-mod_result
+mod_result %>% arrange(p.value)
 
 # Significant variables
 mod_result %>% filter(p.value < 0.05) %>% arrange(desc(abs(estimate))) 
 sig_vars <- mod_result %>% filter(p.value < 0.05, !term %in% c("(Intercept)", "lambda")) %>% pull(term)
 print(sig_vars)
 
-r2 <- round(summary(final_model)$r.squared, 2)
+r2 <- round(summary(final_model)$adj.r.squared, 4)
 print(paste("R²:", r2))
 ```
 
@@ -1299,13 +1306,13 @@ plt_raw
 dev.off()
 ```
 
-## Scale analysis
+## Spatial scale analysis
 ```{r}
 # term-specific contributions (centered)
 terms_mat <- predict(final_model, type = "terms")
 term_names <- colnames(terms_mat)
 # Remove glacier and gHM (not significant)
-term_names <- term_names[!term_names %in% c("glacier", "gHM")]
+term_names <- term_names[!term_names %in% c("glacier", "gHM", "ai")]
 
 # helper: compute variogram + fitted model + fit line for one term
 one_term <- function(term, model = "Gau"){
@@ -1352,7 +1359,6 @@ ggplot(vg_all, aes(dist / 1000, gamma, col = term)) +
   labs(x = "Distance (km)", y = "Semivariance", col = "Term") +
   theme_bw()
 dev.off()
-
 
 ```
 
@@ -1409,7 +1415,7 @@ p_ind <- ggplot(vg_ind, aes(dist/1000, gamma, col = term)) +
   theme(legend.position = "right")
 
 terms_mat <- predict(final_model, type = "terms")
-term_names <- setdiff(colnames(terms_mat), c("glacier", "gHM"))
+term_names <- setdiff(colnames(terms_mat), c("glacier", "ai", "gHM", "bio1:tmean_dif"))
 
 one_term <- function(term){
   df_term <- mod_sf_unique_scaled
@@ -1487,7 +1493,6 @@ dev.off()
 
 col_pal      <- c("Q ≤ 0.10" = "skyblue2", "Q > 0.10" = "red2")
 col_pal_text <- c("Q ≤ 0.10" = "skyblue1", "Q > 0.10" = "red2")
-
 
 bin_labels <- function(x, breaks = 5, digits = 2) {
   b <- cut(x, breaks = breaks, include.lowest = TRUE)
@@ -1622,7 +1627,7 @@ plot_categorical_pair <- function(bin_df, x, y, xlab = NULL, ylab = NULL, q = "Q
       axis.text  = element_text(size = 16)
     )
 
-  list(df = df2, prop_df = prop_df, plt = plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
+  list(df = bin_df, prop_df = prop_df, plt = plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
 }
 
 q_df <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
@@ -1639,13 +1644,14 @@ bin_df <-
     )
   )
 
-admix_csi   <- plot_continuous_pair(bin_df, x = "csi_past",  y = "Ho", breaks = 5, poly2 = TRUE,
+breaks = 4
+admix_csi   <- plot_continuous_pair(bin_df, x = "csi_past",  y = "Ho", breaks = breaks, poly2 = TRUE,
                                     xlab = "Paleoclimate stability", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
-admix_bio1  <- plot_continuous_pair(bin_df, x = "bio1",      y = "Ho", breaks = 5, poly2 = FALSE,
+admix_bio1  <- plot_continuous_pair(bin_df, x = "bio1",      y = "Ho", breaks = breaks, poly2 = FALSE,
                                     xlab = "Contemporary temperature", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
-admix_tdiff <- plot_continuous_pair(bin_df, x = "tmean_dif", y = "Ho", breaks = 5, poly2 = FALSE,
+admix_tdiff <- plot_continuous_pair(bin_df, x = "tmean_dif", y = "Ho", breaks = breaks, poly2 = FALSE,
                                     xlab = "Contemporary temperature change", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
 admix_fire  <- plot_categorical_pair(bin_df, x = "fire_frq", y = "Ho",
@@ -1782,36 +1788,32 @@ library(ggeffects)
 mod_raw <- lm(formula(final_model), data = mod_sf_unique)
 b <- coef(mod_raw)
 
-# Calculate switch point
-# The switch point occurs where the marginal effect of tmean_dif on Ho = 0
-# Taking the derivative with respect to tmean_dif:
-#   dY / d(tmean_dif) = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
-# Setting this equal to zero and solving for bio1:
-#  0 = beta_tmean_dif + beta_(bio1:tmean_dif) * bio1
-#   bio1* = -beta_tmean_dif / beta_(bio1:tmean_dif)
-# This value of bio1 defines the point at which the effect of tmean_dif changes sign.
-switch_point <- -b["tmean_dif"] / b["bio1:tmean_dif"]
+# Johnson-Neyman test to find regions of significance for the interaction
+library(interactions)
+jn <- johnson_neyman(mod_raw, pred = bio1, modx = tmean_dif)
+jn_bounds <- jn$bounds
+
 
 # Get slopes
 b <- coef(mod_raw)
 V <- vcov(mod_raw)
-bio_seq <- seq(
-  min(mod_sf_unique$bio1, na.rm = TRUE),
-  max(mod_sf_unique$bio1, na.rm = TRUE),
+tmean_dif_seq <- seq(
+  min(mod_sf_unique$tmean_dif, na.rm = TRUE),
+  max(mod_sf_unique$tmean_dif, na.rm = TRUE),
   length.out = 200
 )
 
 # Create data frame of bio1 values
 slope_df <- 
-  data.frame(bio1 = bio_seq) %>%
+  data.frame(tmean_dif = tmean_dif_seq) %>%
   # Compute slope: dY/d(tmean_dif) = β1 + β_interaction * bio1
   dplyr::mutate(
-    slope = b["tmean_dif"] + b["bio1:tmean_dif"] * bio1
+    slope = b["bio1"] + b["bio1:tmean_dif"] * tmean_dif
   )
 
 # Compute standard error for linear combination
-slope_df$se <- purrr::map_dbl(slope_df$bio1, function(z) {
-  a <- c("tmean_dif" = 1, "bio1:tmean_dif" = z)
+slope_df$se <- purrr::map_dbl(slope_df$tmean_dif, function(z) {
+  a <- c("bio1" = 1, "bio1:tmean_dif" = z)
   sqrt(t(a) %*% V[names(a), names(a)] %*% a)
 })
 
@@ -1823,41 +1825,35 @@ slope_df <- slope_df %>%
     conf.high = slope + crit * se
   )
 
-# Get range where slope is significantly positive
-pos_region <-
-  slope_df %>%
-  dplyr::filter(conf.low > 0)
+# Split tmean_dif into min, halfway between min and switch point, switch point, halfway between switch point and max, and max
+# compute breakpoints ONCE
+tmean_dif_min  <- min(mod_sf_unique$tmean_dif, na.rm = TRUE)
+tmean_dif_max  <- max(mod_sf_unique$tmean_dif, na.rm = TRUE)
 
-# Get range where slope is significantly negative
-neg_region <- 
-  slope_df %>%
-  dplyr::filter(conf.high < 0)
+# breaks <- c(tmean_dif_min, mid_low, switch_point, mid_high, tmean_dif_max)
 
-# Get boundaries
-pos_min <- min(pos_region$bio1, na.rm = TRUE)
-neg_max <- max(neg_region$bio1, na.rm = TRUE)
+# fmt <- function(x) paste0(round(x, 1), " °C")
+# labels <- c(
+#   paste0(fmt(tmean_dif_min), " – ", fmt(mid_low)),
+#   paste0(fmt(mid_low), " – ", fmt(switch_point)),
+#   paste0(fmt(switch_point), " – ", fmt(mid_high)),
+#   paste0(fmt(mid_high), " – ", fmt(tmean_dif_max))
+# )
 
-# Get min and max of bio1
-bio1_min <- min(mod_sf_unique$bio1, na.rm = TRUE)
-bio1_max <- max(mod_sf_unique$bio1, na.rm = TRUE)
-
-# Split bio1 into
-# min - pos_min
-# pos_min - neg_max
-# neg_max - max
-breaks <- c(bio1_min, neg_max, pos_min, bio1_max)
+breaks <- seq(tmean_dif_min, tmean_dif_max, length.out = 5)
 
 fmt <- function(x) paste0(round(x, 1), " °C")
 labels <- c(
-  paste0(fmt(bio1_min), " – ", fmt(neg_max)),
-  paste0(fmt(neg_max), " – ", fmt(pos_min)),
-  paste0(fmt(pos_min), " – ", fmt(bio1_max))
+  paste0(fmt(breaks[1]), " – ", fmt(breaks[2])),
+  paste0(fmt(breaks[2]), " – ", fmt(breaks[3])),
+  paste0(fmt(breaks[3]), " – ", fmt(breaks[4])),
+  paste0(fmt(breaks[4]), " – ", fmt(breaks[5]))
 )
 
 interact_df <- mod_sf_unique %>%
   mutate(
-    bio1_bin = cut(
-      bio1,
+    tmean_dif_bin = cut(
+      tmean_dif,
       breaks = breaks,
       include.lowest = TRUE,
       labels = labels
@@ -1867,88 +1863,150 @@ interact_df <- mod_sf_unique %>%
 slope_df <-
   slope_df %>%
   mutate(
-    bio1_bin = cut(
-      bio1,
+    tmean_dif_bin = cut(
+      tmean_dif,
       breaks = breaks,
       include.lowest = TRUE,
       labels = labels
     )
   )
 
-cols <- c("#6bb2cc", "#f7a957", "#e24923")
+# Get midpoint of each break (or you will have five intervals)
+midbreaks <- (breaks[-1] + breaks[-length(breaks)]) / 2
+preds <- ggeffects::ggpredict(
+  mod_raw,
+  terms = c(
+    "tmean_dif [all]",
+    paste0("bio1 [", paste(midbreaks, collapse = ", "), "]")
+  ),
+  data = mod_sf_unique
+)
+ 
+ #(#000249), Model Ultramarine (#0F4392), Hot Kiss (#FF4949) and Rich Red (#DD1717). The RGB and CMYK values of the c
+
+#095786	(9,87,134)
+#0090ab	(0,144,171)
+#e6cea0	(230,206,160)
+#db4646	(219,70,70)
+#ae0000
+
+# Bin raster by breaks and assign colors
+names(tmean_dif) <- "tmean_dif"
+tmean_dif_binned <- 
+  tmean_dif %>%
+  project("epsg:3310") %>%
+  as.data.frame(xy = TRUE) %>%
+  mutate(
+    tmean_dif_bin = cut(
+      tmean_dif,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  ) %>%
+  drop_na()
+
+pos_min <- jn_bounds["Higher"]
+neg_max <- jn_bounds["Lower"]
+
+cols <- c("navyblue", "skyblue1", "tomato1", "tomato4")
+plt_slope <-
+  ggplot(slope_df, aes(x = tmean_dif, y = slope)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = tmean_dif_bin), alpha = 0.2) +
+  geom_line(linewidth = 1.2, aes(col = tmean_dif_bin)) +
+  geom_hline(yintercept = 0, col = "gray") +
+  geom_vline(xintercept = breaks, linetype = "dashed", color = "gray") +
+  # geom_vline(xintercept = switch_point, linetype = "solid", color = "darkgray", alpha = 0.8) +
+  # annotate("text", x = switch_point, y = max(slope_df$slope), color = "darkgray", vjust = 0, hjust = 1.05, label = paste0(round(switch_point, 1), " °C")) +
+  geom_vline(xintercept = neg_max, linetype = "solid", color = "navy", alpha = 0.8) +
+  annotate("text", x = neg_max, y = max(slope_df$slope), color = "navy", vjust = 0, hjust = 1.05, label = paste0(round(neg_max, 2), " °C")) +
+  geom_vline(xintercept = pos_min, linetype = "solid", color = "tomato3", alpha = 0.8) +
+  annotate("text", x = pos_min, y = max(slope_df$slope), color = "tomato3", vjust = 0, hjust = 1.05, label = paste0(round(pos_min, 2), " °C")) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme_classic() +
+  labs(
+    x = make_pretty_names("bio1"),
+    y = "Effect of contemporary climate\nchange on heterozygosity"
+  ) +
+  # bltr
+  theme(
+    legend.position = "none", 
+    plot.margin = margin(25, 10, 1, 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+plt_interact <-
+  ggplot(preds, aes(x = x, y = predicted, color = group, fill = group)) +
+  geom_line(linewidth = 1) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2, color = NA) +
+  theme_classic() +
+  labs(
+    x = make_pretty_names("tmean_dif"),
+    y = "Predicted heterozygosity",
+  ) +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(10, 10, 10, 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  ) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values = cols) 
 
 plt_map <-
   ggplot(interact_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = bio1_bin)) +
-  scale_color_manual(values = cols) +
+  geom_sf(data = ca, fill = "white") +
+  geom_raster(data = tmean_dif_binned, aes(x = x, y = y, fill = tmean_dif_bin), inherit.aes = FALSE, alpha = 0.5, show.legend = FALSE) +
+  geom_sf(aes(fill = tmean_dif_bin), size = 1.5, pch = 21) +
+  scale_fill_manual(values = cols) +
   theme_void() +
-  labs(col = "Contemporary\ntemperature") +
+  labs(fill = "Contemporary\ntemperature\nchange") +
   theme(
     legend.position = "inside", 
-    legend.position.inside = c(0.71, 0.8),
+    legend.position.inside = c(0.75, 0.8), 
     legend.title = element_text(size = 12),
-    legend.text = element_text(size = 12)
+    legend.text = element_text(size = 11),
+    plot.margin = margin(5, 5, 5, 5)
   )
 
 plt_raw <-
-  ggplot(interact_df, aes(x = tmean_dif, y = Ho, col = bio1_bin)) +
-  geom_point(alpha = 0.8) +
+  ggplot(interact_df, aes(x = bio1, y = Ho, col = tmean_dif_bin)) +
+  geom_point(alpha = 0.8, size = 1) +
   geom_smooth(method = "lm", se = TRUE, col = "black") +
   theme_minimal() +
-  labs(x = make_pretty_names("tmean_dif"), y = "Observed Heterozygosity") +
+  labs(x = make_pretty_names("bio1"), y = "Observed\nheterozygosity") +
   theme(legend.title = element_blank()) + 
-  facet_wrap(~ bio1_bin, nrow = 1, scales = "free") +
+  facet_wrap(~ tmean_dif_bin, nrow = 1) +
   scale_color_manual(values = cols) +
-  scale_x_continuous(expand = c(0, 0)) +
+  #scale_x_continuous(expand = c(0, 0)) +
   theme_classic() +
   theme(
     legend.position = "none", 
     panel.background = element_rect(fill = "white", color = "black", linewidth = 1),
     axis.line = element_blank(),
     strip.background = element_blank(),
-    strip.text = element_text(size = 12),
-    plot.margin = margin(5, 5, 5, 13),
-    axis.title = element_text(size = 14),
-    axis.text = element_text(size = 12)
-  )   
+    strip.text = element_text(size = 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    #bltr
+    plot.margin = margin(1, 10, 10, 20)
 
-midpoints <- (breaks[-1] + breaks[-length(breaks)]) / 2
+  ) + 
+  stat_cor(aes(label = after_stat(r.label)), label.x = min(interact_df$tmean_dif), label.y = max(interact_df$Ho), size = 3.5, vjust = 1.5, method = "pearson")
 
-plt_slope <-
-  ggplot(slope_df, aes(x = bio1, y = slope)) +
-  geom_hline(yintercept = 0, col = "gray", lwd = 0.5, linetype = "solid") +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = bio1_bin), alpha = 0.2) +
-  geom_line(linewidth = 1.2, aes(col = bio1_bin)) +
-  geom_vline(xintercept = breaks, linetype = "dashed", color = "black") +
-  geom_text(
-    data = data.frame(x = midpoints, y = max(slope_df$slope, na.rm = TRUE), label = labels),
-    aes(x = x, y = y, label = label),
-    vjust = -1.5,
-    size = 4,
-    color = "black",
-    inherit.aes = FALSE
-  ) +
-  scale_color_manual(values = cols) +
-  scale_fill_manual(values = cols) +
-  #scale_x_continuous(expand = c(0, 0)) +
-  theme_classic() +
-  labs(
-    x = make_pretty_names("bio1"),
-    y = "Effect of contemporary temperature\nchange on heterozygosity"
-  ) +
-  theme(
-    legend.position = "none",
-    plot.margin = margin(5, 5, 5, 13),
-    axis.title = element_text(size = 14),
-    axis.text = element_text(size = 12)
-  )
-
-
-png(here(plotpath, "figure_climate_change_interaction.png"), width = 10, height = 8, units = "in", res = 300)
-group1 <- plot_grid(plt_slope, plt_map, rel_widths = c(0.65, 0.4), labels = c("A", "B"))
-plot_grid(group1, plt_raw, nrow = 2, rel_heights = c(0.55, 0.5), labels = c("", "C"), align = "v")
+png(here(plotpath, "figure_bio1_interaction.png"), width = 9, height = 5.1, units = "in", res = 300)
+group1 <- plot_grid(NULL, plt_map, NULL, ncol = 1, labels = c("", "B", ""), rel_heights = c(0.2, 0.8, 0.2))
+group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v", rel_heights = c(0.5, 0.4))
+plot_grid(group2, group1, nrow = 1, rel_widths = c(2, 1))
 dev.off()
+
+# How many samples below lower bound?
+sum(mod_sf_unique$tmean_dif < neg_max, na.rm = TRUE) # 9
+# How many samples above upper bound?
+sum(mod_sf_unique$tmean_dif > pos_min, na.rm = TRUE) # 122
 ```
 
 ```{r}
@@ -1957,6 +2015,17 @@ library(ggeffects)
 # Refit model with raw data to get more interpretable interaction plots
 mod_raw <- lm(formula(final_model), data = mod_sf_unique)
 b <- coef(mod_raw)
+
+# Johnson-Neyman test to find regions of significance for the interaction
+library(interactions)
+jn <- johnson_neyman(mod_raw, pred = tmean_dif, modx = bio1)
+jn_bounds <- jn$bounds
+
+# Write out individuals with
+cold_ind <- mod_sf %>% filter(bio1 < jn_bounds["Lower"]) %>% pull(SampleID)
+hot_ind  <- mod_sf %>% filter(bio1 > jn_bounds["Higher"]) %>% pull(SampleID)
+write_tsv(data.frame(SampleID = cold_ind), here(outpath, "cold_individuals.txt"), col_names = FALSE)
+write_tsv(data.frame(SampleID = hot_ind), here(outpath, "hot_individuals.txt"), col_names = FALSE)
 
 # Calculate switch point
 # The switch point occurs where the marginal effect of tmean_dif on Ho = 0
@@ -2007,14 +2076,24 @@ bio_max  <- max(mod_sf_unique$bio1, na.rm = TRUE)
 mid_low  <- (bio_min + switch_point) / 2
 mid_high <- (switch_point + bio_max) / 2
 
-breaks <- c(bio_min, mid_low, switch_point, mid_high, bio_max)
+# breaks <- c(bio_min, mid_low, switch_point, mid_high, bio_max)
 
-fmt <- function(x) paste0(format(round(x, 2), nsmall = 2), " °C")
+# fmt <- function(x) paste0(round(x, 1), " °C")
+# labels <- c(
+#   paste0(fmt(bio_min), " – ", fmt(mid_low)),
+#   paste0(fmt(mid_low), " – ", fmt(switch_point)),
+#   paste0(fmt(switch_point), " – ", fmt(mid_high)),
+#   paste0(fmt(mid_high), " – ", fmt(bio_max))
+# )
+
+breaks <- seq(bio_min, bio_max, length.out = 5)
+
+fmt <- function(x) paste0(round(x, 1), " °C")
 labels <- c(
-  paste0(fmt(bio_min), " – ", fmt(mid_low)),
-  paste0(fmt(mid_low), " – ", fmt(switch_point)),
-  paste0(fmt(switch_point), " – ", fmt(mid_high)),
-  paste0(fmt(mid_high), " – ", fmt(bio_max))
+  paste0(fmt(breaks[1]), " – ", fmt(breaks[2])),
+  paste0(fmt(breaks[2]), " – ", fmt(breaks[3])),
+  paste0(fmt(breaks[3]), " – ", fmt(breaks[4])),
+  paste0(fmt(breaks[4]), " – ", fmt(breaks[5]))
 )
 
 interact_df <- mod_sf_unique %>%
@@ -2049,26 +2128,60 @@ preds <- ggeffects::ggpredict(
   data = mod_sf_unique
 )
  
+ #(#000249), Model Ultramarine (#0F4392), Hot Kiss (#FF4949) and Rich Red (#DD1717). The RGB and CMYK values of the c
 
-cols <- c("#042346","#6bb2cc", "#f7a957", "#e22323")
+#095786	(9,87,134)
+#0090ab	(0,144,171)
+#e6cea0	(230,206,160)
+#db4646	(219,70,70)
+#ae0000
 
+# Bin raster by breaks and assign colors
+bio1_binned <- 
+  bio1 %>%
+  project("epsg:3310") %>%
+  as.data.frame(xy = TRUE) %>%
+  mutate(
+    bio1_bin = cut(
+      `CHELSA_bio1_1981-2010_V.2.1`,
+      breaks = breaks,
+      include.lowest = TRUE,
+      labels = labels
+    )
+  ) %>%
+  drop_na()
+
+pos_min <- jn_bounds["Higher"]
+neg_max <- jn_bounds["Lower"]
+
+cols <- c("navyblue", "skyblue1", "tomato1", "tomato4")
 plt_slope <-
   ggplot(slope_df, aes(x = bio1, y = slope)) +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = bio1_bin), alpha = 0.2) +
   geom_line(linewidth = 1.2, aes(col = bio1_bin)) +
   geom_hline(yintercept = 0, col = "gray") +
   geom_vline(xintercept = breaks, linetype = "dashed", color = "gray") +
-  geom_vline(xintercept = switch_point, linetype = "dashed", color = "red") +
-  annotate("text", x = switch_point, y = max(slope_df$slope), color = "red", vjust = 0, hjust = 1.1, label = paste0(round(switch_point, 2), " °C")) +
+  # geom_vline(xintercept = switch_point, linetype = "solid", color = "darkgray", alpha = 0.8) +
+  # annotate("text", x = switch_point, y = max(slope_df$slope), color = "darkgray", vjust = 0, hjust = 1.05, label = paste0(round(switch_point, 1), " °C")) +
+  geom_vline(xintercept = neg_max, linetype = "solid", color = "navy", alpha = 0.8) +
+  annotate("text", x = neg_max, y = max(slope_df$slope), color = "navy", vjust = 0, hjust = 1.05, label = paste0(round(neg_max, 2), " °C")) +
+  geom_vline(xintercept = pos_min, linetype = "solid", color = "tomato3", alpha = 0.8) +
+  annotate("text", x = pos_min, y = max(slope_df$slope), color = "tomato3", vjust = 0, hjust = 1.05, label = paste0(round(pos_min, 2), " °C")) +
   scale_color_manual(values = cols) +
   scale_fill_manual(values = cols) +
   scale_x_continuous(expand = c(0, 0)) +
   theme_classic() +
   labs(
     x = make_pretty_names("bio1"),
-    y = "Effect of climate change"
+    y = "Effect of contemporary climate\nchange on heterozygosity"
   ) +
-  theme(legend.position = "none")
+  # bltr
+  theme(
+    legend.position = "none", 
+    plot.margin = margin(25, 10, 1, 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
 
 plt_interact <-
   ggplot(preds, aes(x = x, y = predicted, color = group, fill = group)) +
@@ -2079,29 +2192,41 @@ plt_interact <-
     x = make_pretty_names("tmean_dif"),
     y = "Predicted heterozygosity",
   ) +
-  theme(legend.position = "none") +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(10, 10, 10, 10),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  ) +
   scale_color_manual(values = cols) +
-  scale_fill_manual(values = cols)
+  scale_fill_manual(values = cols) 
 
 plt_map <-
   ggplot(interact_df) +
-  geom_sf(data = ca) +
-  geom_sf(aes(col = bio1_bin)) +
-  scale_color_manual(values = cols) +
+  geom_sf(data = ca, fill = "white") +
+  geom_raster(data = bio1_binned, aes(x = x, y = y, fill = bio1_bin), inherit.aes = FALSE, alpha = 0.5, show.legend = FALSE) +
+  geom_sf(aes(fill = bio1_bin), size = 1.5, pch = 21) +
+  scale_fill_manual(values = cols) +
   theme_void() +
-  labs(col = "Contemporary\ntemperature") +
-  theme(legend.position = "inside", legend.position.inside = c(0.85, 0.75))
+  labs(fill = "Contemporary\ntemperature") +
+  theme(
+    legend.position = "inside", 
+    legend.position.inside = c(0.75, 0.8), 
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    plot.margin = margin(5, 5, 5, 5)
+  )
 
 plt_raw <-
   ggplot(interact_df, aes(x = tmean_dif, y = Ho, col = bio1_bin)) +
-  geom_point(alpha = 0.8) +
+  geom_point(alpha = 0.8, size = 1) +
   geom_smooth(method = "lm", se = TRUE, col = "black") +
   theme_minimal() +
-  labs(x = make_pretty_names("tmean_dif"), y = "Observed Heterozygosity") +
+  labs(x = make_pretty_names("tmean_dif"), y = "Observed\nheterozygosity") +
   theme(legend.title = element_blank()) + 
   facet_wrap(~ bio1_bin, nrow = 1) +
   scale_color_manual(values = cols) +
-  scale_x_continuous(expand = c(0, 0)) +
+  #scale_x_continuous(expand = c(0, 0)) +
   theme_classic() +
   theme(
     legend.position = "none", 
@@ -2109,27 +2234,26 @@ plt_raw <-
     axis.line = element_blank(),
     strip.background = element_blank(),
     strip.text = element_text(size = 10),
-    plot.margin = margin(5, 5, 5, 13)
-  )   
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    #bltr
+    plot.margin = margin(1, 10, 10, 20)
 
-png(here(plotpath, "figure_climate_change_interaction.png"), width = 10, height = 6, units = "in", res = 300)
-group1 <- plot_grid(plt_interact, plt_map, ncol = 1, labels = c("B", "D"))
-group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v")
+  ) + 
+  stat_cor(aes(label = after_stat(r.label)), label.x = min(interact_df$tmean_dif), label.y = max(interact_df$Ho), size = 3.5, vjust = 1.5, method = "pearson")
+
+png(here(plotpath, "figure_climate_change_interaction.png"), width = 9, height = 5.1, units = "in", res = 300)
+group1 <- plot_grid(NULL, plt_map, NULL, ncol = 1, labels = c("", "B", ""), rel_heights = c(0.2, 0.8, 0.2))
+group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v", rel_heights = c(0.5, 0.4))
 plot_grid(group2, group1, nrow = 1, rel_widths = c(2, 1))
 dev.off()
-# Where slope is significantly positive
-pos_region <- slope_df %>%
-  dplyr::filter(conf.low > 0)
 
-# Where slope is significantly negative
-neg_region <- slope_df %>%
-  dplyr::filter(conf.high < 0)
-
-# Get boundaries
-pos_min <- min(pos_region$bio1, na.rm = TRUE)
-neg_max <- max(neg_region$bio1, na.rm = TRUE)
+# How many samples below lower bound?
+sum(mod_sf_unique$bio1 < neg_max, na.rm = TRUE) # 9
+# How many samples above upper bound?
+sum(mod_sf_unique$bio1 > pos_min, na.rm = TRUE) # 122
 ```
-
+ 
 # Check fire variables
 ```{r}
 # Check relationship between fire count and Ho in areas of intermediate frequency fire
@@ -2368,31 +2492,33 @@ list.files(out_dir, pattern = "^Table_S[2-6].*\\.tsv$", full.names = TRUE)
 ```
 
 # Variance partioning analysis
+
 ```{r}
-# Calculate shared variance
+# Calculate shared variance for a set of main-effect blocks
 block_varpart_exact_shared <- function(model, blocks) {
   stopifnot(inherits(model, "lm"))
+
   get_R2 <- function(m) summary(m)$r.squared
   all_terms <- attr(terms(model), "term.labels")
 
-  # build formulas for each subset of blocks
   block_names <- names(blocks)
   block_terms <- blocks
 
-  # R2 for model using union of terms in a subset of blocks
+  # R2 for a model using the union of terms in a subset of blocks
   r2_subset <- function(use_blocks) {
     rhs <- unique(unlist(block_terms[use_blocks]))
     rhs <- intersect(rhs, all_terms)
+
     m <- update(model, as.formula(paste(". ~", paste(rhs, collapse = " + "))))
     get_R2(m)
   }
 
-  # unique for block i = R2(all blocks) - R2(all blocks except i)
+  # Unique contribution of each block
   uniq <- purrr::map_dbl(block_names, \(b) {
     r2_subset(block_names) - r2_subset(setdiff(block_names, b))
   })
 
-  # full for the block i = R2(block i alone)
+  # R2 of each block by itself
   full <- purrr::map_dbl(block_names, \(b) {
     r2_subset(b)
   })
@@ -2404,75 +2530,193 @@ block_varpart_exact_shared <- function(model, blocks) {
   )
 }
 
-# Calculate interaction contribution
-no_interact_model <- update(final_model, . ~ . - fire_frq:fire_recent)
+# -------------------------------------------------------------------
+# 1. Fit reduced models to isolate interaction increments
+# -------------------------------------------------------------------
+
+# Main-effects-only model
+no_interact_model <- update(final_model, . ~ . - fire_frq:fire_recent - bio1:tmean_dif)
+
+# Main effects + fire interaction only
+fire_interact_model <- update(no_interact_model, . ~ . + fire_frq:fire_recent)
+
+# Main effects + climate interaction only
+climate_interact_model <- update(no_interact_model, . ~ . + bio1:tmean_dif)
+
+# R2 values
 R2_main <- summary(no_interact_model)$r.squared
 R2_full <- summary(final_model)$r.squared
-R2_interaction_increment <- R2_full - R2_main
-R2_interaction_increment
 
-# Calculate variance for each block without interaction
-blocks_nointeract <- list("fire_frq", "fire_recent", "evt", "bio1", "tmean_dif", "poly(csi_past, 2, raw = TRUE)", "glacier", "gHM")
-names(blocks_nointeract) <- make_pretty_names(blocks_nointeract)
+R2_interaction_increment_fire <-
+  summary(fire_interact_model)$r.squared - R2_main
 
-# Calculate unique variance explained
+R2_interaction_increment_climate <-
+  summary(climate_interact_model)$r.squared - R2_main
+
+# -------------------------------------------------------------------
+# 2. Variance partitioning for main effects only
+# -------------------------------------------------------------------
+
+blocks_nointeract <- list(
+  "fire_frq" = "fire_frq",
+  "fire_recent" = "fire_recent",
+  "evt" = "evt",
+  "ai" = "ai",
+  "bio1" = "bio1",
+  "tmean_dif" = "tmean_dif",
+  "poly(csi_past, 2, raw = TRUE)" = "poly(csi_past, 2, raw = TRUE)",
+  "glacier" = "glacier",
+  "gHM" = "gHM"
+)
+
+names(blocks_nointeract) <- make_pretty_names(names(blocks_nointeract), units = FALSE)
+
 vp <- block_varpart_exact_shared(no_interact_model, blocks_nointeract)
-vp
 
-# add R2_interaction_increment to recent fire and historical fire
-vp <- 
-  vp %>%
-  mutate(R2_unique = case_when(
-    block == "contemporary fire" ~ R2_unique + R2_interaction_increment,
-    block == "historical fire frequency" ~ R2_unique + R2_interaction_increment,
-    TRUE ~ R2_unique
-  ))
+# -------------------------------------------------------------------
+# 3. Shared + unexplained variance
+# -------------------------------------------------------------------
 
-# Calculated shared and unexplained variance
-shared_R2 <- R2_full - sum(vp$R2_unique)
+# Shared variance is whatever remains after:
+# - unique main effects
+# - unique fire interaction increment
+# - unique climate interaction increment
+shared_R2 <- R2_full -
+  sum(vp$R2_unique) -
+  R2_interaction_increment_fire -
+  R2_interaction_increment_climate
+
 unexplained_R2 <- 1 - R2_full
- 
-# Confirm sum to 100 and sum to original R2
-stopifnot(sum(shared_R2, unexplained_R2, vp$R2_unique) == 1)
-stopifnot(sum(shared_R2, vp$R2_unique) == R2_full)
 
-# Combine
+# Check sums
+stopifnot(isTRUE(all.equal(
+  sum(vp$R2_unique) +
+    R2_interaction_increment_fire +
+    R2_interaction_increment_climate +
+    shared_R2 +
+    unexplained_R2,
+  1
+)))
+
+stopifnot(isTRUE(all.equal(
+  sum(vp$R2_unique) +
+    R2_interaction_increment_fire +
+    R2_interaction_increment_climate +
+    shared_R2,
+  R2_full
+)))
+
+# -------------------------------------------------------------------
+# 4. Plot
+# -------------------------------------------------------------------
+
 plot_df <- vp %>%
-  transmute(component = block, pct_total = 100 * R2_unique) %>%          # R2 is fraction of TOTAL variance
-  bind_rows(tibble(component = "unexplained", pct_total = 100 * unexplained_R2)) %>%
-  bind_rows(tibble(component = "shared", pct_total = 100 * shared_R2)) %>%
-  mutate(component = factor(component, levels = c(setdiff(component, "unexplained"), "unexplained"))) %>%
-  mutate(kind = case_when(
-    component == "shared" ~ "Shared",
-    component == "unexplained" ~ "Unexplained",
-    TRUE ~ "Unique"
-  )) %>%
-  # Capitalize first letter
-  mutate(component = str_to_sentence(component)) %>%
-  arrange(kind, pct_total) %>%
+  transmute(
+    component = block,
+    pct_total = 100 * R2_unique,
+    kind = "Unique"
+  ) %>%
+  bind_rows(
+    tibble(
+      component = "Historical fire × contemporary fire",
+      pct_total = 100 * R2_interaction_increment_fire,
+      kind = "Interaction"
+    )
+  ) %>%
+  bind_rows(
+    tibble(
+      component = "Contemporary temperature × temperature change",
+      pct_total = 100 * R2_interaction_increment_climate,
+      kind = "Interaction"
+    )
+  ) %>%
+  bind_rows(
+    tibble(
+      component = "Shared",
+      pct_total = 100 * shared_R2,
+      kind = "Shared"
+    )
+  ) %>%
+  bind_rows(
+    tibble(
+      component = "Unexplained",
+      pct_total = 100 * unexplained_R2,
+      kind = "Unexplained"
+    )
+  ) %>%
+  arrange(factor(kind, levels = c("Unique", "Interaction", "Shared", "Unexplained")), pct_total) %>%
   mutate(component = factor(component, levels = unique(component)))
 
+plot_df %>%
+  group_by(kind, grepl("Contemporary", component)) %>%
+  summarize(sum_pct = sum(pct_total), .groups = "drop")
 
-plot_df %>% group_by(kind, grepl("Contemporary", component)) %>% summarize(sum(pct_total))
+fill_vals <- plot_df %>%
+  filter(!component %in% c("Shared", "Unexplained")) %>%
+  pull(pct_total)
 
-png(here(plotpath, "variance_partioning.png"), width = 4.5, height = 3, res = 300, units = "in")
-ggplot(plot_df, aes(x = "Varpart", y = component, fill = ifelse(component %in% c("Unexplained","Shared"), NA, pct_total))) +
+png(here(plotpath, "variance_partioning.png"),
+    width = 8, height = 3.5, res = 300, units = "in")
+
+ggplot(
+  plot_df,
+  aes(
+    x = "Varpart",
+    y = component,
+    fill = ifelse(component %in% c("Shared", "Unexplained"), NA, pct_total)
+  )
+) +
   geom_tile(color = "white", linewidth = 0.8) +
-  geom_text(aes(label = paste0(round(pct_total, 2), "%")),
-            size = 4, color = "black") +
-  scale_met_cont(values = plot_df$pct_total[!plot_df$component %in% c("Unexplained","Shared")], extend_scale = 0.2) +
+  geom_text(
+    aes(label = paste0(round(pct_total, 2), "%")),
+    size = 4,
+    color = "black"
+  ) +
+  scale_met_cont(values = fill_vals, extend_scale = 0.2) +
   labs(x = NULL, y = NULL, fill = "% Variance") +
   theme_minimal() +
   theme(
-    axis.text.x  = element_blank(),
+    axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
-    panel.grid   = element_blank(),
+    panel.grid = element_blank(),
     legend.position = "right",
     axis.text.y = element_text(size = 10, color = "black")
   )
+
 dev.off()
 
-vp %>% mutate_at(vars(R2_unique, R2_full), ~ round(. * 100, 2))
+# -------------------------------------------------------------------
+# 5. Output tables
+# -------------------------------------------------------------------
+
+vp %>%
+  mutate(across(c(R2_unique, R2_full), ~ round(.x * 100, 2)))
+
+tibble(
+  component = c(
+    "Historical fire × contemporary fire",
+    "Contemporary temperature × temperature change",
+    "Shared",
+    "Unexplained"
+  ),
+  pct_total = round(100 * c(
+    R2_interaction_increment_fire,
+    R2_interaction_increment_climate,
+    shared_R2,
+    unexplained_R2
+  ), 3)
+)
+
+# Variance explained by non-significant variables
+vp %>% 
+  filter(block %in% c("Aridity index", "Glacier (inside/outside)", "Human modification")) %>%
+  pull(R2_unique) %>% 
+  sum() * 100
+
+# Total R2
+round(summary(final_model)$r.squared * 100, 2)
+# Adjusted R2
+round(summary(final_model)$adj.r.squared * 100, 2)
 ```
 
 # Plot maps of variables
@@ -2526,87 +2770,178 @@ dev.off()
 
 # Comparison of variable importance via residuals
 ```{r}
-# For each variable, build a model with all other variables and compare the residuals to the full model residuals
-calc_var_resid <- function(x, mod_vars, df){
-  # Base formula
-  f <- reformulate(mod_vars, response = "Ho")
-  f <- update(f, . ~ . + fire_frq:fire_recent)
-  f <- update(f, . ~ . + poly(csi_past, 2, raw = TRUE) - csi_past)
-
-  # Subset formula
-  other_vars <- setdiff(mod_vars, x)
-  sub_f <- reformulate(other_vars, response = "Ho")
-  if (grepl("csi_past", sub_f)){
-    sub_f <- update(sub_f, . ~ . + poly(csi_past, 2, raw = TRUE) - csi_past)
-  }
-  if (x != "fire_frq" & x != "fire_recent"){
-    sub_f <- update(sub_f, . ~ . + fire_frq:fire_recent)
-  }
-  
-  sub_model <- lm(sub_f, data = df)
-  full_model <- lm(f, data = df)
-
-  # Difference in fit
-  sub_pred <- predict(sub_model)
-  full_pred <- predict(full_model)
-  pred_change <- full_pred - sub_pred
-
-  return(tibble(
-    pred_change = pred_change, 
-    variable = x, 
-    x = df$x, 
-    y = df$y)
+# ------------------------------------------------------------
+# Helper: collapse model-term names back to raw plotting variables
+# ------------------------------------------------------------
+collapse_plot_var <- function(x) {
+  dplyr::case_when(
+    x %in% c("poly(csi_past, 2, raw = TRUE)1", "poly(csi_past, 2, raw = TRUE)2") ~ "csi_past",
+    grepl("^evt", x) ~ "evt",
+    grepl("^fire_frq", x) ~ "fire_frq",
+    grepl("^fire_recent", x) ~ "fire_recent",
+    x == "bio1:tmean_dif" ~ "bio1_tmean_dif",
+    TRUE ~ x
   )
 }
 
-var_resid <- map(sig_vars, ~calc_var_resid(.x, final_model_vars, mod_sf_unique), .progress = TRUE)
+# ------------------------------------------------------------
+# Helper: identify which raw variable(s) should be removed
+# from the reduced model for a given plotted/model term
+# ------------------------------------------------------------
+vars_to_remove <- function(x) {
+  dplyr::case_when(
+    x %in% c("poly(csi_past, 2, raw = TRUE)1", "poly(csi_past, 2, raw = TRUE)2", "csi_past") ~ list("csi_past"),
+    grepl("^evt", x) | x == "evt" ~ list("evt"),
+    grepl("^fire_frq", x) | x == "fire_frq" ~ list("fire_frq"),
+    grepl("^fire_recent", x) | x == "fire_recent" ~ list("fire_recent"),
+    x == "bio1:tmean_dif" | x == "bio1_tmean_dif" ~ list(c("bio1", "tmean_dif")),
+    TRUE ~ list(x)
+  )
+}
 
-var_resid_df <- 
-  var_resid %>% 
-  bind_rows() %>% 
+# ------------------------------------------------------------
+# For each variable, build a reduced model and compare
+# predictions to the full model
+# ------------------------------------------------------------
+calc_var_resid <- function(x, mod_vars, df) {
+
+  plot_var <- collapse_plot_var(x)
+  remove_vars <- vars_to_remove(x)[[1]]
+
+  # Full model
+  f <- reformulate(mod_vars, response = "Ho")
+  f <- update(f, . ~ . + fire_frq:fire_recent + bio1:tmean_dif)
+
+  # Replace linear csi_past with polynomial representation
+  if ("csi_past" %in% all.vars(f)) {
+    f <- update(f, . ~ . + poly(csi_past, 2, raw = TRUE) - csi_past)
+  }
+
+  # Reduced model removes the relevant raw variable(s)
+  other_vars <- setdiff(mod_vars, remove_vars)
+  sub_f <- reformulate(other_vars, response = "Ho")
+
+  if ("csi_past" %in% all.vars(sub_f)) {
+    sub_f <- update(sub_f, . ~ . + poly(csi_past, 2, raw = TRUE) - csi_past)
+  }
+
+  # Add fire interaction only if both main effects remain,
+  # and only if we are not specifically removing that pair
+  if (all(c("fire_frq", "fire_recent") %in% all.vars(sub_f)) &&
+      !identical(sort(remove_vars), sort(c("fire_frq", "fire_recent")))) {
+    sub_f <- update(sub_f, . ~ . + fire_frq:fire_recent)
+  }
+
+  # Add climate interaction only if both main effects remain,
+  # and only if we are not specifically removing that pair
+  if (all(c("bio1", "tmean_dif") %in% all.vars(sub_f)) &&
+      !identical(sort(remove_vars), sort(c("bio1", "tmean_dif")))) {
+    sub_f <- update(sub_f, . ~ . + bio1:tmean_dif)
+  }
+
+  sub_model  <- lm(sub_f, data = df)
+  full_model <- lm(f, data = df)
+
+  pred_change <- predict(full_model) - predict(sub_model)
+
+  tibble(
+    pred_change = pred_change,
+    variable = plot_var,
+    x = df$x,
+    y = df$y
+  )
+}
+
+# ------------------------------------------------------------
+# Collapse significant model terms to plotting variables
+# ------------------------------------------------------------
+sig_vars_plot <- sig_vars %>%
+  vapply(collapse_plot_var, character(1)) %>%
+  unique()
+
+# ------------------------------------------------------------
+# Calculate prediction changes
+# ------------------------------------------------------------
+var_resid <- purrr::map(
+  sig_vars_plot,
+  ~ calc_var_resid(.x, final_model_vars, mod_sf_unique),
+  .progress = TRUE
+)
+
+var_resid_df <-
+  var_resid %>%
+  bind_rows() %>%
   st_as_sf(coords = c("x", "y"), crs = 3310) %>%
   group_by(variable) %>%
-  mutate(pred_change_scaled = scale(pred_change)[,1]) 
+  mutate(pred_change_scaled = scale(pred_change)[, 1]) %>%
+  ungroup()
 
+# ------------------------------------------------------------
+# Plot one variable at a time
+# ------------------------------------------------------------
 pair_plot <- function(x, label = "") {
-  y <- "pred_change"
-  change <- var_resid_df %>% filter(variable == x) %>% pull(y)
-  df <- mod_sf_unique %>% mutate(change = change)
+
+  change <- var_resid_df %>%
+    dplyr::filter(variable == x) %>%
+    dplyr::pull(pred_change)
+
+  df <- mod_sf_unique %>%
+    mutate(
+      change = change,
+      bio1_tmean_dif = bio1 * tmean_dif
+    )
+
+  pretty_x <- dplyr::case_when(
+    x == "csi_past" ~ "Paleoclimate stability",
+    x == "bio1_tmean_dif" ~ "Temperature × temperature change",
+    TRUE ~ make_pretty_names(x)
+  )
 
   df$fire_frq <- factor(
     df$fire_frq,
-    levels = c("No Fire/Low Frequency","Intermediate Frequency","High Frequency"),
-    labels = c("Low/No Fire","Intermediate","High")
+    levels = c("No Fire/Low Frequency", "Intermediate Frequency", "High Frequency"),
+    labels = c("Low/No Fire", "Intermediate", "High")
   )
+
+  df$fire_recent <- factor(df$fire_recent)
+  df$evt <- factor(df$evt)
 
   plt_scatter <-
     ggplot(df, aes(x = .data[[x]], y = Ho)) +
     theme_classic() +
-    labs(x = make_pretty_names(x), y = "Observed Heterozygosity") +
+    labs(x = pretty_x, y = "Observed Heterozygosity") +
     theme(plot.title = element_text(hjust = 0.5))
 
+  # Numeric predictors
   if (is.numeric(df[[x]])) {
+
+    smooth_formula <- if (x == "csi_past") {
+      y ~ poly(x, 2, raw = TRUE)
+    } else {
+      y ~ x
+    }
+
     plt_scatter <- plt_scatter +
       geom_point(aes(color = change), pch = 16, size = 1.5, alpha = 0.9) +
-      geom_smooth(
-        method = "lm",
-        formula = if (x == "csi_past") y ~ poly(x, 2, raw = TRUE) else y ~ x,
-        color = "black"
-      ) +
+      geom_smooth(method = "lm", formula = smooth_formula, color = "black") +
       scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
       theme(legend.position = "none")
+
+  # Special plot for contemporary fire
   } else if (x == "fire_recent") {
+
     plt_scatter <- plt_scatter +
       geom_boxplot(aes(fill = fire_frq), position = position_dodge(0.8)) +
       geom_point(
         aes(color = change, group = fire_frq),
         position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.8),
-        size = 2, show.legend = FALSE
+        size = 2,
+        show.legend = FALSE
       ) +
       scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
       scale_fill_manual(
         name = "Historical fire frequency",
-        values = c("Low/No Fire" = "white","Intermediate" = "gray30","High" = "gray60")
+        values = c("Low/No Fire" = "white", "Intermediate" = "gray30", "High" = "gray60")
       ) +
       theme(
         legend.background = element_blank(),
@@ -2614,28 +2949,42 @@ pair_plot <- function(x, label = "") {
         legend.justification = c(0, 1)
       ) +
       ylim(NA, 1.5 * max(df$Ho, na.rm = TRUE))
+
+  # Special plot for historical fire frequency
   } else if (x == "fire_frq") {
+
     plt_scatter <- plt_scatter +
       geom_boxplot(aes(fill = fire_recent), position = position_dodge(0.8)) +
       geom_point(
         aes(color = change, group = fire_recent),
         position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.8),
-        size = 2, show.legend = FALSE
+        size = 2,
+        show.legend = FALSE
       ) +
       scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
       scale_fill_manual(
         name = "Contemporary fire",
-        values = c("Unburned" = "white","Burned" = "gray")
+        values = c("Unburned" = "white", "Burned" = "gray")
       ) +
       theme(
         legend.background = element_blank(),
         legend.position = c(0.02, 0.98),
         legend.justification = c(0, 1)
       )
+
+  # Generic categorical predictors, including evt
   } else {
+
     plt_scatter <- plt_scatter +
       geom_boxplot() +
-      geom_jitter(aes(color = change), pch = 16, size = 1.5, alpha = 0.9, width = 0.2, height = 0) +
+      geom_jitter(
+        aes(color = change),
+        pch = 16,
+        size = 1.5,
+        alpha = 0.9,
+        width = 0.2,
+        height = 0
+      ) +
       scico::scale_color_scico(palette = "roma", midpoint = 0, direction = -1) +
       theme(legend.position = "none")
   }
@@ -2649,18 +2998,56 @@ pair_plot <- function(x, label = "") {
     labs(color = "Δ Predicted\nHeterozygosity") +
     theme(legend.position = "right")
 
-  if (x == "evt") plt_scatter <- plt_scatter + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+  if (x == "evt") {
+    plt_scatter <- plt_scatter +
+      theme(axis.text.x = element_text(angle = 30, hjust = 1))
+  }
 
-  cowplot::plot_grid(plt_scatter, plt_map, nrow = 1, labels = c(label, ""), align = "h", rel_widths = c(0.45, 0.55))
+  cowplot::plot_grid(
+    plt_scatter,
+    plt_map,
+    nrow = 1,
+    labels = c(label, ""),
+    align = "h",
+    rel_widths = c(0.45, 0.55)
+  )
 }
 
-png(here(plotpath, "variable_prediction_change_maps.png"), width = 3.5*2*2, height = 3*length(sig_vars)/2, units = "in", res = 300)
-plts <- map(1:length(sig_vars), ~pair_plot(sig_vars[.x], label = LETTERS[.x]))
+# ------------------------------------------------------------
+# Save 2-column version
+# ------------------------------------------------------------
+png(
+  here(plotpath, "variable_prediction_change_maps_2col.png"),
+  width = 3.5 * 2 * 2,
+  height = 3 * ceiling(length(sig_vars_plot) / 2),
+  units = "in",
+  res = 300
+)
+
+plts <- purrr::map(
+  seq_along(sig_vars_plot),
+  ~ pair_plot(sig_vars_plot[.x], label = LETTERS[.x])
+)
+
 cowplot::plot_grid(plotlist = plts, ncol = 2)
 dev.off()
 
-png(here(plotpath, "variable_prediction_change_maps.png"), width = 3.5*2, height = 3*length(sig_vars), units = "in", res = 300)
-plts <- map(1:length(sig_vars), ~pair_plot(sig_vars[.x], label = LETTERS[.x]))
+# ------------------------------------------------------------
+# Save 1-column version
+# ------------------------------------------------------------
+png(
+  here(plotpath, "variable_prediction_change_maps_1col.png"),
+  width = 3.5 * 2,
+  height = 3 * length(sig_vars_plot),
+  units = "in",
+  res = 300
+)
+
+plts <- purrr::map(
+  seq_along(sig_vars_plot),
+  ~ pair_plot(sig_vars_plot[.x], label = LETTERS[.x])
+)
+
 cowplot::plot_grid(plotlist = plts, ncol = 1)
 dev.off()
 ```
