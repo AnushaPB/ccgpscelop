@@ -2,7 +2,7 @@
 
 # wrapper for calling smc++ inside Docker
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
-VCF_FILE="${REPO_ROOT}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_occidentalis_only.vcf.gz"
+VCF_FILE="${REPO_ROOT}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_final_samples.vcf.gz"
 MASK_FILE="${REPO_ROOT}/analysis/smcpp/58-Sceloporus_uncallable_sites.sorted.bed.gz"
 SMCPP_CMD="docker run --rm \
              -v ${REPO_ROOT}:${REPO_ROOT} \
@@ -138,7 +138,7 @@ process_contig() {
 MUTATION_RATE=1e-8
 
 # Files
-VCF_FILE="${REPO_ROOT}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_occidentalis_only.vcf.gz"
+VCF_FILE="${REPO_ROOT}/data/ccgp_data/58-Sceloporus_complete_coords_annotated_final_samples.vcf.gz"
 MASK_FILE="${REPO_ROOT}/analysis/smcpp/58-Sceloporus_uncallable_sites.sorted.bed.gz"
 CALLABLE="${REPO_ROOT}/data/ccgp_data/58-Sceloporus_callable_sites.bed"
 

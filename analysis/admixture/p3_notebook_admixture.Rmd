@@ -236,6 +236,14 @@ dev.off()
 
 Add PCA results:
 ```{r}
+
+K_use <- 8
+Kvals <- 2:15
+
+# Make color scales based on mean RGB values for each population
+# And reorder populations to make them ordered geographically
+ordered_pops <- c(2, 6, 5, 7, 1, 8, 3, 4) 
+
 ca <- get_ca() %>% st_transform(3310)
 Q8_long <- 
   get_Q(K = K_use) %>%
@@ -321,16 +329,6 @@ pca_plot3 <- ggplot(pca_df, aes(PC1, PC3)) +
 png(here(plotpath, "pca.png"), width = 15, height = 5, units = "in", res = 300)
 cowplot::plot_grid(pca_plot1, pca_plot2, pca_plot3, pca_map, nrow = 1)
 dev.off()
-```
-
-
-```{r}
-K_use <- 8
-Kvals <- 2:15
-
-# Make color scales based on mean RGB values for each population
-# And reorder populations to make them ordered geographically
-ordered_pops <- c(8, 6, 2, 4, 3, 7, 1, 5)
 
 # create a lookup: old cluster -> new cluster
 cluster_map <- setNames(seq_along(ordered_pops), ordered_pops)
@@ -345,7 +343,7 @@ pop_cols <-
   group_by(cluster) %>%
   summarise(across(c(R, G, B), mean), .groups = "drop") %>%
   mutate(rgb = rgb(R, G, B)) %>%
-  # Subtract a little to pop 1 to make it more distinct (darker)
+  #Subtract a little to pop 1 to make it more distinct (darker)
   mutate(rgb = ifelse(cluster == 1, "#07353b", rgb)) 
 
 fill_cols <- setNames(pop_cols$rgb, pop_cols$cluster)
@@ -428,9 +426,7 @@ plt_pie <- ggplot() +
     legend.background = element_blank(),
     legend.position.inside = c(0.9, 0.95)
   )
-```
 
-```{r}
 group1 <- cowplot::plot_grid(plt_cv, plt_admix, ncol = 1, rel_heights = c(0.45, 0.55), labels = c("B","C"), label_size = 14)
 group2 <- cowplot::plot_grid(plt_pie, group1, nrow = 1, rel_widths = c(0.55, 0.45), labels = c("A",""), label_size = 14)
 group3 <- cowplot::plot_grid(group2, plt_bar, ncol = 1, rel_heights = c(0.8, 0.2), labels = c("","D"), label_size = 14)
@@ -441,11 +437,9 @@ png(here(plotpath, "figure_structure.png"), width = 9, height = 15, units = "in"
 group5
 dev.off()
 
-
 png(here(plotpath, "figure_admixture.png"), width = 9, height = 15/2, units = "in", res = 300)
 group3
 dev.off()
-
 
 png(here(plotpath, "figure_pca.png"), width = 9, height = 15/2, units = "in", res = 300)
 cowplot::plot_grid(pca_map, pca_plot1, pca_plot2, pca_plot3, nrow = 2, labels = LETTERS[1:4], label_size = 14)
@@ -463,53 +457,6 @@ Q %>%
   mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
   filter(cluster == PopGroup, K == 8) %>%
   write_csv(here(outpath, "Q8.csv"))
-
-# write out Q values for the assigned population
-Q %>%
-  filter(K == 8) %>%
-  # only keep the pop group/Q values corresponding to the cluster
-  mutate(PopGroup = as.numeric(gsub("V", "", PopGroup))) %>%
-  filter(cluster == PopGroup) %>%
-  mutate(pop = paste0("pop", cluster)) %>%
-  group_by(cluster) %>%
-  group_split() %>%
-  map(~as.character(pull(.x, SampleID))) %>%
-  iwalk(\(x, idx) write(x, here(outpath, paste0("pop", idx, ".txt"))))
-```
-
-```{r, fig.width = 13, fig.height = 6}
-# Check for consistency
-# simplified df with only cluster assignments and not Q values
-simplified_df <- 
-  df %>%
-  # doesn't matter which pop group is selected, cluster is repeated
-  filter(PopGroup == "V1") %>%
-  dplyr::select(SampleID, cluster, K)
-IDs <- unique(simplified_df$SampleID)
-
-same_all_df <-
-  map(IDs, ~{
-    pop <- 
-      simplified_df %>%
-      filter(SampleID == .x) %>%
-      st_drop_geometry() %>%
-      rename(reference_cluster = cluster, reference_id = SampleID)
-    same_df <-
-      simplified_df %>%
-      left_join(pop, by = "K") %>%
-      mutate(same = (cluster == reference_cluster)) %>%
-      group_by(SampleID, reference_id) %>%
-      summarize(same = mean(same), .groups = "drop")
-    return(same_df)
-  }) %>% 
-  bind_rows()
-same_summarize_df <-
-  same_all_df %>%
-  group_by(SampleID) %>%
-  summarize(same = mean(same), .groups = "drop")
-ggplot(same_summarize_df) +
-  geom_sf(aes(col = same)) +
-  scale_color_viridis_c(option = "plasma")
 ```
 
 # Write out individuals for SMC++ and window calculations
@@ -528,6 +475,8 @@ k8 <-
   pivot_longer(starts_with("V"), names_to = "group", values_to = "Q") %>%
   group_by(SampleID) %>%
   filter(Q == max(Q, na.rm = TRUE)) 
+
+stopifnot(nrow(k8) == 257)
 
 # Confirm that group == cluster
 stopifnot(all(k8$group == paste0("V", k8$cluster)))

@@ -14,12 +14,8 @@ cp ../../data/ccgp_data/$PREFIX.bed .
 cp ../../data/ccgp_data/$PREFIX.bim .
 cp ../../data/ccgp_data/$PREFIX.fam .
 
-# Remove beckii individuals
-awk '{print "0", $1}' ../../data/beckii_sampleids.txt > ../../data/beckii_sampleids_plink.txt
-plink --bfile $PREFIX --remove ../../data/beckii_sampleids_plink.txt --make-bed --out $PREFIX.tmp
-mv $PREFIX.tmp.bed $PREFIX.bed
-mv $PREFIX.tmp.bim $PREFIX.bim
-mv $PREFIX.tmp.fam $PREFIX.fam
+# Count number of individuals in PLINK file
+wc -l $PREFIX.fam # 257
 
 # Fix chromosome numbers
 awk '{$1=0;print $0}' $PREFIX.bim > $PREFIX.bim.tmp # make temp file
