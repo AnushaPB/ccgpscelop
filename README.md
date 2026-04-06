@@ -1,4 +1,5 @@
 # Code for: Climate change and wildfire shape genome-wide diversity
+**Anusha P. Bishop**, E. Anne Chambers, Erik D. Enbody, Andrew S. Johnson, Robert Cooper, Mike Westphal, Robert N. Fisher, H. Bradley Shaffer, Ian J. Wang
 
 
 ```{bash}
