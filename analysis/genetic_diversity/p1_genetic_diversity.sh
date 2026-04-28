@@ -8,6 +8,10 @@ PLINK_PRUNED=$BASE_PATH/58-Sceloporus_annotated_pruned_0.6_chr
 # Calculate how many SNPs in PLINK
 wc -l ${PLINK}.bim #61896673
 
+# Count how many individuals in PLINK file
+wc -l ${PLINK}.fam # 257
+wc -l ${PLINK_PRUNED}.fam # 257
+
 # HETEROZYGOSITY ----------------------------------------------------------------------
 # note: outputs homozygosity information
 # FID: Family ID
@@ -26,17 +30,3 @@ plink --bfile $PLINK_PRUNED --het --out outputs/58-Sceloporus_pruned --allow-ext
 
 # Calculate heterozygosity from GEA data
 plink --bfile ../gea/outputs/nonsyn --het --out outputs/nonsyn --allow-extra-chr
-
-
-# DOSAGE FILES ------------------------------------------------------------------------
-plink --bfile ../../data/ccgp_data/58-Sceloporus_pruned_0.6_thinned_10kb_chr --recode A --allow-extra-chr --out outputs/thinned # creates thinned.raw
-
-# PCA ---------------------------------------------------------------------------------
-plink --bfile $PLINK_PRUNED --pca 3 --out outputs/58-Sceloporus_pca
-
-# Run PCA for each chromosome
-for i in {1..11}
-do
-    plink --bfile $PLINK_PRUNED --pca 3 --out outputs/58-Sceloporus_pca_chr$i --allow-extra-chr --chr $i
-done
-

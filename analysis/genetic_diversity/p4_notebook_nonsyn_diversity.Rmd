@@ -22,18 +22,33 @@ geanonsyn_het <-
   mutate(Ho_geanonsyn = 1 - `O(HOM)`/`N(NM)`) %>%
   select(SampleID, Ho_geanonsyn)
 
+nononsyn_het <-
+  get_het("58-Sceloporus_no_nonsyn_50kb.het") %>%
+  mutate(Ho_nononsyn = 1 - `O(HOM)`/`OBS_CT`) %>%
+  select(SampleID, Ho_nononsyn)
+
 het_df <- 
   get_het("58-Sceloporus_chr.het") 
 
-het_df <- left_join(het_df, nonsyn_het) %>% left_join(geanonsyn_het) %>% left_join(syn_het) %>% 
+het_df <- 
+  left_join(het_df, nonsyn_het) %>% left_join(geanonsyn_het) %>% left_join(syn_het) %>% left_join(nononsyn_het) %>%
 # Scale
   mutate(
     Ho_scaled = as.numeric(scale(Ho)),
     Ho_nonsyn_scaled = as.numeric(scale(Ho_nonsyn)),
     Ho_geanonsyn_scaled = as.numeric(scale(Ho_geanonsyn)),
-    Ho_syn_scaled = as.numeric(scale(Ho_syn)))
+    Ho_syn_scaled = as.numeric(scale(Ho_syn)),
+    Ho_nononsyn_scaled = as.numeric(scale(Ho_nononsyn))
+  )
 ```
 
+The correlation between genome-wide Ho and non-synonymous Ho is 0.959 and the correlation between genome-wide Ho excluding non-synonymous sites +/- a 50kb window and non-synonymous Ho is 0.953. 
+
+```{r}
+cor(het_df$Ho, het_df$Ho_nonsyn, method = "pearson") %>% round(3)
+cor(het_df$Ho_nonsyn, het_df$Ho_nononsyn_scaled, method = "pearson") %>% round(3)
+cor(het_df$Ho, het_df$Ho_nononsyn_scaled, method = "pearson") %>% round(3)
+```
 
 ```{r}
 wingen_r <- 
@@ -69,10 +84,11 @@ df <- left_join(coords, het_df, by = "SampleID")
 df$future_bio1 <- extract(future, df, ID = FALSE, method = "bilinear")[,1]
 df$current_bio1 <- extract(current, df, ID = FALSE, method = "bilinear")[,1]
 df$future_change <- df$future_bio1 - df$current_bio1
+df <- df %>% mutate(bio1_bin = factor(df$current_bio1 < 7.8, levels = c("TRUE", "FALSE"), labels = c("Cold", "Warm")))
 ```
-
 ```{r}
 library(ggpubr)
+
 # A: wingen map of heterozygosity 
 pltA <- 
   ggplot(wingen_r) +
@@ -81,7 +97,7 @@ pltA <-
   scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
   labs(fill = "Non-synonymous\nheterozygosity") +
   theme_void() +
-  geom_sf(data = df, shape = 21, aes(fill = Ho_nonsyn), colour = "#00000087", size = 2) +
+  geom_sf(data = df, shape = 21, aes(fill = Ho_nonsyn, col = bio1_bin, size = bio1_bin), size = 2, show.legend = FALSE) +
   theme(
     legend.position = "inside",
     legend.key.height = unit(0.7, "cm"),
@@ -90,16 +106,18 @@ pltA <-
     legend.text  = element_text(size = 14),
     legend.position.inside = c(0.8, 0.8),
     plot.margin = margin(5,5,5,25)
-  )
-
+  ) +
+  scale_color_manual(values = c("red", "black")) +
+  scale_size_manual(values = c(3, 2))
 
 # N: Plot of non-syn vs genome-wide Ho
 pltB <- 
   ggplot(df, aes(x = Ho, y = Ho_nonsyn)) +
-  geom_point(size = 2, aes(col = Ho_nonsyn)) +
   geom_smooth(method = "lm", col = "black") +
+  geom_point(aes(size = bio1_bin, col = bio1_bin, fill = Ho_nonsyn), pch = 21) +
+  geom_point(data = filter(df, bio1_bin == "Cold"), aes(size = bio1_bin, col = bio1_bin, fill = Ho_nonsyn), pch = 21) +
   ggpubr::stat_cor(method = "pearson", size = 6) +
-  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
   labs(
     x = "Genome-wide heterozygosity",
     y = "Non-synonymous heterozygosity"
@@ -110,12 +128,15 @@ pltB <-
     axis.title = element_text(size = 18),
     axis.text  = element_text(size = 16),
     plot.margin = margin(5,15,5,15)
-  )
+  ) +
+  scale_color_manual(values = c("red", rgb(0,0,0,0))) +
+  scale_size_manual(values = c(3, 2))
 
 # Plot of future-change vs non-syn Ho
 pltC <- 
-  ggplot(df, aes(x = future_change, y = Ho_nonsyn, color = Ho_nonsyn)) +
-  geom_point(size = 2) +
+  ggplot(df, aes(x = future_change, y = Ho_nonsyn, fill = Ho_nonsyn)) +
+  geom_point(aes(size = bio1_bin, col = bio1_bin), pch = 21) +
+  geom_point(data = filter(df, bio1_bin == "Cold"), aes(size = bio1_bin, col = bio1_bin), pch = 21) +
   geom_smooth(method = "lm", col = "black") +
   ggpubr::stat_cor(method = "pearson", size = 6) +
   labs(x = "Future climate change",
@@ -127,11 +148,248 @@ pltC <-
     axis.text  = element_text(size = 16),
     plot.margin = margin(5,15,5,15)
   ) +
-  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1) 
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  scale_color_manual(values = c("red", rgb(0,0,0,0))) +
+  scale_size_manual(values = c(3, 2))
 
 
 group1 <- cowplot::plot_grid(pltB, pltC, nrow = 1, labels = c("B", "C"), label_size = 18, align = "hv")
 png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 15, height = 5, units = "in", res = 300)
 cowplot::plot_grid(pltA, group1, nrow = 1, labels = c("A", ""), label_size = 18, rel_widths = c(0.3,0.7))
 dev.off()
+```
+
+
+
+```{r}
+library(ggpubr)
+
+df <- 
+  df %>% 
+  mutate(
+    bio1_bin = case_when(
+      current_bio1 < 7.8 ~ "Negative",
+      current_bio1 > 13.2 ~ "Positive",
+      TRUE ~ "No effect"
+    )
+  )
+
+cols <- c("Positive" = "tomato2", "Negative" = "navy", "No effect" = "gray60")
+
+# A: wingen map of heterozygosity 
+pltA <- 
+  ggplot(wingen_r) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
+  geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  labs(fill = "Non-synonymous\nheterozygosity") +
+  theme_void() +
+  geom_sf(data = df, shape = 21, aes(fill = Ho_nonsyn, col = bio1_bin), size = 2, show.legend = FALSE) +
+  theme(
+    legend.position = "inside",
+    legend.key.height = unit(0.7, "cm"),
+    legend.key.width  = unit(0.7, "cm"),
+    legend.title = element_text(size = 16),
+    legend.text  = element_text(size = 14),
+    legend.position.inside = c(0.8, 0.8),
+    plot.margin = margin(5,5,5,25)
+  ) +
+  scale_color_manual(values = cols) 
+
+# N: Plot of non-syn vs genome-wide Ho
+pltB <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn)) +
+  #geom_smooth(method = "lm", col = "black") +
+  geom_point(aes(col = Ho_nonsyn), size = 2) +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  labs(
+    x = "Genome-wide heterozygosity",
+    y = "Non-synonymous heterozygosity"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    plot.margin = margin(5,15,5,15)
+  ) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1)
+ 
+
+# Plot of future-change vs non-syn Ho
+pltC <- 
+  ggplot(df, aes(x = future_change, y = Ho_nonsyn)) +
+  geom_point(aes(col = bio1_bin), size = 2) +
+  geom_point(data = filter(df, bio1_bin == "Negative"), aes(col = bio1_bin), size = 2) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  labs(x = "Future climate change",
+       y = "Non-synonymous heterozygosity") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    plot.margin = margin(5,15,5,15)
+  ) +
+  scale_color_manual(values = cols) 
+
+# Create legend-only plot
+pltLegend <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn, col = bio1_bin)) +
+  geom_point() +
+  scale_color_manual(values = cols) +
+  labs(col = "Effect of\ncontemporary\nclimate change") +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 16)
+  )
+
+legend_bio1 <- cowplot::get_legend(pltLegend)
+
+pltLegend <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn, col = bio1_bin)) +
+  geom_point() +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "col", extend_scale = 0.1) +
+  labs(col = "Non-synonymous\nheterozygosity") +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 16)
+  )
+
+legend_nonsyn <- cowplot::get_legend(pltLegend)
+
+group1 <- cowplot::plot_grid(pltB, pltC, nrow = 1, labels = c("B", "C"), label_size = 18, align = "hv")
+png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 16, height = 5, units = "in", res = 300)
+cowplot::plot_grid(pltA, group1, legend, nrow = 1, labels = c("A", "", ""), label_size = 18, rel_widths = c(0.3,0.7,0.1))
+dev.off()
+
+# put line behind
+# make outline of points (fill lwith white)
+```
+
+```{r}
+library(ggpubr)
+
+df <- 
+  df %>% 
+  mutate(
+    bio1_bin = case_when(
+      # Values based on Johnson-Neyman test results from model in p3_notebook_genetic_diversity_model.Rmd
+      current_bio1 < 7.88 ~ "Negative",
+      current_bio1 > 13.19 ~ "Positive",
+      TRUE ~ "No effect"
+    )
+  ) %>%
+  mutate(
+    bio1_bin = factor(bio1_bin, levels = c("Positive", "No effect", "Negative"))
+  )
+
+cols <- c("Positive" = "tomato3", "Negative" = "navy", "No effect" = "gray50")
+shapes <- c("Positive" = 24, "Negative" = 25, "No effect" = 21)
+
+# A: wingen map of heterozygosity 
+pltA <- 
+  ggplot(wingen_r) +
+  geom_sf(data = ca_proj, fill = "gray90", colour = NA) +
+  geom_tile(aes(x = x, y = y, fill = layer), colour = NA) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  labs(fill = "Non-synonymous\nheterozygosity") +
+  theme_void() +
+  geom_sf(data = df, aes(fill = Ho_nonsyn, col = bio1_bin, shape = bio1_bin), size =2.5, show.legend = FALSE) +
+  theme(
+    legend.position = "inside",
+    legend.key.height = unit(0.7, "cm"),
+    legend.key.width  = unit(0.7, "cm"),
+    legend.title = element_text(size = 18),
+    legend.text  = element_text(size = 16),
+    legend.position.inside = c(0.8, 0.8),
+    plot.margin = margin(5,5,5,25)
+  ) +
+  scale_color_manual(values = cols) +
+  scale_shape_manual(values = shapes)
+
+# N: Plot of non-syn vs genome-wide Ho
+pltB <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn)) +
+  geom_point(aes(col = bio1_bin, fill = Ho_nonsyn, shape = bio1_bin), size = 2) +
+  geom_point(data = filter(df, bio1_bin == "Negative"), aes(col = bio1_bin, fill = Ho_nonsyn, shape = bio1_bin), size = 2) +
+  #geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 6) +
+  labs(
+    x = "Genome-wide heterozygosity",
+    y = "Non-synonymous\nheterozygosity"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 18),
+    axis.text  = element_text(size = 16),
+    # Order: top, right, bottom, left
+    #plot.margin = margin(10,15,5,20),
+    plot.margin = margin(10,40,5,40),
+  ) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  scale_color_manual(values = cols) +
+  scale_shape_manual(values = shapes) 
+ 
+
+# Plot of future-change vs non-syn Ho
+pltC <- 
+  ggplot(df, aes(x = future_change, y = Ho_nonsyn)) +
+  geom_point(aes(col = bio1_bin, fill = Ho_nonsyn, shape = bio1_bin), size = 3.5) +
+  geom_point(data = filter(df, bio1_bin == "Negative"), aes(col = bio1_bin, fill = Ho_nonsyn, shape = bio1_bin), size = 3) +
+  geom_smooth(method = "lm", col = "black") +
+  ggpubr::stat_cor(method = "pearson", size = 7) +
+  labs(x = "Future climate change",
+       y = "Non-synonymous heterozygosity") +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.title = element_text(size = 20),
+    axis.text  = element_text(size = 18),
+    plot.margin = margin(5,5,5,5)
+  ) +
+  scale_met_cont(c(df$Ho_nonsyn, wingen_r$layer), aesthetic = "fill", extend_scale = 0.1) +
+  scale_color_manual(values = cols) +
+  scale_shape_manual(values = shapes)
+
+# Create legend-only plot
+legend_label <- "Effect of\ncontemporary\nclimate change\non genetic diversity"
+pltLegend <- 
+  ggplot(df, aes(x = Ho, y = Ho_nonsyn, col = bio1_bin, shape = bio1_bin)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = cols) +
+  scale_shape_manual(values = shapes) +
+  scale_fill_manual(values = cols) +
+  labs(col = legend_label, shape = legend_label) +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 18),
+    legend.key = element_blank()
+  )
+
+legend_bio1 <- cowplot::get_legend(pltLegend)
+legend_ho <- cowplot::get_legend(pltA + theme(legend.position = "right"))
+
+group1 <- cowplot::plot_grid(pltB, pltC, nrow = 1, labels = c("B", "C"), label_size = 18, align = "hv")
+png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 16, height = 5, units = "in", res = 300)
+cowplot::plot_grid(pltA, group1, legend_bio1, nrow = 1, labels = c("A", "", ""), label_size = 18, rel_widths = c(0.3,0.7,0.1))
+dev.off()
+
+group1 <- cowplot::plot_grid(pltA + theme(legend.position = "none"), pltB, ncol = 1, labels = c("A", "B"), label_size = 18, rel_heights = c(0.6, 0.4))
+legends <- cowplot::plot_grid(NULL, legend_ho, legend_bio1, NULL, ncol = 1, align = "v", rel_heights = c(0.3, 0.5, 0.5, 0.3))
+png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 16, height = 9, units = "in", res = 300)
+cowplot::plot_grid(group1, pltC, legends, nrow = 1, labels = c("", "C", ""), label_size = 18, rel_widths = c(0.4, 0.6, 0.2))
+dev.off()
+
+# legends <- cowplot::plot_grid(NULL, legend_ho, legend_bio1, NULL, ncol = 1, align = "v", rel_heights = c(0.1, 0.5, 0.5, 0.1))
+# png(here(plotpath, "nonsyn_vs_het_vs_climate_change.png"), width = 14, height = 6, units = "in", res = 300)
+# cowplot::plot_grid(pltA + theme(legend.position = "none"), pltD, legends, nrow = 1, labels = c("A", "D", ""), label_size = 18, rel_widths = c(0.45, 0.5, 0.2))
+# dev.off()
+
+
 ```

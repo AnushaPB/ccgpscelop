@@ -354,6 +354,9 @@ fire_mod_df <-
   # Put SampleID as first column
   select(SampleID, everything())
 
+# Write out full fire_mod_df
+write_csv(here(outpath, "full_fire_mod_df.csv"), fire_mod_df)
+
 # Get counts of fire groups for methods
 fire_mod_df %>%
   group_by(fire_frg) %>%
