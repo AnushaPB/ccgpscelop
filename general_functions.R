@@ -206,6 +206,7 @@ ggpartial <- function(x, y, f, df, col = NULL, alpha = 1, cex = 1){
   pretty_name_x <- make_pretty_names(x)
   pretty_name_x_lower <- paste0(tolower(substr(pretty_name_x, 1, 1)), substr(pretty_name_x, 2, nchar(pretty_name_x)))
   if (pretty_name_x == "NDVI") pretty_name_x_lower <- "NDVI"
+  if (x == "tmean_dif") pretty_name_x_lower <- "Contemporary climate change (°C)"
 
   pretty_name_y <- make_pretty_names(y)
   pretty_name_y_lower <- paste0(tolower(substr(pretty_name_y, 1, 1)), substr(pretty_name_y, 2, nchar(pretty_name_y)))
@@ -259,24 +260,23 @@ ggmap <- function(x){
     theme_void() +
     scale_fill_viridis_c(option = "mako")
 }
-
-make_pretty_names <- function(vars){
+make_pretty_names <- function(vars, units = TRUE){
   map_chr(vars, \(x){
     if (x == "ai") return("Aridity index")
-    if (x == "lgm") return("LGM (°C)")
-    if (x == "lig") return("LIG (°C)")
+    if (x == "lgm") return(if(units) "LGM (°C)" else "LGM")
+    if (x == "lig") return(if(units) "LIG (°C)" else "LIG")
     if (x == "cur_lig") return("Paleoclimate change\n(CUR - LIG)")
     if (x == "cur_lgm") return("Paleoclimate change\n(CUR - LGM)")
     if (x == "lgm_lig") return("Paleoclimate change\n(LGM - LIG)")
     if (x == "eh_lgm") return("Paleoclimate change\n(EH - LGM)")
     if (x == "csi_custom") return("Temperature stability\n(MIS19 to CUR)")
-    if (grepl("bio1", x)) return("Contemporary temperature (°C)")
+    if (grepl("bio1", x)) return(if(units) "Contemporary temperature (°C)" else "Contemporary temperature")
     if (grepl("csi_past", x)) return("Paleoclimate stability")
     if (grepl("csi_future", x)) return("Future climate stability")
     if (grepl("gHM", x)) return("Human modification")
     if (grepl("glacier", x)) return("Glacier (inside/outside)")
     if (grepl("Q", x)) return("Admixture")
-    if (grepl("tmean_dif", x)) return("Contemporary temperature change (°C)")
+    if (grepl("tmean_dif", x)) return(if(units) "Contemporary climate change (°C)" else "Contemporary climate change")
     if (grepl("log_fri", x)) return("Log(fire return interval + 1)")
     if (grepl("fire_severity", x)) return("Log(percent high-severity fire + 1)")
     if (grepl("fri", x)) return("Fire return interval")
@@ -286,7 +286,7 @@ make_pretty_names <- function(vars){
     if (grepl("lffi", x)) return("Longest fire-free interval (1984-2022)")
     if (grepl("frg", x)) return("Historical fire regime group")
     if (grepl("frq", x)) return("Historical fire frequency")
-    if (grepl("fire_recent", x)) return("Contemporary fire")
+    if (grepl("fire_recent", x)) return("Contemporary fire occurrence")
     if (grepl("vdep", x)) return("Vegetation departure")
     if (grepl("evt", x)) return("Contemporary vegetation")
     if (grepl("resid", x)) return("Residuals")
