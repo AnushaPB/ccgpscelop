@@ -18,6 +18,12 @@ required_packages <- c(
   "gstat",
   "sp",
   "furrr",
+  "interactions",
+  "emmeans",
+  "MetBrewer",
+  "nlme",
+  "broom.mixed",
+  "emmeans",
   "jsonlite"  # Adding jsonlite since it was causing the error
 )
 
