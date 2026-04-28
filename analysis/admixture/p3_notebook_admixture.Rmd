@@ -106,37 +106,6 @@ ggplot(qdf) +
 dev.off()
 ```
 
-```{r}
-library(algatr)
-library(wingen)
-ca_proj <- ca %>% st_transform(3310)
-grid <- coords_to_raster(coords_proj, res = 5000, buffer = 25)
-grid <- crop(grid, ca_proj)
-
-qmat_samples <- get_Q(K = 8, qmat_only = FALSE)
-
-coords_proj <- 
-  get_coords(sf= TRUE) %>%
-  st_transform(3310) %>% 
-  filter(SampleID %in% qmat_samples$SampleID) %>% 
-  drop_na()
-
-qmat <- get_Q(K = 8, qmat_only = TRUE)
-
-# kriging
-krig_admix <- tess_krig(qmat, coords_proj, grid)
-crs(krig_admix) <- crs(grid)
-
-# Get admixture score for each cell
-max_admix <- 1 - max(krig_admix)
-
-pdf(here(plotpath, "kriging.pdf"), width = 5, height = 5)
-plot(max_admix)
-dev.off()
-
-writeRaster(max_admix, here("analysis", "admixture", "outputs", "max_admix.tif"), overwrite = TRUE)
-```
-
 ## Pie charts
 ```{r}
 library(scatterpie)
@@ -232,7 +201,6 @@ dev.off()
 ```
 
 ### Figure
-
 
 Add PCA results:
 ```{r}
@@ -347,8 +315,9 @@ pop_cols <-
   mutate(rgb = ifelse(cluster == 1, "#07353b", rgb)) 
 
 fill_cols <- setNames(pop_cols$rgb, pop_cols$cluster)
-#         1         2         3         4         5         6         7         8 
-# "#07353b" "#0F7885" "#7FD987" "#ABF0B5" "#DEA0F0" "#F4228D" "#C5CF22" "#DC8B18" 
+fill_key <-
+  data.frame(original_numbers = 1:8, new_numbers = ordered_pops, colors = fill_cols)
+write_csv(fill_key, here(outpath, "pop_cols.csv"))
 
 ca <- get_ca() %>% st_transform(3310)
 
