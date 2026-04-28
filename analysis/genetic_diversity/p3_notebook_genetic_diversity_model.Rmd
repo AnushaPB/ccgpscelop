@@ -20,6 +20,7 @@ library("MetBrewer")
 library("nlme")
 library("broom.mixed")
 library("emmeans")
+library("interactions")
 ```
 
 # Paths for outputs
@@ -691,11 +692,11 @@ print(sig_vars_by_model) # Same significant variables for both models
 
 # Fit full model
 ```{r}
-f <- formula("Ho ~ glacier + gHM + ai + poly(csi_past, 2, raw = TRUE) + bio1 * tmean_dif + evt + fire_frq * fire_recent")
+f_final <- formula("Ho ~ glacier + gHM + ai + poly(csi_past, 2, raw = TRUE) + bio1 * tmean_dif + evt + fire_frq * fire_recent")
 
 # Fit model
-gls_model <- gls(f, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-ols_model <- lm(f, data = mod_sf_unique_scaled)
+gls_model <- gls(f_final, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
+ols_model <- lm(f_final, data = mod_sf_unique_scaled)
 
 performance::check_collinearity(gls_model) 
 performance::check_collinearity(ols_model) 
@@ -724,7 +725,7 @@ print(moran_ols) # 0.15
 print(moran_gls) # 0.15
 
 # Refit final model with OLS since no gains in spatial autocorrelation and OLS is more interpretable (no spatial parameters like lambda)
-final_model <- lm(f, data = mod_sf_unique_scaled)
+final_model <- lm(f_final, data = mod_sf_unique_scaled)
 
 # Results
 mod_result <- broom::tidy(final_model)
@@ -860,40 +861,34 @@ x = "fire_frq"
 y = "Ho"
 col_var = "Ho_original"
 residual = TRUE
-
-# Make residual plots for model
 plot_mod <- function(x, y, df, model, mod_vars,
                      col_var = "Ho_original", residual = TRUE, interact = TRUE, bump_legend = 0 ) {
 
-  # Calculate residuals for y variable given x variable
-  # Keep a copy of original Ho
   df$Ho_original <- df$Ho
+
   if (residual) {
-    # Scale all model variables in df that are numeric
     numeric_mod_vars <- names(df)[sapply(df, is.numeric)]
     df_scaled <- 
       df %>%
-      mutate(across(all_of(numeric_mod_vars),~ as.numeric(scale(.x))))
+      mutate(across(all_of(numeric_mod_vars), ~ as.numeric(scale(.x))))
 
-    # Residuals
     r <- residuals(model)
-
-    # Model matrix + coefficients, aligned
     X <- model.matrix(terms(model), data = df_scaled)
     b <- coef(model)
-
-    # Align in case ordering differs
     b <- b[colnames(X)]
 
-    # Calculate residuals
-    cols <- grepl(x, colnames(X))
-    if (all(!cols)) {
-      stop(paste("Variable", x, "not found in model"))
+    if (x %in% c("bio1", "tmean_dif")) {
+      cols <- grepl(paste0("(^", x, "$)|(^", x, ":)|(:", x, "$)"), colnames(X))
+    } else {
+      cols <- grepl(x, colnames(X))
     }
-    sub_X <- X[, cols, drop = FALSE] 
+
+    if (all(!cols)) stop(paste("Variable", x, "not found in model"))
+
+    sub_X <- X[, cols, drop = FALSE]
     sub_b <- b[cols]
 
-    if (!all(colnames(sub_X) == names(sub_b))){
+    if (!all(colnames(sub_X) == names(sub_b))) {
       print(colnames(sub_X))
       print(names(sub_b))
       stop("Column names don't match")
@@ -902,7 +897,6 @@ plot_mod <- function(x, y, df, model, mod_vars,
     df[[y]] <- r + drop(sub_X %*% sub_b)
   }
 
-  # Extract beta and p-value for x variable
   model_summary <- broom::tidy(model)
 
   fmt_beta <- function(x, digits = 2) {
@@ -926,36 +920,32 @@ plot_mod <- function(x, y, df, model, mod_vars,
     )
 
   if (x == "csi_past") {
-    
+
     if (nrow(b_annotation) == 1) {
       label_txt <- b_annotation$line[1]
     } else {
       label_txt <- Reduce(function(a, b) paste0("atop(", a, ",", b, ")"), b_annotation$line)
     }
-    
+
     plt <-
       ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
       geom_point(aes(col = .data[[col_var]]), size = 2, show.legend = FALSE) +
       geom_smooth(method = "lm", colour = "black", formula = y ~ poly(x, 2)) +
-      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1) 
+      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1)
 
   } else if (x == "fire_frq" && interact) {
     dodge_w <- 0.8
-    # Pairwise fire_frq contrasts within each fire_recent (Tukey adjust)
-    frq_lvls <- levels(df$fire_frq)   
-    rec_lvls <- levels(df$fire_recent)  
+    frq_lvls <- levels(df$fire_frq)
+    rec_lvls <- levels(df$fire_recent)
 
-    # pretty labels for fire_frq
-    df$new_fire_frq <- factor(df$fire_frq, levels =  levels(df$fire_frq),
+    df$new_fire_frq <- factor(df$fire_frq, levels = levels(df$fire_frq),
                               labels = c("No Fire/Low", "Intermediate", "High"))
 
-    # offsets to place brackets over dodged fire_frq boxes within each fire_recent
     off <- setNames(
       ((seq_along(frq_lvls) - (length(frq_lvls) + 1) / 2) * (dodge_w / length(frq_lvls))),
       frq_lvls
     )
 
-    # EMMs: fire_frq within each fire_recent
     emm <- emmeans(model, ~ fire_frq | fire_recent)
 
     pairs_df <- contrast(emm, method = "pairwise", adjust = "tukey") %>%
@@ -975,7 +965,6 @@ plot_mod <- function(x, y, df, model, mod_vars,
     y_height_adj <- ifelse(residual, 0.5, 0.9)
     pairs_df$y_position <- max(df[[y]], na.rm=TRUE) * (y_height_adj + 0.08*seq_len(nrow(pairs_df)))
 
-    # plot: x = fire_recent, groups = fire_frq (dodged)
     plt <-
       ggplot(df, aes(x = fire_recent, y = .data[[y]], fill = new_fire_frq)) +
       geom_boxplot(position = position_dodge(dodge_w), outlier.shape = NA) +
@@ -992,23 +981,22 @@ plot_mod <- function(x, y, df, model, mod_vars,
         size = 8, tip.length = 0, vjust = 0.6,
         inherit.aes = FALSE
       ) +
-      labs(x = "Contemporary fire", fill = "Historical fire frequency") +
-      scale_fill_manual(values = c("white", "gray60", "gray30")) 
+      labs(x = "Contemporary fire occurrence", fill = "Historical fire frequency") +
+      scale_fill_manual(values = c("white", "gray60", "gray30"))
 
     scale_y <- ifelse(residual, 1.1, 1.4)
-    plt <- plt + ylim(NA, max(df[[y]])*scale_y)
+    plt <- plt + ylim(NA, max(df[[y]]) * scale_y)
 
   } else if (x == "fire_frq") {
     emm  <- emmeans(model, specs = x)
     pairs_df <- 
       pairs(emm, adjust = "tukey") %>% summary(infer = TRUE) %>% as.data.frame() %>%
       separate(contrast, c("group1","group2"), " - ") %>%
-      # Remove just the parentheses symbols from group1 and 2
       mutate_at(vars(group1, group2), ~str_replace_all(.x, "[()]", "")) %>%
       mutate(annotations = cut(p.value, c(-Inf,.001,.01,.05,Inf), c("***","**","*","ns"))) %>%
       dplyr::filter(annotations != "ns") %>%
-      mutate(xmin = group1, xmax = group2) 
-      
+      mutate(xmin = group1, xmax = group2)
+
     df$new_x <- factor(df[[x]], levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
     pairs_df$xmin <- factor(pairs_df$xmin, levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
     pairs_df$xmax <- factor(pairs_df$xmax, levels = levels(df[[x]]), labels = c("No Fire/Low", "Intermediate", "High"))
@@ -1020,7 +1008,8 @@ plot_mod <- function(x, y, df, model, mod_vars,
       ggplot(df, aes(new_x, .data[[y]])) +
       geom_boxplot() +
       geom_jitter(aes(col = .data[[col_var]]), size = 2, width = 0.2, show.legend = FALSE) +
-      ggpubr::stat_pvalue_manual(pairs_df,
+      ggpubr::stat_pvalue_manual(
+        pairs_df,
         label = "annotations",
         xmin = "xmin", xmax = "xmax",
         y.position = "y_position",
@@ -1028,13 +1017,14 @@ plot_mod <- function(x, y, df, model, mod_vars,
         tip.length = 0,
         vjust = 0.6
       )
+
   } else if (x == "fire_recent") {
 
     dodge_w <- 0.8
     frq_lvls <- levels(df$fire_frq)
     rec_lvls <- levels(df$fire_recent)
     nrec <- length(rec_lvls)
-    off <- setNames(((seq_len(nrec) - (nrec + 1)/2) * (dodge_w / nrec)), rec_lvls)  # for 2 lvls: -0.2, +0.2
+    off <- setNames(((seq_len(nrec) - (nrec + 1)/2) * (dodge_w / nrec)), rec_lvls)
 
     emm <- emmeans(model, ~ fire_recent | fire_frq)
     ymax_df <- df %>% dplyr::group_by(fire_frq) %>% dplyr::summarise(ymax = max(.data[[y]], na.rm=TRUE), .groups="drop")
@@ -1050,8 +1040,8 @@ plot_mod <- function(x, y, df, model, mod_vars,
       ) %>%
       filter(annotations != "ns") %>%
       left_join(ymax_df, by="fire_frq") %>%
-      group_by(fire_frq) %>% 
-      mutate(y_position = ymax * (1 + 0.08*(row_number()-1))) %>% 
+      group_by(fire_frq) %>%
+      mutate(y_position = ymax * (1 + 0.08*(row_number()-1))) %>%
       ungroup()
 
     df$new_fire_frq <- factor(df$fire_frq, levels = levels(df$fire_frq), labels = c("No Fire/Low", "Intermediate", "High"))
@@ -1067,30 +1057,94 @@ plot_mod <- function(x, y, df, model, mod_vars,
       ) +
       guides(col = "none") +
       scale_fill_manual(values = c("Burned" = "gray", "Unburned" = "white")) +
-      labs(fill = "Contemporary fire") 
-    
+      labs(fill = "Contemporary fire\noccurrence")
+
     if (nrow(pairs_df) != 0) {
-      plt <- plt  +
-      ggpubr::stat_pvalue_manual(pairs_df,
-        label = "annotations", xmin = "xmin", xmax = "xmax",  y.position = "y_position",
-        size = 10, tip.length = 0, vjust = 0.6
-      )
+      plt <- plt +
+        ggpubr::stat_pvalue_manual(
+          pairs_df,
+          label = "annotations", xmin = "xmin", xmax = "xmax", y.position = "y_position",
+          size = 10, tip.length = 0, vjust = 0.6
+        )
     }
 
-    scale_y <- ifelse(residual, NA, 1.4) # Set to same scale as FRQ
+    scale_y <- ifelse(residual, NA, 1.4)
     plt <- plt + ylim(NA, max(df[[y]])*scale_y)
+
+  } else if (x %in% c("tmean_dif", "bio1") && interact) {
+
+    mod_raw <- lm(formula(model), data = df)
+    fmt <- function(x) paste0(round(x, 1), " °C")
+
+    if (x == "tmean_dif") {
+      jn <- johnson_neyman(mod_raw, pred = tmean_dif, modx = bio1)
+      jn_bounds <- jn$bounds
+      breaks <- c(min(df$bio1, na.rm = TRUE), jn_bounds[1], jn_bounds[2], max(df$bio1, na.rm = TRUE))
+      labels <- c(
+        paste0(fmt(breaks[1]), " – ", fmt(breaks[2])),
+        paste0(fmt(breaks[2]), " – ", fmt(breaks[3])),
+        paste0(fmt(breaks[3]), " – ", fmt(breaks[4]))
+      )
+      df$mod_bin <- cut(df$bio1, breaks = breaks, include.lowest = TRUE)
+      df$mod_bin <- factor(df$mod_bin, labels = labels)
+      df$mod_bin <- factor(df$mod_bin, levels = rev(levels(df$mod_bin)))
+      cols <- rev(c("navy", "gray60", "tomato2"))
+      shapes <- rev(c(25, 21, 24))
+
+      plt <-
+        ggplot(df, aes(x = tmean_dif, y = .data[[y]])) +
+        geom_point(size = 2, aes(fill = .data[[col_var]], pch = mod_bin, color = mod_bin)) +
+        geom_smooth(data = filter(df, bio1 < breaks[2]), method = "lm", fill = "navy", col = "navy", alpha = 0.2) +
+        geom_smooth(data = filter(df, bio1 > breaks[3]), method = "lm", fill = "tomato2", col = "tomato2", alpha = 0.2) +
+        labs(color = "Contemporary\ntemperature", pch = "Contemporary\ntemperature", x = make_pretty_names("tmean_dif")) +
+        scale_met_cont(df[[col_var]], aesthetic = "fill", extend_scale = 0.1) +
+        guides(fill = "none") +
+        scale_shape_manual(values = shapes) +
+        scale_color_manual(values = cols)
+
+      scale_y <- ifelse(residual, 1.1, 1.3)
+      plt <- plt + ylim(NA, max(df[[y]], na.rm = TRUE) * scale_y)
+
+    } else if (x == "bio1") {
+      jn <- johnson_neyman(mod_raw, pred = bio1, modx = tmean_dif)
+      jn_bounds <- jn$bounds
+      breaks <- c(min(df$tmean_dif, na.rm = TRUE), jn_bounds[1], jn_bounds[2], max(df$tmean_dif, na.rm = TRUE))
+      labels <- c(
+        paste0(fmt(breaks[1]), " – ", fmt(breaks[2])),
+        paste0(fmt(breaks[2]), " – ", fmt(breaks[3])),
+        paste0(fmt(breaks[3]), " – ", fmt(breaks[4]))
+      )
+      df$mod_bin <- cut(df$tmean_dif, breaks = breaks, include.lowest = TRUE)
+      df$mod_bin <- factor(df$mod_bin, labels = labels)
+      df$mod_bin <- factor(df$mod_bin, levels = rev(levels(df$mod_bin)))
+      cols <- rev(c("navy", "gray60", "tomato2"))
+      shapes <- rev(c(25, 21, 24))
+
+      plt <-
+        ggplot(df, aes(x = bio1, y = .data[[y]])) +
+        geom_point(size = 2, aes(fill = .data[[col_var]], pch = mod_bin, color = mod_bin)) +
+        geom_smooth(data = filter(df, tmean_dif < breaks[2]), method = "lm", fill = "navy", col = "navy", alpha = 0.2) +
+        geom_smooth(data = filter(df, tmean_dif > breaks[3]), method = "lm", fill = "tomato2", col = "tomato2", alpha = 0.2) +
+        labs(color = "Temperature\nchange", pch = "Temperature\nchange", x = make_pretty_names("bio1")) +
+        scale_met_cont(df[[col_var]], aesthetic = "fill", extend_scale = 0.1) +
+        guides(fill = "none") +
+        scale_shape_manual(values = shapes) +
+        scale_color_manual(values = cols)
+
+      scale_y <- ifelse(residual, 1.1, 1.3)
+      plt <- plt + ylim(NA, max(df[[y]], na.rm = TRUE) * scale_y)
+    }
 
   } else if (x == "evt" | x == "glacier") {
     emm  <- emmeans(model, specs = x)
     pairs_df <- 
       pairs(emm, adjust = "tukey") %>% summary(infer = TRUE) %>% as.data.frame() %>%
       separate(contrast, c("group1","group2"), " - ") %>%
-      # Remove just the parentheses symbols from group1 and 2
       mutate_at(vars(group1, group2), ~str_replace_all(.x, "[()]", "")) %>%
       mutate(annotations = cut(p.value, c(-Inf,.001,.01,.05,Inf), c("***","**","*","ns"))) %>%
-      mutate(xmin = group1, xmax = group2) %>% 
+      mutate(xmin = group1, xmax = group2) %>%
       filter(annotations != "ns")
-    
+
     if (nrow(pairs_df) == 0) {
       message(paste("No significant pairwise differences for", x))
       plt <- 
@@ -1105,7 +1159,8 @@ plot_mod <- function(x, y, df, model, mod_vars,
         ggplot(df, aes(.data[[x]], .data[[y]])) +
         geom_boxplot() +
         geom_jitter(aes(col = .data[[col_var]]), size = 2, width = 0.15, show.legend = FALSE) +
-        ggpubr::stat_pvalue_manual(pairs_df,
+        ggpubr::stat_pvalue_manual(
+          pairs_df,
           label = "annotations",
           xmin = "xmin", xmax = "xmax",
           y.position = "y_position",
@@ -1114,6 +1169,7 @@ plot_mod <- function(x, y, df, model, mod_vars,
           vjust = 0.6
         )
     }
+
   } else {
 
     if (nrow(b_annotation) == 1) {
@@ -1126,9 +1182,9 @@ plot_mod <- function(x, y, df, model, mod_vars,
       ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
       geom_point(aes(col = .data[[col_var]]), size = 2, show.legend = FALSE) +
       geom_smooth(method = "lm", colour = "black", formula = y ~ x) +
-      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1) 
+      annotate("text", x = max(df[[x]], na.rm = TRUE), y = min(df[[y]], na.rm = TRUE), label = label_txt, size = 5, parse = TRUE, vjust = -0.1, hjust = 1)
   }
-  
+
   x_label <-
     case_when(
       x == "fire_recent" ~ "fire_frq",
@@ -1137,21 +1193,26 @@ plot_mod <- function(x, y, df, model, mod_vars,
     )
 
   plt <- 
-    plt + 
-    xlab(stringr::str_to_sentence(make_pretty_names(x_label))) +
+    plt +
+    xlab(stringr::str_to_sentence(make_pretty_names(x_label)) %>%
+    stringr::str_replace_all("°c", "°C")) +
     theme_classic() +
-    theme(axis.title = element_text(size = 16), axis.text  = element_text(size = 14)) +
-    scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1) 
+    theme(axis.title = element_text(size = 16), axis.text = element_text(size = 14)) 
+      
+  if (!(x %in% c("tmean_dif", "bio1") && interact)) {
+    plt <- plt + scale_met_cont(df[[col_var]], aesthetic = "colour", extend_scale = 0.1)
+  }
 
-  # Add back legend
   legend.position.inside.x <-
     case_when(
-      x == "fire_recent" ~ 0.5,
-      x == "fire_frq" & interact ~ 0.6
-    ) 
-  if (residual)  legend.position.inside.x  <- legend.position.inside.x + 0.1
+      x == "fire_recent" ~ 0.48,
+      x == "fire_frq" & interact ~ 0.61,
+      x == "tmean_dif" & interact ~ 0.5,
+      x == "bio1" & interact ~ 0.4
+    )
+  if (residual) legend.position.inside.x <- legend.position.inside.x + 0.1
 
-  if (x == "fire_recent" | (x == "fire_frq" & interact)) {
+  if (x == "fire_recent" | (x == "fire_frq" & interact) | (x %in% c("tmean_dif", "bio1") & interact)) {
     plt <- 
       plt +
       theme(
@@ -1159,29 +1220,22 @@ plot_mod <- function(x, y, df, model, mod_vars,
         legend.title = element_text(size = 16),
         legend.text = element_text(size = 14),
         legend.justification = c(1, 1),
-        legend.background = element_rect(fill = rgb(1,1,1,0.5), color = "black"), 
+        legend.background = element_rect(fill = rgb(1,1,1,0.5), color = "black"),
         legend.position.inside = c(legend.position.inside.x + bump_legend, 1)
       )
   }
 
-  # If legend is evt, rotate x axis text
   if (x == "evt") {
-    plt <-
-      plt + 
-      theme(axis.text.x = element_text(angle = 30, hjust = 1))
+    plt <- plt + theme(axis.text.x = element_text(angle = 30, hjust = 1))
   }
 
-  # Add margin
-  plt <- 
-    plt + 
-    theme(plot.margin = margin(2, 2, 2, 2, unit = "mm"))
+  plt <- plt + theme(plot.margin = margin(2, 2, 2, 2, unit = "mm"))
 
   if (residual) {
     plt + labs(y = "Partial residual heterozygosity")
   } else {
     plt + labs(y = "Observed heterozygosity")
   }
-
 }
 
 # Load polygons for plotting
@@ -1199,6 +1253,9 @@ names(wingen_r)[3] <- "layer"  # ensure 'layer' is the raster value column
 # Isolate variables to plot vs all variables
 vars_to_plot <- c("csi_past", "tmean_dif", "fire_frq", "fire_recent")
 mod_vars <- c("csi_past", "tmean_dif", "ai", "bio1", "glacier", "gHM", "fire_frq", "fire_recent", "evt")
+
+# Read in png image of sceloporus
+img <- png::readPNG(here("sceloporus_image.png"))
 
 # A: wingen map of heterozygosity 
 ho_plot <- ggplot(wingen_r) +
@@ -1219,13 +1276,36 @@ ho_plot <- ggplot(wingen_r) +
     legend.text  = element_text(size = 14)
   )
 
+png(here("genetic_diversity_map.png"), height = 6, width = 6, res = 300, units = "in")
+ho_plot
+dev.off()
+
+# Add image of sceloporus to the plot
+library(grid)
+img_grob <- rasterGrob(as.raster(img), interpolate = TRUE)
+
+xr <- range(wingen_r$x, na.rm = TRUE)
+yr <- range(wingen_r$y, na.rm = TRUE)
+
+ho_plot_annotated <- ho_plot +
+  annotation_custom(
+    img_grob,
+    xmin = xr[1] - 0.1 * diff(xr),                               
+    xmax = xr[1] + 0.75 * diff(xr),               
+    ymin = yr[1] - 0.2 * diff(yr),                 
+    ymax = yr[1] + 0.3 * diff(yr)               
+  )
+  
 # B: partial residuals 
 plts_residual_y <- purrr::map(
   vars_to_plot,
   # Use unscaled data for plotting
   # Keep fire_frq simple
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = TRUE, interact = TRUE) + 
-  theme(plot.margin = margin(7, 7, 7, 7))
+  ~{
+    interact <- ifelse(.x == "fire_frq", FALSE, TRUE)
+    plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = TRUE, interact = interact) + 
+    theme(plot.margin = margin(7, 7, 7, 7))
+  }
 )
 
 # B: Raw values
@@ -1233,8 +1313,11 @@ plts_raw_y <- purrr::map(
   vars_to_plot,
   # Use unscaled data for plotting
   # Keep fire_frq simple
-  ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, interact = TRUE) + 
-  theme(plot.margin = margin(7, 7, 7, 7))
+  ~{
+    interact <- ifelse(.x == "fire_frq", FALSE, TRUE)
+    plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, interact = interact) + 
+    theme(plot.margin = margin(7, 7, 7, 7))
+  }
 )
 
 # C: predicted vs observed 
@@ -1255,23 +1338,31 @@ pred_vs_obs_adj <- cowplot::plot_grid(pred_vs_obs, NULL, nrow = 1, rel_widths = 
 
 plt2_residual <- cowplot::plot_grid(plotlist = plts_residual_y, ncol = 2, align = "hv")
 plt2_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 2, align = "hv")
-plt1 <- cowplot::plot_grid(plotlist = list(ho_plot, pred_vs_obs_adj), ncol = 1,
+plt1 <- cowplot::plot_grid(plotlist = list(ho_plot_annotated, pred_vs_obs_adj), ncol = 1,
                            labels = c("A", "C"), rel_heights = c(0.6, 0.45), label_size = 18)
 
 png(here(plotpath, "figure_Ho_residual.png"), height = 10*0.9, width = 16*0.9, res = 300, units = "in")
 cowplot::plot_grid(plt1, plt2_residual, ncol = 2, labels = c("", "B"),  rel_widths = c(0.33, 0.66), align = "h", label_size = 18)
 dev.off()
 
-png(here(plotpath, "figure_Ho_raw.png"), height = 10, width = 16, res = 300, units = "in")
-cowplot::plot_grid(plt1, plt2_raw, ncol = 2,labels = c("", "B"),  rel_widths = c(0.33, 0.66), align = "h", label_size = 18)
+plt2_raw <- cowplot::plot_grid(plotlist = plts_raw_y, ncol = 2, align = "hv")
+plt <- cowplot::plot_grid(plt1, plt2_raw, ncol = 2,labels = c("", "B"),  rel_widths = c(0.33, 0.66), align = "h", label_size = 18)
+png(here(plotpath, "figure_model_results.png"), height = 10, width = 16, res = 300, units = "in")
+plt
+dev.off()
+
+pdf(here(plotpath, "figure_model_results.pdf"), height = 10*0.9, width = 16*0.9)
+plt
 dev.off()
 ```
 
 ```{r}
 # Plot all variables
-final_model_vars <- c("csi_past", "tmean_dif", "bio1", "ai", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
+final_model_vars <- c("csi_past", "tmean_dif", "tmean_dif", "bio1", "bio1", "ai", "fire_frq", "fire_recent", "fire_frq", "glacier", "gHM", "evt")
 interact <- rep(TRUE, length(final_model_vars))
-interact[4] <- FALSE
+interact[3] <- FALSE
+interact[5] <- FALSE
+interact[7] <- FALSE
 
 # Partial residuals 
 plts_residual_y <- 
@@ -1289,7 +1380,7 @@ plts_raw_y <-
     final_model_vars,
     interact, 
     # Use unscaled data for plotting
-    ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, bump_legend = 0.1, interact = .y)
+    ~plot_mod(.x, "Ho", mod_sf_unique, model = final_model, col_var = "Ho_original", residual = FALSE, bump_legend = 0.05, interact = .y)
   ) %>% 
   map(~ .x + theme(plot.margin = margin(7, 7, 7, 7)))
 
@@ -1341,14 +1432,12 @@ one_term <- function(term, model = "Gau"){
 
 res <- map_dfr(term_names, one_term, model = "Gau")
 
-# ---- 1) ranges summary table ----
 ranges_tbl <- res %>%
   select(term, range_km, nugget, sill) %>%
   arrange(range_km)
 
 print(ranges_tbl)
 
-# ---- 2) combined plot (all terms) ----
 vg_all <- bind_rows(res$vg)
 fit_lines <- bind_rows(res$fit_line)
 
@@ -1400,12 +1489,25 @@ scale_test <- function(spdf, num_vars, cat_vars){
 
 num_vars <- c("csi_past", "tmean_dif", "bio1")
 cat_vars <- c("fire_frq", "fire_recent")
-res_ind <- scale_test(mod_sf_unique_scaled, num_vars, cat_vars) %>% mutate(term = ifelse(is.na(level), var, paste0(var, ": ", level)))
+res_ind <- 
+  scale_test(mod_sf_unique_scaled, num_vars, cat_vars) %>% 
+  mutate(term = ifelse(is.na(level), var, paste0(var, ": ", level)))
 terms_to_keep <- c("csi_past", "tmean_dif", "bio1", "fire_frq: Intermediate Frequency", "fire_recent: Burned")
 
-vg_ind <- purrr::imap_dfr(res_ind$vg, ~ mutate(.x, term = res_ind$term[.y])) %>% filter(term %in% terms_to_keep) %>% mutate(term = make_pretty_names(term))
-fit_ind <- purrr::imap_dfr(res_ind$fit_line, ~ mutate(.x, term = res_ind$term[.y])) %>% filter(term %in% terms_to_keep) %>% mutate(term = make_pretty_names(term))
-vlines_ind <- res_ind %>% filter(term %in% terms_to_keep) %>% mutate(term = make_pretty_names(term)) %>% distinct(term, range_km)
+vg_ind <- 
+  purrr::imap_dfr(res_ind$vg, ~ mutate(.x, term = res_ind$term[.y])) %>% 
+  filter(term %in% terms_to_keep) %>% 
+  mutate(term = make_pretty_names(term, units = FALSE))
+
+fit_ind <- 
+  purrr::imap_dfr(res_ind$fit_line, ~ mutate(.x, term = res_ind$term[.y])) %>% 
+  filter(term %in% terms_to_keep) %>% mutate(term = make_pretty_names(term, units = FALSE))
+
+vlines_ind <- 
+  res_ind %>% 
+  filter(term %in% terms_to_keep) %>% 
+  mutate(term = make_pretty_names(term, units = FALSE)) %>% 
+  distinct(term, range_km)
 
 p_ind <- ggplot(vg_ind, aes(dist/1000, gamma, col = term)) +
   geom_point(size = 1.6, alpha = 0.8) +
@@ -1442,7 +1544,10 @@ one_term <- function(term){
   tibble(term = term, model = best_name, range_km = best_fit$range[2]/1000, vg = list(vg), fit_line = list(fit_line))
 }
 
-res_term <- purrr::map_dfr(term_names, one_term) %>% filter(!term %in% c("evt","fire_frq:fire_recent")) %>% mutate(term = make_pretty_names(term))
+res_term <- 
+  purrr::map_dfr(term_names, one_term) %>% 
+  filter(!term %in% c("evt","fire_frq:fire_recent")) %>% 
+  mutate(term = make_pretty_names(term, units = FALSE))
 
 vg_term <- purrr::imap_dfr(res_term$vg, ~ mutate(.x, term = res_term$term[.y]))
 fit_term <- purrr::imap_dfr(res_term$fit_line, ~ mutate(.x, term = res_term$term[.y]))
@@ -1487,7 +1592,7 @@ cowplot::plot_grid(cowplot::plot_grid(p_ind_noleg, p_term, ncol = 1, align = "hv
 dev.off()
 ```
 
-## Continuous admixture plot
+## Admixture plot
 ```{r}
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
@@ -1586,7 +1691,7 @@ plot_continuous_pair <- function(bin_df, x, y, breaks = 5, poly2 = FALSE, xlab =
       axis.text  = element_text(size = 16)
     )
 
-  list(df = df2, prop_df = prop_df, plt = plot_grid(p_scatter, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
+  list(df = df2, prop_df = prop_df, plt_scatter = p_scatter, plt_count = p_count, plt = plot_grid(p_scatter, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45)))
 }
 
 plot_categorical_pair <- function(bin_df, x, y, xlab = NULL, ylab = NULL, q = "Q", thresh = 0.10) {
@@ -1652,13 +1757,13 @@ admix_bio1  <- plot_continuous_pair(bin_df, x = "bio1",      y = "Ho", breaks = 
                                     xlab = "Contemporary temperature", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
 admix_tdiff <- plot_continuous_pair(bin_df, x = "tmean_dif", y = "Ho", breaks = breaks, poly2 = FALSE,
-                                    xlab = "Contemporary temperature change", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
+                                    xlab = "Contemporary climate change", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
 admix_fire  <- plot_categorical_pair(bin_df, x = "fire_frq", y = "Ho",
                                      xlab = "Historical fire frequency", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
 
 admix_recent_high <- plot_categorical_pair(filter(bin_df, fire_frq == "High"), x = "fire_recent", y = "Ho",
-                                           xlab = "Contemporary fire (Historical fire frequency = High)", ylab = "Heterozygosity",
+                                           xlab = "Contemporary fire occurrence (Historical fire frequency = High)", ylab = "Heterozygosity",
                                            q = "Q", thresh = 0.10)
 
 admix_fire_plt        <- admix_fire$plt
@@ -1667,19 +1772,13 @@ admix_bio1_plt        <- admix_bio1$plt
 admix_tmean_dif_plt   <- admix_tdiff$plt
 admix_fire_recent_plt <- admix_recent_high$plt
 
-png(here(plotpath, "admix_figure.png"), height = 16, width = 20, res = 300, units = "in")
+png(here(plotpath, "admix_all_plots.png"), height = 16, width = 20, res = 300, units = "in")
 plot_grid(admix_csi_plt, admix_fire_plt, admix_tmean_dif_plt, admix_fire_recent_plt, admix_bio1_plt,
           nrow = 2, labels = LETTERS[1:5], label_size = 18)
-dev.off()
-
-png(here(plotpath, "admix_figure.png"), height = 7.5, width = 12, res = 300, units = "in")
-plot_grid(admix_csi_plt, admix_fire_plt, nrow = 1, labels = c("A", "B"), label_size = 18)
 dev.off()
 ```
 
 ```{r}
-bin_df
-
 x = "fire_frq"
 y = "Ho"
 q = "Q"
@@ -1724,6 +1823,8 @@ p_box <-
   labs(x = "Historical fire frequency", y = "Observed heterozygosity", fill = "Recent fire", colour = "Admixture score") +
   scale_colour_gradient(low = "skyblue2", high = "red2") +
   scale_fill_manual(values = c("white", "gray")) +
+  # remove fill guide
+  guides(col = "none") +
   theme(
     axis.title = element_text(size = 18),
     axis.text = element_text(size = 16),
@@ -1741,7 +1842,7 @@ p_count <-
   geom_text(
     data = label_df,
     aes(x = fire_recent, y = prop_hi + 0.05, label = paste0(n_hi, "/", n)),
-    colour = "red2", size = 7, inherit.aes = FALSE, vjust = 0.01
+    colour = "red2", size = 6, inherit.aes = FALSE, vjust = 0.01
   ) +
   theme_classic() +
   scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
@@ -1751,32 +1852,39 @@ p_count <-
   theme(
     legend.position = "none",
     axis.title = element_text(size = 18),
-    axis.text.x = element_text(size = 14, angle = 30, hjust = 1),
+    axis.text.x = element_text(size = 16, angle = 30, hjust = 1),
     axis.text.y  = element_text(size = 16),
     strip.placement = "outside",
-    strip.text = element_text(size = 16),
+    strip.text = element_text(size = 18, color = "black"),
     strip.background = element_blank(),
-    plot.margin = margin(5.5, 5.5, 5.5, 25)
+    plot.margin = margin(5.5, 5.5, -15, 25)
   )
 
-png(here(plotpath, "admix_figure.png"), height = 9, width = 9, res = 300, units = "in")
-cowplot::plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45))
+admix_fire_interaction_plt <- cowplot::plot_grid(p_box, p_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45))
+
+admix_csi <- plot_continuous_pair(bin_df, x = "csi_past",  y = "Ho", breaks = 5, poly2 = TRUE,
+                                    xlab = "Paleoclimate stability", ylab = "Heterozygosity", q = "Q", thresh = 0.10)
+admix_csi_scatter <- admix_csi$plt_scatter + 
+  theme(
+    legend.position = "top", 
+    legend.text = element_text(size = 18), 
+    legend.title = element_text(size = 18), 
+    legend.key.width = unit(1.5, "cm"))
+admix_csi_scatter_noleg <- admix_csi_scatter + theme(legend.position = "none", plot.margin = margin(40, 0, 5.5, 0))
+admix_csi_count <- admix_csi$plt_count
+admix_csi_plt <- plot_grid(admix_csi_scatter_noleg, admix_csi_count, ncol = 1, align = "v", rel_heights = c(0.6, 0.45))
+admix_legend <- cowplot::get_plot_component(admix_csi_scatter, "guide-box", return_all = TRUE)
+
+group1 <- plot_grid(admix_csi_plt, admix_fire_interaction_plt, nrow = 1, labels = c("A", "B"), label_size = 18, align = "v")
+plt <- cowplot::plot_grid(admix_legend[[4]], group1, nrow = 2, rel_heights = c(0.1, 1))
+
+png(here(plotpath, "figure_admixture.png"), height = 8,5, width = 13, res = 300, units = "in")
+plt
 dev.off()
-```
 
-```{r}
-# Check high outlier
-admix_df <- read_csv(here("analysis", "admixture", "outputs", "Q8.csv"))
-outlier <- 
-  mod_df %>% 
-  filter(fire_recent == "Burned") %>% 
-  filter(Ho == max(Ho)) %>% 
-  select(Q, fire_recent, SampleID) 
-
-q8 <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/58-Sceloporus_pruned_0.6_thinned_10kb_chr.8.Q", col_names = FALSE)
-id <- read_table("/mnt/sda1/Anusha/GitHub/ccgpscelop/analysis/admixture/outputs/58-Sceloporus_pruned_0.6_thinned_10kb_chr.fam", col_names = FALSE)
-admix_df %>% filter(SampleID %in% outlier$SampleID)
-q8[which(id$X2 %in% outlier$SampleID),]
+pdf(here(plotpath, "figure_admixture.pdf"), height = 8.5, width = 13)
+plt
+dev.off()
 ```
 
 ## Climate change interaction plot
@@ -1789,235 +1897,6 @@ mod_raw <- lm(formula(final_model), data = mod_sf_unique)
 b <- coef(mod_raw)
 
 # Johnson-Neyman test to find regions of significance for the interaction
-library(interactions)
-jn <- johnson_neyman(mod_raw, pred = bio1, modx = tmean_dif)
-jn_bounds <- jn$bounds
-
-
-# Get slopes
-b <- coef(mod_raw)
-V <- vcov(mod_raw)
-tmean_dif_seq <- seq(
-  min(mod_sf_unique$tmean_dif, na.rm = TRUE),
-  max(mod_sf_unique$tmean_dif, na.rm = TRUE),
-  length.out = 200
-)
-
-# Create data frame of bio1 values
-slope_df <- 
-  data.frame(tmean_dif = tmean_dif_seq) %>%
-  # Compute slope: dY/d(tmean_dif) = β1 + β_interaction * bio1
-  dplyr::mutate(
-    slope = b["bio1"] + b["bio1:tmean_dif"] * tmean_dif
-  )
-
-# Compute standard error for linear combination
-slope_df$se <- purrr::map_dbl(slope_df$tmean_dif, function(z) {
-  a <- c("bio1" = 1, "bio1:tmean_dif" = z)
-  sqrt(t(a) %*% V[names(a), names(a)] %*% a)
-})
-
-# 95% confidence intervals
-crit <- qt(0.975, df = df.residual(mod_raw))
-slope_df <- slope_df %>%
-  dplyr::mutate(
-    conf.low  = slope - crit * se,
-    conf.high = slope + crit * se
-  )
-
-# Split tmean_dif into min, halfway between min and switch point, switch point, halfway between switch point and max, and max
-# compute breakpoints ONCE
-tmean_dif_min  <- min(mod_sf_unique$tmean_dif, na.rm = TRUE)
-tmean_dif_max  <- max(mod_sf_unique$tmean_dif, na.rm = TRUE)
-
-# breaks <- c(tmean_dif_min, mid_low, switch_point, mid_high, tmean_dif_max)
-
-# fmt <- function(x) paste0(round(x, 1), " °C")
-# labels <- c(
-#   paste0(fmt(tmean_dif_min), " – ", fmt(mid_low)),
-#   paste0(fmt(mid_low), " – ", fmt(switch_point)),
-#   paste0(fmt(switch_point), " – ", fmt(mid_high)),
-#   paste0(fmt(mid_high), " – ", fmt(tmean_dif_max))
-# )
-
-breaks <- seq(tmean_dif_min, tmean_dif_max, length.out = 5)
-
-fmt <- function(x) paste0(round(x, 1), " °C")
-labels <- c(
-  paste0(fmt(breaks[1]), " – ", fmt(breaks[2])),
-  paste0(fmt(breaks[2]), " – ", fmt(breaks[3])),
-  paste0(fmt(breaks[3]), " – ", fmt(breaks[4])),
-  paste0(fmt(breaks[4]), " – ", fmt(breaks[5]))
-)
-
-interact_df <- mod_sf_unique %>%
-  mutate(
-    tmean_dif_bin = cut(
-      tmean_dif,
-      breaks = breaks,
-      include.lowest = TRUE,
-      labels = labels
-    )
-  )
-
-slope_df <-
-  slope_df %>%
-  mutate(
-    tmean_dif_bin = cut(
-      tmean_dif,
-      breaks = breaks,
-      include.lowest = TRUE,
-      labels = labels
-    )
-  )
-
-# Get midpoint of each break (or you will have five intervals)
-midbreaks <- (breaks[-1] + breaks[-length(breaks)]) / 2
-preds <- ggeffects::ggpredict(
-  mod_raw,
-  terms = c(
-    "tmean_dif [all]",
-    paste0("bio1 [", paste(midbreaks, collapse = ", "), "]")
-  ),
-  data = mod_sf_unique
-)
- 
- #(#000249), Model Ultramarine (#0F4392), Hot Kiss (#FF4949) and Rich Red (#DD1717). The RGB and CMYK values of the c
-
-#095786	(9,87,134)
-#0090ab	(0,144,171)
-#e6cea0	(230,206,160)
-#db4646	(219,70,70)
-#ae0000
-
-# Bin raster by breaks and assign colors
-names(tmean_dif) <- "tmean_dif"
-tmean_dif_binned <- 
-  tmean_dif %>%
-  project("epsg:3310") %>%
-  as.data.frame(xy = TRUE) %>%
-  mutate(
-    tmean_dif_bin = cut(
-      tmean_dif,
-      breaks = breaks,
-      include.lowest = TRUE,
-      labels = labels
-    )
-  ) %>%
-  drop_na()
-
-pos_min <- jn_bounds["Higher"]
-neg_max <- jn_bounds["Lower"]
-
-cols <- c("navyblue", "skyblue1", "tomato1", "tomato4")
-plt_slope <-
-  ggplot(slope_df, aes(x = tmean_dif, y = slope)) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = tmean_dif_bin), alpha = 0.2) +
-  geom_line(linewidth = 1.2, aes(col = tmean_dif_bin)) +
-  geom_hline(yintercept = 0, col = "gray") +
-  geom_vline(xintercept = breaks, linetype = "dashed", color = "gray") +
-  # geom_vline(xintercept = switch_point, linetype = "solid", color = "darkgray", alpha = 0.8) +
-  # annotate("text", x = switch_point, y = max(slope_df$slope), color = "darkgray", vjust = 0, hjust = 1.05, label = paste0(round(switch_point, 1), " °C")) +
-  geom_vline(xintercept = neg_max, linetype = "solid", color = "navy", alpha = 0.8) +
-  annotate("text", x = neg_max, y = max(slope_df$slope), color = "navy", vjust = 0, hjust = 1.05, label = paste0(round(neg_max, 2), " °C")) +
-  geom_vline(xintercept = pos_min, linetype = "solid", color = "tomato3", alpha = 0.8) +
-  annotate("text", x = pos_min, y = max(slope_df$slope), color = "tomato3", vjust = 0, hjust = 1.05, label = paste0(round(pos_min, 2), " °C")) +
-  scale_color_manual(values = cols) +
-  scale_fill_manual(values = cols) +
-  scale_x_continuous(expand = c(0, 0)) +
-  theme_classic() +
-  labs(
-    x = make_pretty_names("bio1"),
-    y = "Effect of contemporary climate\nchange on heterozygosity"
-  ) +
-  # bltr
-  theme(
-    legend.position = "none", 
-    plot.margin = margin(25, 10, 1, 10),
-    axis.title = element_text(size = 12),
-    axis.text = element_text(size = 10)
-  )
-
-plt_interact <-
-  ggplot(preds, aes(x = x, y = predicted, color = group, fill = group)) +
-  geom_line(linewidth = 1) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.2, color = NA) +
-  theme_classic() +
-  labs(
-    x = make_pretty_names("tmean_dif"),
-    y = "Predicted heterozygosity",
-  ) +
-  theme(
-    legend.position = "none",
-    plot.margin = margin(10, 10, 10, 10),
-    axis.title = element_text(size = 12),
-    axis.text = element_text(size = 10)
-  ) +
-  scale_color_manual(values = cols) +
-  scale_fill_manual(values = cols) 
-
-plt_map <-
-  ggplot(interact_df) +
-  geom_sf(data = ca, fill = "white") +
-  geom_raster(data = tmean_dif_binned, aes(x = x, y = y, fill = tmean_dif_bin), inherit.aes = FALSE, alpha = 0.5, show.legend = FALSE) +
-  geom_sf(aes(fill = tmean_dif_bin), size = 1.5, pch = 21) +
-  scale_fill_manual(values = cols) +
-  theme_void() +
-  labs(fill = "Contemporary\ntemperature\nchange") +
-  theme(
-    legend.position = "inside", 
-    legend.position.inside = c(0.75, 0.8), 
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 11),
-    plot.margin = margin(5, 5, 5, 5)
-  )
-
-plt_raw <-
-  ggplot(interact_df, aes(x = bio1, y = Ho, col = tmean_dif_bin)) +
-  geom_point(alpha = 0.8, size = 1) +
-  geom_smooth(method = "lm", se = TRUE, col = "black") +
-  theme_minimal() +
-  labs(x = make_pretty_names("bio1"), y = "Observed\nheterozygosity") +
-  theme(legend.title = element_blank()) + 
-  facet_wrap(~ tmean_dif_bin, nrow = 1) +
-  scale_color_manual(values = cols) +
-  #scale_x_continuous(expand = c(0, 0)) +
-  theme_classic() +
-  theme(
-    legend.position = "none", 
-    panel.background = element_rect(fill = "white", color = "black", linewidth = 1),
-    axis.line = element_blank(),
-    strip.background = element_blank(),
-    strip.text = element_text(size = 10),
-    axis.title = element_text(size = 12),
-    axis.text = element_text(size = 10),
-    #bltr
-    plot.margin = margin(1, 10, 10, 20)
-
-  ) + 
-  stat_cor(aes(label = after_stat(r.label)), label.x = min(interact_df$tmean_dif), label.y = max(interact_df$Ho), size = 3.5, vjust = 1.5, method = "pearson")
-
-png(here(plotpath, "figure_bio1_interaction.png"), width = 9, height = 5.1, units = "in", res = 300)
-group1 <- plot_grid(NULL, plt_map, NULL, ncol = 1, labels = c("", "B", ""), rel_heights = c(0.2, 0.8, 0.2))
-group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v", rel_heights = c(0.5, 0.4))
-plot_grid(group2, group1, nrow = 1, rel_widths = c(2, 1))
-dev.off()
-
-# How many samples below lower bound?
-sum(mod_sf_unique$tmean_dif < neg_max, na.rm = TRUE) # 9
-# How many samples above upper bound?
-sum(mod_sf_unique$tmean_dif > pos_min, na.rm = TRUE) # 122
-```
-
-```{r}
-library(ggeffects)
-
-# Refit model with raw data to get more interpretable interaction plots
-mod_raw <- lm(formula(final_model), data = mod_sf_unique)
-b <- coef(mod_raw)
-
-# Johnson-Neyman test to find regions of significance for the interaction
-library(interactions)
 jn <- johnson_neyman(mod_raw, pred = tmean_dif, modx = bio1)
 jn_bounds <- jn$bounds
 
@@ -2140,6 +2019,7 @@ preds <- ggeffects::ggpredict(
 bio1_binned <- 
   bio1 %>%
   project("epsg:3310") %>%
+  mask(range_map) %>%
   as.data.frame(xy = TRUE) %>%
   mutate(
     bio1_bin = cut(
@@ -2204,7 +2084,8 @@ plt_interact <-
 plt_map <-
   ggplot(interact_df) +
   geom_sf(data = ca, fill = "white") +
-  geom_raster(data = bio1_binned, aes(x = x, y = y, fill = bio1_bin), inherit.aes = FALSE, alpha = 0.5, show.legend = FALSE) +
+  geom_raster(data = bio1_binned, aes(x = x, y = y, fill = bio1_bin), inherit.aes = FALSE, alpha = 0.7, show.legend = FALSE) +
+  geom_sf(data = ca_proj, fill = NA, color = "black", linewidth = 0.3) +
   geom_sf(aes(fill = bio1_bin), size = 1.5, pch = 21) +
   scale_fill_manual(values = cols) +
   theme_void() +
@@ -2242,100 +2123,61 @@ plt_raw <-
   ) + 
   stat_cor(aes(label = after_stat(r.label)), label.x = min(interact_df$tmean_dif), label.y = max(interact_df$Ho), size = 3.5, vjust = 1.5, method = "pearson")
 
-png(here(plotpath, "figure_climate_change_interaction.png"), width = 9, height = 5.1, units = "in", res = 300)
-group1 <- plot_grid(NULL, plt_map, NULL, ncol = 1, labels = c("", "B", ""), rel_heights = c(0.2, 0.8, 0.2))
-group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "C"), align = "v", rel_heights = c(0.5, 0.4))
-plot_grid(group2, group1, nrow = 1, rel_widths = c(2, 1))
+b <- coef(lm(formula(final_model), data = mod_sf_unique))
+
+slope_rast <- project(bio1, "epsg:3310")
+# Mask out temperatures outside the range of our data
+slope_rast[slope_rast < min(mod_sf_unique$bio1, na.rm = TRUE)] <- NA
+slope_rast[slope_rast > max(mod_sf_unique$bio1, na.rm = TRUE)] <- NA
+slope_rast <-  b["tmean_dif"] + b["bio1:tmean_dif"] * slope_rast
+slope_rast <- mask(slope_rast, range_map)
+slope_df <- as.data.frame(slope_rast, xy = TRUE)
+names(slope_df)[3] <- "slope"
+
+d <- max(abs(c(min(slope_df$slope), max(slope_df$slope))))
+plt_map_slope <- 
+  ggplot() +
+  geom_raster(data = slope_df, aes(x, y, fill = slope)) +
+  geom_sf(data = ca_proj, fill = NA, color = "black", linewidth = 0.3) +
+  scale_fill_gradient2(
+    low = "skyblue2",
+    mid = "#f8f8c9",
+    high = "tomato2",
+    midpoint = 0,
+    name = "Effect of contemporary\nclimate change on\nheterozygosity",
+    # Set range
+    limits = c(-d, d)
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "inside", 
+    legend.position.inside = c(0.82, 0.78), 
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    legend.key.height = unit(0.4, "cm"),
+    # Order: top, right, bottom, left
+    plot.margin = margin(5, 20, 5, 5)
+  )
+
+
+group1 <- plot_grid(plt_map,  plt_map_slope, nrow = 1, labels = c("C", "D"))
+group2 <- plot_grid(plt_slope, plt_raw, ncol = 1, labels = c("A", "B"), align = "v", rel_heights = c(0.5, 0.4))
+plt <- plot_grid(group2, group1, ncol = 1, rel_heights = c(0.6, 0.4))
+
+png(here(plotpath, "figure_climate_change_interaction.png"), width = 7, height = 9, units = "in", res = 300)
+plt
 dev.off()
 
-# How many samples below lower bound?
-sum(mod_sf_unique$bio1 < neg_max, na.rm = TRUE) # 9
-# How many samples above upper bound?
-sum(mod_sf_unique$bio1 > pos_min, na.rm = TRUE) # 122
+pdf(here(plotpath, "figure_climate_change_interaction.pdf"), width = 9, height = 5.1)
+plt
+dev.off()
+
 ```
  
-# Check fire variables
-```{r}
-# Check relationship between fire count and Ho in areas of intermediate frequency fire
-check_df <- 
-  fire_mod_df %>%
-  left_join(get_het())
-
-pdf(here(plotpath,"fire_frq_check.pdf"), width = 8, height = 3)
-ggplot(check_df, aes(x = frq_max, y = Ho)) +
-geom_boxplot(aes(group = frq_max)) +
-  geom_point() +
-  geom_smooth(method = "lm") +
-  theme_classic() +
-  facet_wrap(~fire_frq)
-dev.off()
-```
-
-```{r}
-# Check vegetation type vs historical vs contemporary fire frequency
-maj_cats <- mod_df %>% dplyr::count(evt) %>% arrange(desc(n)) %>% filter(n > 10) %>% pull(evt)
-evt_check <-  
-  mod_df %>%
-  mutate(evt_simple = 
-    case_when(
-      evt %in% maj_cats ~ evt,
-      TRUE ~ "Other"
-  )) %>%
-  mutate(evt_simple = factor(evt_simple, levels = c("Shrubland", "Exotic Herbaceous", "Conifer", "Hardwood", "Riparian", "Developed", "Other"))) %>%
-  mutate(frq_simple = 
-    case_when(
-      fire_frq == "No Fire/Low Frequency" ~ "No Fire/Low",
-      fire_frq == "Intermediate Frequency" ~ "Intermediate",
-      fire_frq == "High Frequency" ~ "High"
-    )) %>%
-  mutate(frq_simple = factor(frq_simple, levels = c("No Fire/Low", "Intermediate", "High")))
-
-# proportions of EVT within each (fire_recent x frq_simple)
-prop_df <-
-  evt_check %>%
-  filter(!is.na(frq_simple), !is.na(fire_recent), !is.na(evt_simple)) %>%
-  count(fire_recent, frq_simple, evt_simple, name = "n") %>%
-  group_by(fire_recent, frq_simple) %>%
-  mutate(prop = n / sum(n)) %>%
-  ungroup()
-
-
-png(here(plotpath,"fire_recent_evt_check.png"), width = 12, height = 4, units = "in", res = 300)
-plt1 <-
-  ggplot(evt_check, aes(x = frq_simple, y = Ho)) +
-  geom_boxplot(aes(fill = fire_recent)) +
-  geom_point(aes(col = evt_simple, group = fire_recent), position = position_jitterdodge(jitter.width = 0.5, dodge.width = 0.8), alpha = 0.8) +
-  geom_smooth(method = "lm") +
-  labs(x = make_pretty_names("fire_frq"), fill = make_pretty_names("fire_recent"), col = make_pretty_names("evt")) +
-  scale_color_viridis_d(option = "turbo", begin = 0.05, direction = -1) +
-  scale_fill_manual(values = c("Burned" = "gray", "Unburned" = "white")) +
-  theme_classic()
-
-plt2 <- 
-  ggplot(prop_df, aes(x = fire_recent, y = prop, fill = evt_simple)) +
-  geom_col(width = 0.8) +
-  facet_wrap(~ frq_simple, nrow = 1) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  labs(
-    x = make_pretty_names("fire_frq"),
-    y = "Proportion of samples",
-    fill = make_pretty_names("evt")
-  ) +
-  theme_classic() +
-  theme(
-    axis.text.x = element_text(angle = 0, vjust = 0.8),
-    panel.spacing = unit(1.0, "lines")
-  ) +
-   scale_fill_viridis_d(option = "turbo", begin = 0.05, direction = -1)
-
-plot_grid(plt1, plt2, nrow = 1)
-dev.off()
-```
-
 # Create supplementary tables
 ```{r}
 # ============================================================
-# Make Tables S2–S6 from final_model + emmeans contrasts
+# Make Tables S3–S7 from final_model + emmeans contrasts
 # Writes one TSV per table
 # ============================================================
 
@@ -2359,17 +2201,21 @@ pretty_term_S2 <- function(term) {
     term == "glacierInsideGlacier" ~ "Glacier (inside/outside)",
     term == "gHM" ~ "Human modification",
     term == "bio1" ~ "Contemporary temperature",
-    term == "tmean_dif" ~ "Contemporary temperature change",
+    term == "tmean_dif" ~ "Contemporary climate change",
+    term == "bio1:tmean_dif" ~ "Contemporary temperature × Contemporary climate change",
 
     term == "poly(csi_past, 2, raw = TRUE)1" ~ "Paleoclimate stability (linear)",
     term == "poly(csi_past, 2, raw = TRUE)2" ~ "Paleoclimate stability (quadratic)",
 
     str_detect(term, "^evt") ~ paste0("Contemporary vegetation: ", str_replace(term, "^evt", "")),
+
     term == "fire_frqIntermediate Frequency" ~ "Historical fire frequency (Intermediate)",
     term == "fire_frqHigh Frequency" ~ "Historical fire frequency (High)",
-    term == "fire_recentBurned" ~ "Contemporary fire (Burned)",
-    term == "fire_frqIntermediate Frequency:fire_recentBurned" ~ "Fire frequency × Contemporary fire (Intermediate)",
-    term == "fire_frqHigh Frequency:fire_recentBurned" ~ "Fire frequency × Contemporary fire (High)",
+    term == "fire_recentBurned" ~ "Contemporary fire occurrence (Burned)",
+    term == "fire_frqIntermediate Frequency:fire_recentBurned" ~ "Fire frequency × Contemporary fire occurrence (Intermediate)",
+    term == "fire_frqHigh Frequency:fire_recentBurned" ~ "Fire frequency × Contemporary fire occurrence (High)",
+
+    term == "ai" ~ "Aridity index",
     TRUE ~ term
   )
 }
@@ -2381,35 +2227,43 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 # ============================================================
 # Table S2 | Final model statistics
 # ============================================================
-tab_S2 <-
+
+term_order <- c(
+  "(Intercept)",
+  "poly(csi_past, 2, raw = TRUE)1",
+  "poly(csi_past, 2, raw = TRUE)2",
+  "bio1",
+  "tmean_dif",
+  "bio1:tmean_dif",
+  "fire_frqIntermediate Frequency",
+  "fire_frqHigh Frequency",
+  "fire_recentBurned",
+  "fire_frqIntermediate Frequency:fire_recentBurned",
+  "fire_frqHigh Frequency:fire_recentBurned",
+  paste0("evt", c("Agricultural", "Conifer", "Developed", "Exotic Herbaceous", "Exotic Tree-Shrub", "Grassland", "Hardwood", "Riparian", "Sparsely Vegetated")),
+  "glacierInsideGlacier",
+  "gHM",
+  "ai"
+)
+
+tab_S3 <-
   broom::tidy(final_model) %>%
-  # keep the terms you listed; drop intercept if you want
-  filter(term %in% c(
-    "glacierInsideGlacier","gHM","bio1",
-    "poly(csi_past, 2, raw = TRUE)1","poly(csi_past, 2, raw = TRUE)2",
-    "tmean_dif",
-    "evtAgricultural","evtConifer","evtDeveloped","evtGrassland","evtHardwood","evtRiparian","evtSparsely Vegetated",
-    "fire_frqIntermediate Frequency","fire_frqHigh Frequency",
-    "fire_recentBurned",
-    "fire_frqIntermediate Frequency:fire_recentBurned",
-    "fire_frqHigh Frequency:fire_recentBurned"
-  )) %>%
+  slice(match(term_order, term)) %>%
   transmute(
     Predictor = pretty_term_S2(term),
     Estimate = fmt_e(estimate, 2),
     `Std. Error` = fmt_e(std.error, 2),
     `t-value` = round(statistic, 3),
     `p-value` = paste0(format.pval(p.value, digits = 3, eps = 0.001), " ", sig_stars(p.value)) %>% str_trim()
-  )
-
-readr::write_tsv(tab_S2, file.path(out_dir, "Table_S2_final_model_statistics.tsv"))
+  ) 
+readr::write_tsv(tab_S3, file.path(out_dir, "Table_S3_final_model_statistics.tsv"))
 
 # ============================================================
-# Table S3 | EMM contrasts for historical fire frequency
+# Table S4 | EMM contrasts for historical fire frequency
 # ============================================================
 emm_frq <- emmeans(final_model, ~ fire_frq, mode = "df.error")
 
-tab_S3 <-
+tab_S4 <-
   contrast(emm_frq, method = "tukey", adjust = "tukey") %>%
   as.data.frame() %>%
   transmute(
@@ -2421,15 +2275,15 @@ tab_S3 <-
     `p-value` = paste0(format.pval(p.value, digits = 3, eps = 0.001), " ", sig_stars(p.value)) %>% str_trim()
   )
 
-readr::write_tsv(tab_S3, file.path(out_dir, "Table_S3_fire_frq_contrasts.tsv"))
+readr::write_tsv(tab_S4, file.path(out_dir, "Table_S4_fire_frq_contrasts.tsv"))
 
 # ============================================================
-# Table S4 | EMM contrasts for contemporary fire within each fire_frq
+# Table S5 | EMM contrasts for contemporary fire within each fire_frq
 # (No adjustment; 2 levels only)
 # ============================================================
 emm_recent_by_frq <- emmeans(final_model, ~ fire_recent | fire_frq, mode = "df.error")
 
-tab_S4 <-
+tab_S5 <-
   contrast(emm_recent_by_frq, method = "pairwise") %>%
   as.data.frame() %>%
   transmute(
@@ -2442,19 +2296,19 @@ tab_S4 <-
     `p-value` = paste0(format.pval(p.value, digits = 3, eps = 0.001), " ", sig_stars(p.value)) %>% str_trim()
   )
 
-readr::write_tsv(tab_S4, file.path(out_dir, "Table_S4_fire_recent_within_fire_frq.tsv"))
+readr::write_tsv(tab_S5, file.path(out_dir, "Table_S5_fire_recent_within_fire_frq.tsv"))
 
 # ============================================================
-# Table S5 | EMM contrasts for fire_frq within each fire_recent
+# Table S6 | EMM contrasts for fire_frq within each fire_recent
 # (You said you’re using tukey)
 # ============================================================
 emm_frq_by_recent <- emmeans(final_model, ~ fire_frq | fire_recent, mode = "df.error")
 
-tab_S5 <-
+tab_S6 <-
   contrast(emm_frq_by_recent, method = "pairwise", adjust = "tukey") %>%
   as.data.frame() %>%
   transmute(
-    `Contemporary fire` = fire_recent,
+    `Contemporary fire occurrence` = fire_recent,
     Contrast = contrast,
     Estimate = fmt_e(estimate, 2),
     `Std. Error` = fmt_e(SE, 2),
@@ -2463,14 +2317,14 @@ tab_S5 <-
     `p-value` = paste0(format.pval(p.value, digits = 3, eps = 0.001), " ", sig_stars(p.value)) %>% str_trim()
   )
 
-readr::write_tsv(tab_S5, file.path(out_dir, "Table_S5_fire_frq_within_fire_recent.tsv"))
+readr::write_tsv(tab_S6, file.path(out_dir, "Table_S6_fire_frq_within_fire_recent.tsv"))
 
 # ============================================================
-# Table S6 | EMM contrasts for contemporary vegetation (all pairs, Tukey)
+# Table S7 | EMM contrasts for contemporary vegetation (all pairs, Tukey)
 # ============================================================
 emm_evt <- emmeans(final_model, ~ evt, mode = "df.error")
 
-tab_S6 <-
+tab_S7 <-
   contrast(emm_evt, method = "tukey", adjust = "tukey") %>%
   as.data.frame() %>%
   transmute(
@@ -2482,12 +2336,12 @@ tab_S6 <-
     `p-value` = paste0(format.pval(p.value, digits = 4, eps = 0.0001), " ", sig_stars(p.value)) %>% str_trim()
   )
 
-readr::write_tsv(tab_S6, file.path(out_dir, "Table_S6_evt_contrasts.tsv"))
+readr::write_tsv(tab_S7, file.path(out_dir, "Table_S7_evt_contrasts.tsv"))
 
 # ============================================================
 # Done: prints paths
 # ============================================================
-list.files(out_dir, pattern = "^Table_S[2-6].*\\.tsv$", full.names = TRUE)
+list.files(out_dir, pattern = "^Table_S[3-7].*\\.tsv$", full.names = TRUE)
 
 ```
 
@@ -2618,7 +2472,7 @@ plot_df <- vp %>%
   ) %>%
   bind_rows(
     tibble(
-      component = "Historical fire × contemporary fire",
+      component = "Historical fire × contemporary fire occurrence",
       pct_total = 100 * R2_interaction_increment_fire,
       kind = "Interaction"
     )
@@ -2694,7 +2548,7 @@ vp %>%
 
 tibble(
   component = c(
-    "Historical fire × contemporary fire",
+    "Historical fire × contemporary fire occurrence",
     "Contemporary temperature × temperature change",
     "Shared",
     "Unexplained"
@@ -2749,7 +2603,7 @@ plot_points_map <- function(var, df) {
         plt_var + 
         geom_sf(data = df, aes_string(fill = var, shape = var), size = 2) +
         scale_shape_manual(values = c(21, 24, 22)[1:length(unique(df[[var]]))]) + 
-        labs(shape = gsub(" ", "\n", stringr::str_to_sentence(make_pretty_names(var)))) + 
+        labs(shape = gsub(" ", "\n", make_pretty_names(var))) + 
         scale_fill_viridis_d(option = "turbo", begin = 0.25, end = 0.75, direction = -1)
     } else {
       plt_var <- 
@@ -2758,495 +2612,12 @@ plot_points_map <- function(var, df) {
         scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9, direction = -1)
     }    
   }
-  plt_var <- plt_var + labs(fill = gsub(" ", "\n", stringr::str_to_sentence(make_pretty_names(var)))) 
+  plt_var <- plt_var + labs(fill = gsub(" ", "\n", make_pretty_names(var)))
 }
 
 final_model_vars <- unique(final_model_vars)
 png(here(plotpath, "final_model_variable_maps.png"), height = 15, width = 11, res = 300, unit = "in")
 plt_list <- map(final_model_vars, ~(plot_points_map(.x, mod_sf_unique)))
 cowplot::plot_grid(plotlist = plt_list, ncol = 2, align = "hv", labels = LETTERS[1:length(final_model_vars)], label_size = 14)
-dev.off()
-```
-
-# Figures for MVZ
-
-```{r}
-library(tidyverse)
-library(here)
-library(ggpubr)
-library(rstatix)
-outpath = here("analysis", "genetic_diversity", "outputs")
-plotpath = here("analysis", "genetic_diversity", "plots")
-mod_df <- read_csv(here(outpath, "model_df.csv"))
-gg_df <- 
-  mod_df %>%
-  mutate(fire_recent = round(fire_recent, 0)) %>%
-  mutate(fire_recent_cat = case_when(
-    fire_recent == 0 ~ "No fire since 1984",
-    fire_recent > 0 ~ "≥1 fire since 1984"
-  )) %>%
-  mutate(fire_frq = case_when(
-    grepl("High Frequency", fire_frg) ~ "High",
-    grepl("Intermediate Frequency", fire_frg) ~ "Intermediate",
-    fire_frg == "Infrequent Fire Regime" ~ "Low/No Fire",
-    fire_frg == "No Fire Regime" ~ "Low/No Fire",
-    TRUE ~ NA_character_
-  )) %>%
-  mutate(fire_frg = gsub("\\+ ", "\\+\n", fire_frg)) %>%
-  mutate(
-    fire_frq = factor(fire_frq, levels = rev(c("High", "Intermediate", "Low/No Fire"))),
-    fire_recent_cat = factor(fire_recent_cat, levels = c("No fire since 1984", "≥1 fire since 1984")),
-    fire_frg = factor(fire_frg, levels = rev(c("High Frequency +\nHigh Severity", "High Frequency +\nLow/Moderate Severity", "Intermediate Frequency +\nHigh Severity", "Intermediate Frequency +\nLow/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime")))
-  )
-
-common_evt <- gg_df %>% count(evt) %>% arrange(desc(n)) %>% filter(n > 10) %>% pull(evt)
-gg_df <- gg_df %>% mutate(evt_simple = ifelse(evt %in% common_evt, evt, "Other"))
-
-mod_sf_unique_scaled$partial_resid_csi <-
-  resid(gls_model1) +
-  coef(gls_model1)["csi_past"] * mod_sf_unique_scaled$csi_past
-
-b <- coef(gls_model1poly)
-mod_sf_unique_scaled$partial_resid_csi_poly <-
-  resid(gls_model1poly) +
-  b["poly(csi_past, 2, raw = TRUE)1"] * mod_sf_unique_scaled$csi_past +
-  b["poly(csi_past, 2, raw = TRUE)2"] * mod_sf_unique_scaled$csi_past^2
-
-# Calc pseudo R2 for poly model
-cor(predict(gls_model1poly), mod_sf_unique$Ho) # 0.72
-
-plt_poly <- 
-  ggplot(mod_df, aes(x = csi_past, y = Ho)) +
-  geom_point(aes(col = csi_past)) +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
-  theme_classic() +scale_color_viridis_c(option = "turbo") +
-  labs(x = "Paleoclimate stability", y = "Heterozygosity") +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-
-# Predicted vs observed plot
-pred_obs_plt <-
-  ggplot(mod_sf_unique_scaled, aes(x = predict(gls_model1poly), y = Ho)) +
-  geom_point( size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
-  geom_smooth(method = "lm", color = "blue") +
-  labs(x = "Predicted heterozygosity", y = "Observed heterozygosity") +
-  theme_classic() +
-  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top", size = 6) +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-
-gls_model_simple <- gls(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + fire_frg + fire_recent, correlation = corExp(form = ~ x + y, nugget = FALSE), data = mod_sf_unique_scaled, method = "ML")
-cor(predict(gls_model_simple), mod_sf_unique$Ho) # 0.72
-
-lm(Ho ~ x + y, data = mod_sf_unique_scaled) %>% summary() # R2 = 0.35
-lm(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + evt + fire_frg, data =mod_sf_unique_scaled) %>% summary() # R2 = 50
-
-lm(Ho ~ poly(csi_past, 2) + tmean_dif + bio1 + evt + fire_frg + x + y, data =mod_sf_unique_scaled) %>% summary() # even including x and y, variables are still significant
-
-map_csi_past <-
-  ggplot(mod_sf_unique) +
-  geom_sf(data = ca_proj, fill = "gray90", colour = NA, size = 2) +
-  geom_sf(aes(col = csi_past), size = 2) +
-  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
-  labs(col = "Paleoclimate\nstability") +
-  theme_void() +
-  theme(
-    legend.position = "inside",
-    legend.justification = c(1, 1),
-    legend.position.inside = c(0.9, 0.95),
-    legend.title = element_text(size = 14),
-    legend.text  = element_text(size = 12)
-  )
-
-mod_sf_unique$partial_resid_csi_poly <- mod_sf_unique_scaled$partial_resid_csi_poly
-model_summary <- broom::tidy(gls_model1poly)
-
-b1 <- model_summary %>%
-  dplyr::filter(term == "poly(csi_past, 2, raw = TRUE)1")
-b2 <- model_summary %>%
-  dplyr::filter(term == "poly(csi_past, 2, raw = TRUE)2")
-
-beta1 <- formatC(b1$estimate, format = "e", digits = 2)
-beta2 <- formatC(b2$estimate, format = "e", digits = 2)
-
-p1_lab <- if (b1$p.value < 0.001) {
-  "p[1] < 0.001"
-} else {
-  paste0("p[1] == ", round(b1$p.value, 3))
-}
-
-p2_lab <- if (b2$p.value < 0.001) {
-  "p[2] < 0.001"
-} else {
-  paste0("p[2] == ", round(b2$p.value, 3))
-}
-
-line1 <- paste0("beta[1] == ", beta1, "*','~", p1_lab)
-line2 <- paste0("beta[2] == ", beta2, "*','~", p2_lab)
-
-label_txt <- paste0("atop(", line1, ",", line2, ")")
-
-plt_poly_partial <- 
-  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_poly)) +
-  geom_point(aes(col = csi_past)) +
-  geom_smooth(
-    method = "lm",
-    formula = y ~ poly(x, 2, raw = TRUE),
-    col = "black"
-  ) +
-  theme_classic() +
-  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
-  annotate(
-    "text", x = Inf, y = Inf, hjust = 1, vjust = 1,
-    label = label_txt, parse = TRUE, size = 5
-  ) +
-  labs(
-    x = "Paleoclimate stability",
-    y = "Partial residual heterozygosity"
-  ) +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14),
-    legend.position = "none"
-  )
-
-
-csi_past_plt <- cowplot::plot_grid(plt_poly_partial, map_csi_past, nrow = 1, rel_widths = c(1, 0.8))
-
-q_plt <- ggplot(filter(mod_sf_unique, Q > 0.01), aes(x = csi_past, y = Q)) +
-  geom_point(aes(col = csi_past)) +
-  geom_smooth(method = "lm", col = "black",  formula = y ~ poly(x, 2, raw = TRUE)) +
-  theme_classic() +
-  scale_met_cont(mod_sf$csi_past, aesthetic = "col") +
-  labs(x = "Paleoclimate stability", y = "Inbreeding coefficient (Q)") +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-
-range(mod_sf_unique$Q)
-
-mod_sf_unique <- mod_sf_unique %>%
-  mutate(
-    admix = if_else(Q > 0.001, "Admixed", "Non-admixed"),
-    csi_past_bin = cut(csi_past, breaks = 8, include.lowest = TRUE)
-  )
-
-# get midpoints for labels
-bin_levels <- levels(mod_sf_unique$csi_past_bin)
-bin_mids <- sapply(bin_levels, function(s) {
-  nums <- as.numeric(gsub("\\(|\\]|\\[|\\)", "", unlist(strsplit(s, ","))))
-  mean(nums)
-})
-bin_lab <- sprintf("%.2f", bin_mids)  # change decimals here
-
-count_df <- mod_sf_unique %>%
-  count(csi_past_bin, admix, name = "n") %>%
-  group_by(csi_past_bin) %>%
-  mutate(prop = n / sum(n),
-         admix = factor(admix, levels = c("Non-admixed", "Admixed"))) %>%
-  ungroup()
-
-count_df_fire <- mod_sf_unique %>%
-  count(fire_frg, admix, name = "n") %>%
-  group_by(fire_frg) %>%
-  mutate(prop = n / sum(n),
-         admix = factor(admix, levels = c("Non-admixed", "Admixed"))) %>%
-  ungroup()
-
-q_plt_prop <- 
-  ggplot(count_df, aes(x = csi_past_bin, y = prop, fill = admix)) +
-  geom_col() +
-  scale_x_discrete(labels = bin_lab) +
-  scale_y_continuous(expand = c(0,0)) +
-  theme_classic() +
-  scale_fill_manual(values = c("Non-admixed" = "tomato2", "Admixed" = "skyblue2")) +
-  labs(x = "Binned paleoclimate stability", y = "Proportion of individuals", fill = "") +
-  theme(
-    legend.position = "top",
-    axis.title = element_text(size = 18),
-    axis.text  = element_text(size = 16),
-    legend.text = element_text(size = 16)
-  )
-
-total_count <- count_df %>%
-  group_by(csi_past_bin) %>%
-  summarise(total = sum(n)) 
-
-q_plt_count <- 
-  ggplot(count_df, aes(x = csi_past_bin)) +
-  geom_col(aes(y = prop, fill = admix)) +
-  # Add text with counts to bars
-  #geom_text(data = total_count, aes(label = total), y = 0.9, size = 6, color = "white") +
-  scale_x_discrete(labels = bin_lab) +
-  scale_y_continuous(expand = c(0,0)) +
-  theme_classic() +
-  scale_fill_manual(values = c("Non-admixed" = "red2", "Admixed" = "skyblue2")) +
-  labs(x = "Binned paleoclimate stability", y = "Number of individuals", fill = "") +
-  theme(
-    legend.position = "top",
-    axis.title = element_text(size = 18),
-    axis.text  = element_text(size = 16),
-    legend.text = element_text(size = 16)
-  )
-
-pdf(here(plotpath, "mvz.pdf"), width = 5.5, height = 5)
-q_plt_count
-dev.off()
-
-pdf(here(plotpath, "mvz.pdf"), width = 9, height = 4.5)
-q_plt_count
-csi_past_plt
-q_plt
-dev.off()
-
-mod_sf_unique$partial_resid_csi_notpoly <-
-  resid(gls_model1) +
-  coef(gls_model1)["csi_past"] * mod_sf_unique_scaled$csi_past
-
-plt_notpoly_raw <- 
-  ggplot(mod_sf_unique, aes(x = csi_past, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ x) +
-  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
-  theme_classic() + 
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-plt_poly_raw <- 
-  ggplot(mod_sf_unique, aes(x = csi_past, y = Ho)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
-  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
-  theme_classic() + 
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-
-
-plt_notpoly <- 
-  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_notpoly)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ x) +
-  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
-  theme_classic() + 
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-plt_poly <- 
-  ggplot(mod_sf_unique, aes(x = csi_past, y = partial_resid_csi_poly)) +
-  geom_point() +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2, raw = TRUE)) +
-  labs(x = "Paleoclimate stability", y = "Partial residual heterozygosity") +
-  theme_classic() + 
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14)
-  )
-
-
-mod_sf_unique$partial_resid_tmean_dif <-
-  resid(gls_model1poly) +
-  coef(gls_model1poly)["tmean_dif"] * mod_sf_unique_scaled$tmean_dif
-
-# Get coefficient and p-value for annotation
-model_summary <- broom::tidy(gls_model1poly)
-beta <- formatC(model_summary$estimate[model_summary$term == "tmean_dif"], format = "e", digits = 2)
-pval <- model_summary$p.value[model_summary$term == "tmean_dif"] %>% round(2)
-
-tmean_dif_plt <-
-  ggplot(mod_sf_unique, aes(x = tmean_dif, y = partial_resid_tmean_dif)) +
-  geom_point(col = "orange2") +
-  geom_smooth(method = "lm", col = "black") +
-  theme_classic() +
-  labs(x = "Contemporary temperature change", y = "Partial residual heterozygosity") +
-  annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5,
-           label = paste0("beta == ", beta, "*','~p == ", pval), parse = TRUE, size = 6) +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14),
-    legend.position = "none"
-  )
-pdf(here(plotpath, "mvz.pdf"), width = 5, height = 5)
-tmean_dif_plt
-dev.off()
-```
-
-```{r}
-# -------------------------------------------------------------------
-# Recreate tuk_df from gls_model1poly (this is what you deleted)
-# -------------------------------------------------------------------
-
-# helper to clean factor labels consistently
-clean_lvl <- function(x) {
-  x %>%
-    as.character() %>%
-    str_replace_all("[\r\n]+", " ") %>%  # remove line breaks
-    str_squish() %>%                    # collapse whitespace
-    str_remove("^\\(") %>%              # drop leading "("
-    str_remove("\\)$")                  # drop trailing ")"
-}
-
-
-# emmeans + Tukey (tukey) on the GLS model
-emm_fire <- emmeans(gls_model1poly, ~ fire_frg)
-tuk <- pairs(emm_fire, adjust = "tukey")
-
-# Convert to a "tuk_df" equivalent with group1/group2 columns + stars
-tuk_df <- as.data.frame(tuk) %>%
-  tidyr::separate(contrast, into = c("group1", "group2"), sep = " - ", remove = FALSE) %>%
-  mutate(
-    stars = case_when(
-      p.value < 0.001 ~ "***",
-      p.value < 0.01  ~ "**",
-      p.value < 0.05  ~ "*",
-      TRUE ~ "ns"
-    )
-  )
-
-# If you only want significant comparisons:
-tuk_df <- tuk_df %>% filter(stars != "ns")
-
-# -------------------------------------------------------------------
-# Map comparisons to x positions for plotting brackets on ggplot
-# -------------------------------------------------------------------
-gg_df2 <- gg_df %>%
-  mutate(fire_frg_clean = clean_lvl(fire_frg),
-         fire_frg_clean = factor(
-           fire_frg_clean,
-           levels = clean_lvl(levels(fire_frg))  # keep same ordering as fire_frg
-         ))
-
-lvls_key <- levels(gg_df2$fire_frg_clean)
-
-tuk_df2 <- tuk_df %>%
-  mutate(
-    group1_key = clean_lvl(group1),
-    group2_key = clean_lvl(group2),
-    x1 = match(group1_key, lvls_key),
-    x2 = match(group2_key, lvls_key),
-    xmin = pmin(x1, x2),
-    xmax = pmax(x1, x2),
-    xmid = (xmin + xmax) / 2
-  ) %>%
-  filter(!is.na(xmin), !is.na(xmax))
-
-
-# -------------------------------------------------------------------
-# Plot (kept): fire_frg vs Ho with significant Tukey brackets
-# -------------------------------------------------------------------
-mod_sf_unique$Ho_fire_frg_partial <- resid(gls_model1poly) +
-  coef(gls_model1poly)["fire_frgInfrequent Fire Regime"] * (mod_sf_unique_scaled$fire_frg == "Infrequent Fire Regime") +
-  coef(gls_model1poly)["fire_frgIntermediate Frequency + Low/Moderate Severity"] * (mod_sf_unique_scaled$fire_frg == "Intermediate Frequency + Low/Moderate Severity") +
-  coef(gls_model1poly)["fire_frgIntermediate Frequency + High Severity"] * (mod_sf_unique_scaled$fire_frg == "Intermediate Frequency + High Severity") +
-  coef(gls_model1poly)["fire_frgHigh Frequency + Low/Moderate Severity"] * (mod_sf_unique_scaled$fire_frg == "High Frequency + Low/Moderate Severity") +
-  coef(gls_model1poly)["fire_frgHigh Frequency + High Severity"] * (mod_sf_unique_scaled$fire_frg == "High Frequency + High Severity")
-
-mod_sf_unique <-  
-  mod_sf_unique %>%
-  mutate(fire_frg_lb = gsub("\\+ ", "\\+\n", as.character(fire_frg))) %>%
-  mutate(
-    fire_frg_lb = factor(fire_frg_lb, levels = rev(c("High Frequency +\nHigh Severity", "High Frequency +\nLow/Moderate Severity", "Intermediate Frequency +\nHigh Severity", "Intermediate Frequency +\nLow/Moderate Severity", "Infrequent Fire Regime", "No Fire Regime")))
-  )
-unique(mod_sf_unique$fire_frg_lb)
-
-
-# y positions for brackets (stack them)
-y_base <- max(mod_sf_unique$Ho_fire_frg_partial, na.rm = TRUE) - 0.0001
-y_step <- 0.08 * diff(range(mod_sf_unique$Ho_fire_frg_partial, na.rm = TRUE))  # tweak if needed
-
-tuk_df2 <- tuk_df2 %>%
-  arrange(xmin, xmax) %>%
-  mutate(
-    y = y_base + row_number() * y_step,
-    y_tick = y - 0.25 * y_step
-  )
-
-
-bxp2 <-
-  ggplot(mod_sf_unique, aes(x = fire_frg_lb, y = Ho_fire_frg_partial)) +
-  geom_boxplot(col = NA) +
-  geom_boxplot(data = filter(mod_sf_unique, fire_frg != "Intermediate Frequency + High Severity")) +
-  geom_boxplot(data = filter(mod_sf_unique, fire_frg == "Intermediate Frequency + High Severity"), col = "tomato2") +
-  geom_jitter(data = filter(mod_sf_unique, fire_frg != "Intermediate Frequency + High Severity"), width = 0.2, alpha = 0.5) +
-  geom_jitter(data = filter(mod_sf_unique, fire_frg == "Intermediate Frequency + High Severity"), col = "tomato2", width = 0.2, alpha = 0.5) +
-  theme_classic() +
-  labs(x = "Historical fire regime", y = "Partial residual heterozygosity") +
-  geom_segment(data = tuk_df2,
-               aes(x = xmin, xend = xmax, y = y, yend = y),
-               inherit.aes = FALSE, linewidth = 0.6) +
-  geom_segment(data = tuk_df2,
-               aes(x = xmin, xend = xmin, y = y_tick, yend = y),
-               inherit.aes = FALSE, linewidth = 0.6) +
-  geom_segment(data = tuk_df2,
-               aes(x = xmax, xend = xmax, y = y_tick, yend = y),
-               inherit.aes = FALSE, linewidth = 0.6) +
-  geom_text(data = tuk_df2,
-            aes(x = xmid, y = y - 0.00005, label = stars),
-            inherit.aes = FALSE, vjust = 0, size = 8) +
-  coord_cartesian(clip = "off") +
-  theme(
-    axis.title = element_text(size = 16),
-    axis.text  = element_text(size = 14),
-    axis.text.x = element_text(angle = 20, hjust = 1, size = 14),
-    plot.margin = margin(5.5, 5.5, 5.5, 25)
-  )
-
-# If you want to save:
-ggsave(here(plotpath, "fire_frg_tukey_gls.pdf"), bxp2, width = 10, height = 6)
-
-```
-
-```{r}
-df = mod_sf_unique
-df <- df %>% mutate(admixed = ifelse(Q > 0.01, 1, 0))
-
-# admixed is binomial so use glm with family = binomial
-admix_fit <- glm(admixed ~ csi_past + glacier + gHM + bio1 + tmean_dif + evt + fire_recent * fire_frq, data = df, family = "binomial")
-car::Anova(admix_fit, type = 2)
-admix_fit %>% broom::tidy() %>% filter(p.value < 0.05)
-
-# Emmeans check on fire_recent
-emmeans(admix_fit, ~ fire_recent | fire_frq) |>
-  pairs() %>%  
-  summary(infer = TRUE)
-```
-
-
-# DUMP
-```{r}
-df = mod_df
-
-med_fit <- lm(Ho ~ veg_PC1 + veg_PC2 + veg_PC3 + bio1 + csi_past + glacier + gHM + tmean_dif + fire_severity + fire_recent +, data = df)
-summary(med_fit)
-```
-
-```{r}
-pdf(here(plotpath, "fire_groupveg_plots.pdf"), width = 5, height = 5)
-ggplot(data = mod_sf_unique, aes(x = fire_severity, y = Ho)) +
-  geom_point(aes(col = groupveg)) +
-  geom_smooth(method = "lm") +
-  theme_classic() 
-
-ggplot(data = mod_sf_unique, aes(x = fire_severity, y = Ho)) +
-  geom_point(aes(col = evt)) +
-  geom_smooth(method = "lm") +
-  theme_classic() 
-
-# Boxplot with significance comparisons using ggpubr
-ggboxplot(mod_sf_unique, x = "groupveg", y = "Ho",
-          color = "groupveg", palette = "jco") +
-  stat_compare_means(method = "anova") +
-  stat_compare_means(label = "p.format", method = "t.test",
-                     ref.group = "shrubland", label.y.npc = 0.9) +
-  theme_classic()
 dev.off()
 ```
