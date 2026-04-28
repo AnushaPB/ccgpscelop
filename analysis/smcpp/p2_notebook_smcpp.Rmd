@@ -72,9 +72,10 @@ paleokey_split <-
 
 # Figures 
 ```{r}
-custom_cols <- c("#07353b", "#0F7885", "#7FD987", "#ABF0B5", "#DEA0F0", "#F4228D", "#C5CF22", "#DC8B18")
-ordered_pops <- c(2, 6, 5, 7, 1, 8, 3, 4) 
-fill_cols <- setNames(custom_cols, 1:8)
+pop_key <- read_csv(here("analysis", "admixture", "outputs", "pop_cols.csv"))
+ordered_pops <- pop_key$new_numbers
+pop_cols <- pop_key %>% arrange(new_numbers) %>% pull(colors)
+fill_cols <- setNames(pop_cols, pop_key$original_numbers)
 
 gg_df <- 
   filter(smcpp, T == 2, !is.na(pop), years != 0) %>% 
