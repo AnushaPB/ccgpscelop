@@ -1,7 +1,5 @@
 # Run in analysis/gea
 source activate ccgpscelop
-# USE CHR
-# TODO : RENAME AND REDUCE NUMBER OF FILES (MORE DESCRIPTIVE FILE NAMES OR MORE INTUITIVE)
 # Get plink 
 PLINK=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated
 VCF=../../data/ccgp_data/58-Sceloporus_complete_coords_annotated.vcf.gz
