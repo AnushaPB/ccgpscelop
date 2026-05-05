@@ -1,0 +1,305 @@
+```{r}
+library(tidyverse)
+library(here)
+library(terra)
+library(sf)
+library(ggpubr)
+source(here("general_functions.R"))
+source("analysis/genetic_diversity/genetic_diversity.R")
+
+het <- get_het()
+coords <- get_coords()
+mod_df <- read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv"))
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  rename(SampleID = IID) %>%
+  dplyr::select(SampleID, genes_ho)
+
+df <- 
+  left_join(coords, mod_df) %>% 
+  left_join(genes) %>% 
+  drop_na(Ho, csi_past, Q) %>%
+  # Rescale csi_past between 0 and 1 and then subtract from 1 to make it more inuitive
+  mutate(csi_past = 1 - (csi_past - min(csi_past))/(max(csi_past) - min(csi_past))) 
+df$resid_Ho <- residuals(lm(Ho ~ Q, data = df))
+df$resid_csi_past <- residuals(lm(csi_past ~ Q, data = df))
+df$genes_ho_resids <- residuals(lm(genes_ho ~ Ho, data = df))
+
+#plt1 <- 
+  ggplot(df, aes(x = resid_csi_past, y = resid_Ho)) +
+  geom_point(col = "#bbbfff", cex = 3) +
+  geom_smooth(method = "lm", color = "black", lwd = 2) +
+  labs(x = "Paleoclimate stability", y = "Genetic diversity") +
+  theme_classic() +
+  stat_cor(label.y = min(df$resid_Ho), cex = 8) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_text(size = 24)
+  )
+
+
+plt2 <- ggplot(df, aes(x = tmean_dif, y = genes_ho_resids)) +
+  geom_point(col = "#ffd8af") +
+  geom_smooth(method = "lm", color = "black") +
+  labs(x = "Contemporary climate change", y = "Adaptive genetic diversity") +
+  theme_classic()
+
+cowplot::plot_grid(plt1, plt2, ncol = 1)
+```
+
+
+```{r}
+# Read in het data
+callable_sites <- read.table(here("data", "ccgp_data", "58-Sceloporus_callable_sites_nsites.txt"))[1,1]
+
+neutral <- 
+  format_het(here("analysis", "gea", "outputs", "nogea_thinned.het"), callable_sites = callable_sites) %>%
+  mutate(neutral_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, neutral_ho)
+
+gea <- 
+  format_het(here("analysis", "gea", "outputs", "gea.het"), callable_sites = 1)%>%
+  mutate(gea_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, gea_ho)
+
+genes <- 
+  format_het(here("analysis", "gea", "outputs", "genes.het"), callable_sites = 1) %>%
+  mutate(genes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, genes_ho)
+
+geanogenes <-
+  format_het(here("analysis", "gea", "outputs", "geanogenes.het"), callable_sites = 1) %>%
+  mutate(geanogenes_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, geanogenes_ho)
+
+nonsyn <- 
+  format_het(here("analysis", "gea", "outputs", "nonsyn.het"), callable_sites = 1) %>%
+  mutate(nonsyn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, nonsyn_ho)
+
+syn <- 
+  format_het(here("analysis", "gea", "outputs", "syn.het"), callable_sites = 1) %>%
+  mutate(syn_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, syn_ho)
+
+freqfilter <- 
+  format_het(here("analysis", "gea", "outputs", "nogea_frqfilter.het"), callable_sites = 1) %>%
+  mutate(filter_ho = 1 - `O(HOM)`/`N(NM)`) %>%
+  dplyr::select(IID, filter_ho)
+
+pop_df <- read_csv(here("analysis", "admixture", "outputs", "Q9.csv")) %>% distinct(cluster, SampleID) %>% mutate(cluster = factor(cluster))
+
+df <- 
+  left_join(neutral, gea, by = "IID") %>%
+  left_join(genes, by = "IID")  %>%
+  left_join(geanogenes, by = "IID") %>%
+  left_join(nonsyn, by = "IID") %>%
+  left_join(syn, by = "IID") %>%
+  left_join(freqfilter, by = "IID") %>%
+  left_join(pop_df, by = c("IID" = "SampleID")) %>%
+  # Remove channel island
+  left_join(read_csv(here("analysis", "genetic_diversity", "outputs", "model_df.csv")), by = c("IID" = "SampleID")) %>%
+  drop_na(Ho)
+```
+
+```{r}
+df$socal <- df$cluster == 9
+names(df)
+mod_vars <- c("neutral_ho", "NDVI", "gHM", "bio1", "csi_past", "glacier", "tmean_dif", "genes_ho", "gea_ho", "geanogenes_ho", "nonsyn_ho", "syn_ho", "filter_ho", "neutral_ho")
+mod_df <- df %>% mutate(across(all_of(mod_vars), scale))
+mod <- lm(genes_ho ~ neutral_ho + cluster + NDVI + glacier + tmean_dif + gHM + bio1 + csi_past, data = mod_df)  
+broom::tidy(mod) %>% 
+  filter(p.value < 0.05) %>% arrange(desc(abs(estimate)))
+
+ggpartial("tmean_dif", "syn_ho", c("neutral_ho", "cluster", "NDVI", "glacier", "gHM", "bio1", "csi_past"), mod_df)
+
+ggpartial("tmean_dif", "nonsyn_ho", c("neutral_ho", "cluster", "NDVI", "glacier", "gHM", "bio1", "csi_past"), mod_df)
+
+
+ggpartial("gHM", "nonsyn_ho", c("neutral_ho", "cluster", "NDVI", "glacier", "gHM", "bio1", "csi_past"), mod_df)
+```
+# smcpp
+
+
+
+```{r, include = FALSE}
+library(here)
+library(tidyverse)
+library(scales)
+library(sf)
+library(terra)
+library(ggpubr)
+source(here("analysis", "smcpp", "smcpp.R"))
+source(here("general_functions.R"))
+source(here("analysis", "genetic_diversity", "paleovars.R"))
+
+plotpath <- here("analysis", "smcpp", "plots")
+
+# Set global options
+knitr::opts_chunk$set(
+  cache = TRUE,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  result = FALSE
+)
+
+smcpp <- 
+  get_smcpp(K = 9, i = 10) %>%
+  group_by(pop, i)
+```
+
+```{r}
+ca <- get_ca()
+coords <- get_coords(sf = TRUE)
+
+pop_df <- 
+  list.files(here("analysis", "admixture", "outputs"), full.names = TRUE, pattern = "k9") %>%
+  map(~{
+    pop <- read_lines(.x)
+    pop_df <- tibble(SampleID = pop, pop = basename(.x) %>% gsub(".txt", "", .) %>% gsub("k9_pop", "", .))
+    return(pop_df)
+  }) %>%
+  bind_rows() %>%
+  left_join(coords, by = "SampleID") 
+```
+
+
+```{r}
+#4/5/1/7 are different
+gg_df <- 
+  filter(smcpp, T == 2, !is.na(pop), years != 0) %>%
+  mutate(pop = factor(pop, levels =c("7", "5", "4", "1", "9", "8", "6", "2", "3"))) %>%
+  mutate(group = ifelse(pop %in% c("7", "5", "4", "1"), "Group 2", "Group 1")) %>% 
+  mutate(index = paste0(i, pop)) 
+
+gg_df_mean <- 
+  gg_df %>%
+  group_by(pop, years, group) %>%
+  summarise(y_sd = sd(y, na.rm = TRUE), y_mean = mean(y, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(ymax = y_mean + y_sd, ymin = y_mean - y_sd) %>%
+  mutate(ymax = ifelse(ymax > 7e6, 7e6, ymax), ymin = ifelse(ymin < 0, 0, ymin))
+
+# Color scale one
+cs1 <- viridis::mako(4, begin = 0.3, end = 0.8)
+names(cs1) <- c("7", "5", "4", "1")
+cs2 <- viridis::rocket(9-4, begin = 0.3, end = 0.9)
+names(cs2) <- c("9", "8", "6", "2", "3")
+
+plt1 <-
+  ggplot(data = gg_df) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("text", x = 17e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = max(gg_df_mean$y_mean) * 1.1, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, 1e+06), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  scale_color_manual(values = c(cs1, cs2)) +
+  ylab("Effective population size (Ne)") +
+  xlab("") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1)) 
+
+pop_gg_df <-
+  pop_df %>%
+  mutate(pop = factor(pop, levels =  c( "4", "5", "1", "9", "8", "6", "7", "2", "3"))) %>%
+  st_as_sf()
+
+# plot of population assignments
+plt2 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = pop_gg_df, aes(col = pop)) +
+  labs(col = "Population") +
+  scale_color_manual(values = c(cs1, cs2))  +
+  theme_void() +
+  theme(
+    legend.position = "none"
+  )
+
+
+pop_label <- 
+  st_drop_geometry(pop_gg_df) %>% 
+  bind_cols(st_coordinates(pop_gg_df)) %>%
+  group_by(pop) %>%
+  summarize(x = mean(X), y = mean(Y)) %>%
+  left_join(distinct(select(gg_df_mean, group, pop)))
+
+gg_df2 <- gg_df %>% mutate(pop = factor(pop, levels = 1:9))
+
+plt5 <- 
+  ggplot() +
+  geom_sf(data = ca) +
+  geom_sf(data = pop_gg_df, aes(col = pop), cex = 2) +
+  geom_point(data = pop_label, aes(x = x, y = y, col = pop), cex = 8, alpha = 0.5) +
+  geom_text(data = pop_label, aes(x = x, y = y, label = pop), cex = 6) +
+  labs(col = "Population") +
+  scale_color_manual(values = c(cs1, cs2))  +
+  theme_void() +
+  theme(
+    legend.position = "none"
+  )
+plt5
+
+combo <- cowplot::plot_grid(plt1, plt1, ncol = 1, rel_heights = c(0.6, 0.4), align = "hv")
+pdf(here(plotpath, "smcpp_k9.pdf"), width = 13, height = 7)
+cowplot::plot_grid(plt5, combo, nrow = 1, rel_widths = c(0.35, 0.65))
+dev.off()
+```
+```{r}
+source(here("analysis", "smcpp", "smcpp.R"))
+smcpp <- 
+  get_smcpp() %>% 
+  filter(T == 2) %>% 
+  group_by(pop, x, y, years) %>% 
+  summarise(y_mean = mean(y)) %>% 
+  ungroup()
+
+ggplot(data = smcpp) +
+  annotate("rect", xmin = 0.3e3, xmax = 11.7e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 19e3, xmax = 26e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("rect", xmin = 115e3, xmax = 130e3, ymin = 0, ymax = Inf, fill = "slategray1") +
+  annotate("text", x = 17e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LGM", hjust = 0, col = "#5180b2", cex = 6)+
+  annotate("text", x = 100e3, y = max(gg_df_mean$y_mean) * 1.1, label = "LIG", hjust = 0, col = "#5180b2", cex = 6) +
+  annotate("text", x = 9e2, y = max(gg_df_mean$y_mean) * 1.1, label = "Holocene", hjust = 0, col = "#5180b2", cex = 6) +
+  geom_line(data = gg_df_mean, lwd = 1.1, aes(x = years, y = y_mean, col = factor(pop)), alpha = 0.9) +
+  scale_x_continuous(trans = "log10", limits = c(200, 1e+06), expand = c(0,0)) +
+  scale_y_continuous(trans = "log10") +
+  theme_classic() +
+  scale_color_manual(values = c(cs1, cs2)) +
+  ylab("Effective population size (Ne)") +
+  xlab("") +
+  theme(legend.position = "none", strip.text = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 1))
+```
+
+
+```{r}
+sf <- 
+  df %>% 
+  left_join(pop_df, by = c("IID" = "SampleID")) %>% 
+  group_by(pop) %>% 
+  mutate(tmean_dif = mean(tmean_dif, na.rm = TRUE), csi_past = mean(csi_past, na.rm = TRUE)) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
+  st_transform(3310) 
+
+ca <- get_ca() %>% st_transform(3310)
+ggplot(sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = tmean_dif)) +
+  scale_color_viridis_c() +
+  theme_void() +
+  labs(col = "Contemporary\nclimate\nchange")
+
+ggplot(sf) +
+  geom_sf(data = ca) +
+  geom_sf(aes(col = csi_past)) +
+  scale_color_viridis_c() +
+  theme_void() +
+  labs(col = "Past\nclimate\ninstability")
+```

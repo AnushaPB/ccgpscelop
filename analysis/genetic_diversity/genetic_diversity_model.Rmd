@@ -199,6 +199,8 @@ tmean_mod_df <-
   mutate(tmean_dif = tmean_cur - tmean_his) %>%
   right_join(coords) %>% 
   dplyr::select(SampleID, tmean_dif, tmean_cur)
+
+# plot(tmean_dif_r, col = viridis::viridis(100))
 ```
 
 Combine into a raster stack:

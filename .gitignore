@@ -1,5 +1,6 @@
 
 # Data files
+!rm_beckii/beckii_sampleids.txt
 data/
 gnx/
 58-Sceloporus/

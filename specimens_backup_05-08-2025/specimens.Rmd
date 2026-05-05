@@ -44,27 +44,15 @@ P4 - look for any uncaptured environmental diversity across the state (unlikely)
 
 
 # Read in CCGP sequencing data and CT specimens
+```{r}
+# CCGP samples 
+ccgp_seq <- read_table(here("specimens", "58-Sceloporus.coords.txt"), col_names = FALSE)
+names(ccgp_seq) <- c("SampleID", "x", "y")
 
-```{r}
-coords <- read_csv(here("data", "WGS_METADATA_DB_04-29-2025.csv"))
-ccgp_seq <- 
-  coords %>% 
-  filter(`ccgp-project-id` == "58-Sceloporus") %>%
-  dplyr::select("long", "lat", `*organism`, `*sample_name`, `minicore_seq_id`) %>% 
-  rename(
-    x = `long`,
-    y = `lat`,
-    MinicoreID = `minicore_seq_id`,
-    SampleID = `*sample_name`,
-    Organism = `*organism`
-  ) 
-```
-```{r}
 # Erin's CT specimens
 ct_scanned <- 
   #read_csv("data/CT_scanning.csv") %>%
-  #read_csv(here("specimens", "Copy of CT_scanning - Sheet1.csv")) %>%
-  read_csv(here("specimens", "CT_scanning - Sheet1_02-27-2024.csv")) %>%
+  read_csv(here("specimens", "Copy of CT_scanning - Sheet1.csv")) %>%
   mutate(SampleID = paste0(museum_ID, specimen_no))
 
 # I am going to use this df called "tracker" to keep track of the specimens and what type they are)
@@ -199,8 +187,7 @@ unique(ccgp_lacm$lifestage)
 # join CCGP data with CAS records to get CAS specimens
 ccgp_cas <- 
   ccgp_seq %>%
-  # Make sure to specify followed by a number because there are CASS samples
-  filter(grepl("CAS\\d+", SampleID)) %>%
+  filter(grepl("CAS", SampleID)) %>%
   left_join(cas, by = "SampleID")
 
 # check if all of the samples have specimens
@@ -404,11 +391,16 @@ table(tracker_final$genome_and_specimen)
 table(tracker_final$genome_and_specimenORnearby)
 ```
 
+Main notes:
+- we can get a good chunk of coverage from specimens requested from CAS
+- LACM doesn't have a ton of good specimens, but they fill in important gaps
+- We need samples from S. CA and along the coast
 ```{r}
 ca_counties <- counties(state = "CA", cb = TRUE, class = "sf")
 # plot of all samples and color coded by what we need to do for them
 ggplot() + 
   geom_sf(data = california) +
+  geom_sf_text(data = ca_counties, aes(label = NAME), size = 2) +
   geom_point(data = tracker_final, aes(x = x, y = y, col = note)) +
   theme_void()
 
@@ -442,26 +434,7 @@ ggplot() +
   geom_point(data = tracker_final, aes(x = x, y = y, col = genome_and_specimen)) +
   theme_void()
 
-tracker_simple <- 
-  tracker_final %>%
-  # keep only the columns you need
-  select(SampleID, x, y, near_specimen, near_x, near_y, near_instid, note) 
-write_csv(tracker_simple, here("specimens", "tracker_final.csv"))
-```
-
-```{r}
-# Coastal sampling
-# lon = xmin, xmax; lat = ymin, ymax
-bbox <- c(xmin = -122.5, xmax = -119.0,
-          ymin =   34.4, ymax =   38.1)
-# Crop tracker_final to the bounding box
-tracker_final_crop <- tracker_final %>%
-  filter(x > bbox[1], x < bbox[2], y > bbox[3], y < bbox[4])
-
-ggplot() + 
-  geom_sf(data = california) +
-  geom_point(data = tracker_final_crop, aes(x = x, y = y, col = note)) +
-  theme_void()
+write_csv(tracker_final, here("specimens", "tracker_final.csv"))
 ```
 
 # Requests
@@ -592,6 +565,75 @@ tracker_final %>% group_by(note) %>% summarize(n = n())
 tracker_final %>% group_by(!is.na(note)) %>% summarize(n = n())
 ```
 
+# Check which samples have been covered by new CT scanning (Feb 2025)
+```{r}
+# Erin's CT specimens
+tracker_final <- 
+  read_csv("specimens/tracker_final.csv")
+ct_scanned <- 
+  read_csv("specimens/CT_scanning - Sheet1_02-27-2024.csv") %>%
+  mutate(SampleID = paste0(museum_ID, specimen_no))
+
+# Look at new scans (tracker has coords)
+# NOTE: by accident only CCGP specimens and not replacements were requested from CAS (so there are no replacement scanned specimens)
+tracker_feb_update <- 
+  tracker_final %>%
+  mutate(updated_note = 
+          case_when(
+            SampleID %in% ct_scanned$SampleID ~ "scanned", 
+            Specimen1 %in% ct_scanned$SampleID ~ "replacement scanned",
+            .default = note
+            )
+          )
+
+ggplot(tracker_feb_update) +
+  #geom_sf(data = california) +
+  geom_point(aes(x = x, y = y, col = updated_note))
+
+write_csv(select(tracker_feb_update, x, y, updated_note, SampleID), here("specimens", "tracker.csv"))
+
+# update simple combined requests doc
+combined_requests <- read_csv(here("specimens", "requests.csv"))
+combined_requests <-
+  combined_requests %>%
+  mutate(scanned = SampleID %in% ct_scanned$SampleID)
+
+write_csv(combined_requests, here("specimens", "scanning_update_feb2025.csv"))
+
+# count scanned by inst
+combined_requests %>%
+  group_by(instid, scanned) %>%
+  count() %>%
+  pivot_wider(names_from = scanned, values_from = n)
+```
+
+```{r}
+tracker_feb_update %>% group_by(updated_note) %>% summarize(n = n())
+# original scanned = 68
+# replacement scanned = 8
+# total scanned = 76
+# to be requested from CAS: 13
+# to be requested from Robert (Southern California): ~20
+# total to be requested: ~33
+# to be sampled along coast: ~10
+# total remaining to be sampled: ~43
+# total = 43 + 76 = 119
+# total that need sequencing: 119 - 68 = 51
+# total that need funds for sequencing (minus 15): 51 - 15 = 36
+```
+
+```{r}
+# CAS REQUEST
+cas_request <- 
+  tracker_feb_update %>%
+  filter(updated_note != "scanned") %>%
+  filter(updated_note == "request nearby CAS") %>%
+  select(Specimen1) %>%
+  rename(SampleID = Specimen1)
+
+write_csv(cas_request, here("specimens", "cas_request2_april2025.csv"))
+```
+
 # Gap specimens
 
 Identify specimens that are not within the 10km buffer used to find replacements, but are able to fill gaps in sampling
@@ -603,7 +645,6 @@ specimens <-
   left_join(museums) %>%
   left_join(ccgp_seq) %>%
   # convert to sf
-  drop_na(x, y) %>%
   st_as_sf(coords = c("x", "y"), crs = 4326) %>%
   st_transform(3310) 
 
@@ -676,3 +717,262 @@ ggplot() +
   theme_void() 
 
 ```
+
+# LACM REQUEST (3/11/2024)
+```{r}
+# Pull out just LACM samples for request
+museum_gaps_lacm <- 
+  museum_gaps2 %>%
+  filter(grepl("LACM", SampleID))
+
+# Replot: All samples seem to be in Southern CA
+ggplot() +
+  geom_sf(data = california) +
+  #geom_sf(data = specimens_buffered, alpha = 0.1, col = "coral", linetype = "dotted", fill = "coral") +
+  geom_sf(data = ccgp_buffered, alpha = 0.1, col = "green", linetype = "dotted", fill = "green") +
+  geom_sf(data = ccgp_sf, aes(col = "CCGP points"), pch = 1) +
+  geom_sf(data = specimens, aes(col = "All specimen points")) +
+  geom_sf(data =  museum_gaps_lacm, aes(col = "Gap points"), alpha = 1) +
+  theme_void() +
+  ggtitle("Gap filling LACM samples")
+
+# Pick representive samples from close samples
+# Samples 1 and 2 are ~60 meters from each other
+# Samples 3 and 4 are ~200 meters from each other
+# Everything else is greater than 5 km
+st_distance(museum_gaps_lacm)
+# picking sample 2 (LACM189941) over sample 1 (LACM189940) because it is a male and the other is female
+# picking sample 4 (LACM189942) over sample 3 (LACM189943) because it is a female and the other is a undetermined
+museum_gaps_lacm_selected <- 
+  museum_gaps_lacm %>% filter(!(SampleID %in% c("LACM189940", "LACM189943")))
+
+# Combine with existing request
+LACM_requests <- 
+  combined_requests %>%
+  filter(instid == "LACM") %>%
+  bind_rows(data.frame(SampleID = museum_gaps_lacm_selected$SampleID, instid = "LACM", type = "gap filler"))
+
+write_csv(LACM_requests %>% select(-scanned), here("specimens", "LACM_requests.csv"))
+```
+
+# Digging more into specimen requests
+
+This code is old, but I am keeping it here in case I need to go back and dig into stuff
+
+```{r}
+requests <-
+  tracker_final %>%
+  # keep only P3
+  filter(!is.na(p3)) %>% 
+  # reformatting so that there is a column with all near specimen IDs (not just the nearest)
+  pivot_longer(cols = starts_with("Specimen"), names_to = "Specimen", values_to = "near_SampleID") %>%
+  # getting coords for near specimens
+  left_join(dplyr::select(museums, SampleID, x, y), by = c("near_SampleID" = "SampleID")) %>%
+  mutate(near_x = x.y, near_y = y.y, x = x.x, y = y.x) %>%
+  # removing NA rows
+  drop_na(near_SampleID) %>%
+  # clean up lifestage/sex data
+  mutate(
+    lifestage = case_when(
+      lifestage == "Adult" ~ "adult",
+      lifestage == "J/A" ~ "adult/juvenile",
+      is.na(lifestage) ~ "undetermined" ,
+      TRUE ~ lifestage
+    ),
+    near_lifestage = case_when(
+      near_lifestage == "Adult" ~ "adult",
+      near_lifestage == "J/A" ~ "adult/juvenile",
+      is.na(near_lifestage) ~ "undetermined",
+      TRUE ~ near_lifestage
+    ),
+    sex = case_when(is.na(sex) ~ "undetermined", TRUE ~ sex),
+    near_sex = case_when(is.na(near_sex) ~ "undetermined", TRUE ~ near_sex),
+    sex = factor(sex),
+    near_sex = factor(near_sex),
+    lifestage = factor(lifestage),
+    near_lifestage = factor(near_lifestage))
+
+```
+
+```{r}
+# checking that none of the near specimens have already been scanned
+ct_requests <- 
+  requests %>% 
+  left_join(mutate(ct_scanned, scanned = TRUE), 
+            by = c("near_SampleID" = "SampleID"))
+
+stopifnot(!any(ct_requests$scanned, na.rm = TRUE))
+```
+
+
+It seems like including some females and unknown lifestages is potentially unavoidable because they fill important gaps, however we could probably exclude the "adult/juveniles".  
+```{r}
+# lifestage and sex of nearby specimens to request
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = requests,
+             aes(x = near_x, y = near_y, pch = near_lifestage, col = near_sex)) +
+  theme_void()
+
+```
+
+There are also some specimens we might not need to replace because there are others close by (depends on how densely we want to sample)
+```{r}
+ggplot() + 
+  geom_sf(data = california) +
+  geom_point(data = tracker_final,
+             aes(x = x, y = y, col = "CCGP samples w/o any options"), cex = 1) +
+  geom_point(data = tracker_final[!is.na(tracker_final$p1) | !is.na(tracker_final$p2),],
+               aes(x = x, y = y, col = "CCGP samples w/ specimens"), cex = 1) +
+  geom_point(data = requests,
+             aes(x = x, y = y, col = "CCGP samples that need replacement")) +
+   geom_point(data = requests[requests$potential_drop,],
+             aes(x = x, y = y, col = "CCGP samples that need replacement,\nbut have other CCGP specimens within 50km")) +
+  theme_void() +
+  scale_color_manual(values = c("orange2", "limegreen", "black", "gray"))
+```
+
+Looking at each point individually:
+```{r, fig.width = 10, fig.height = 10}
+# yes I know this is disgusting figure code...but it works
+# Create a list of ggplot objects
+plts <- map(1:length(unique(requests$SampleID)), ~ {
+  
+  # Subset for a specific 'SampleID'
+  tmp <- requests %>% filter(SampleID == unique(requests$SampleID)[.x])
+  
+  # Create a plot  object for the current 'SampleID'
+  plt <- ggplot() +
+  
+    # Add CA background
+    geom_sf(data = california) +
+    
+    # Add points for females (hidden, but helps w/ legend formatting)
+    geom_point(
+      data = requests[requests$near_sex == "female", ],
+      aes(x = near_x, y = near_y, col = "Female replacement"),
+      cex = 2
+    ) +
+    
+    # Add points for undetermined lifestage females (hidden, but helps w/ legend formatting)
+    geom_point(
+      data = requests[requests$near_lifestage == "undetermined", ],
+      aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"),
+      cex = 2
+    ) +
+    
+    # Add points:
+    geom_point(data = tracker_final[is.na(tracker_final$note),],
+               aes(x = x, y = y, col = "CCGP samples w/o any options"),
+               cex = 1) +
+    geom_point(data = tracker_final[!is.na(tracker_final$p1) |
+                                    !is.na(tracker_final$p2), ],
+               aes(x = x, y = y, col = "CCGP samples w/ specimens"),
+               cex = 1) +
+    geom_point(data = tmp,
+               aes(x = x, y = y, col = "Focal CCGP sample"),
+               cex = 4) +
+    geom_point(
+      data = tmp,
+      aes(x = near_x, y = near_y, col = "Perfect replacements"),
+      cex = 3
+    ) +
+    geom_point(
+      data = tmp[tmp$near_sex == "female", ],
+      aes(x = near_x, y = near_y, col = "Female replacement"),
+      cex = 3
+    ) +
+    geom_point(
+      data = tmp[tmp$near_lifestage == "undetermined", ],
+      aes(x = near_x, y = near_y, col = "Replacement w/ undetermined lifestage"),
+      cex = 3
+    ) +
+    
+    # Add black outline for the currently selected top specimen 
+    geom_point(
+      data = tmp[tmp$Specimen == "Specimen1", ],
+      aes(x = near_x, y = near_y, pch = "Current replacement selection"),
+      col = "black",
+      cex = 3
+    ) +
+    
+    # Set the plot theme to void (no background)
+    theme_void() +
+    
+    # Set the x and y axis limits based on the current 'SampleID' data to zoom in on the map
+    xlim(tmp$x[1] - 0.2,  tmp$x[1] + 0.2) +
+    ylim(tmp$y[1] - 0.2,  tmp$y[1] + 0.2) +
+    
+    # Set the plot title to the current 'SampleID'
+    ggtitle(tmp$SampleID) +
+    
+    # Customize color scales
+    scale_color_manual(
+      values = c(
+        "CCGP samples w/o any options" = "gray",
+        "CCGP samples w/ specimens" = "black",
+        "Focal CCGP sample" = "orange",
+        "Perfect replacements" = "cyan3",
+        "Female replacement" = "red",
+        "Replacement w/ undetermined lifestage" = "magenta"
+      ),
+      breaks = c(
+        "CCGP samples w/o any options",
+        "CCGP samples w/ specimens",
+        "Focal CCGP sample",
+        "Perfect replacements",
+        "Female replacement",
+        "Replacement w/ undetermined lifestage"
+      )
+    ) +
+    
+    scale_shape_manual(values = c("Current replacement selection" = 1))
+  
+  # Return the current ggplot object
+  return(plt)
+})
+suppressWarnings(do.call(ggarrange, c(plts, nrow = 4, ncol = 4, common.legend = TRUE, legend = "top")))
+```
+
+# MVZ project
+
+```{r, fig.width = 5, fig.height = 5}
+df <- 
+  read_csv(here("data", "tracker.csv")) %>%
+  # isolated southern specimens without existing specimens
+  mutate(Samples = 
+           case_when(
+             is.na(updated_note) & y < 34.1 & x > -119 ~ "Proposed ", 
+             TRUE ~ "Existing "
+             )
+         ) %>%
+  # remove one channel island point
+  filter(!(x < -119 & y < 34.1))
+
+
+# get climate data (current, but from paleoclim package)
+library(terra)
+rpaleoclim::paleoclim("cur", "2_5m", region = ext(california), cache_path = here("data", "env", "paleoclim"))
+data <- rpaleoclim::load_paleoclim(here("data", "env", "paleoclim", "CHELSA_cur_V1_2B_r2_5m.zip"))
+data <- project(data, crs(california))
+data <- crop(data, california)
+data <- mask(data, california)
+bio1 <- as.data.frame(data[["bio_1"]], xy = TRUE)
+
+# BIO1 
+
+pdf(here("pdfs", "mvz.pdf"), width = 4, height = 4)
+ggplot(df) +
+  geom_sf(data = california) +
+  geom_raster(data = bio1, aes(x = x, y = y, fill = bio_1)) +
+  labs(fill = "Mean\ntemperature") +
+  geom_point(data = df, aes(x = x, y = y, pch = Samples, col = Samples, cex = Samples))  +
+  geom_point(data = filter(df, Samples == "Proposed "), aes(x = x, y = y), pch = 1, col = "black", cex = 1.7, alpha = 0.9)  +
+  scale_shape_manual(values = c(16, 16)) +
+  scale_color_manual(values = c("black", "#00dab5")) +
+  scale_size_manual(values = c(0.7, 1.7)) +
+  scale_fill_viridis_c(option = "rocket") +
+  theme_void() 
+dev.off()
+```
+
