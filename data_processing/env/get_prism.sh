@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Download PRISM historical temperature data
-# Note: this downloads both annual and monthly mean data, but we ultimately use only the annual mean data
-wget -r ftp://prism.oregonstate.edu/monthly/tmean/
+# Download PRISM historical tmean data (note: this downloads monthly and annual data)
+wget -r ftp://prism.oregonstate.edu/time_series/us/lt/800m/tmean/monthly
 
+# Move to temp
 mkdir -p TEMP
 mv prism.oregonstate.edu/monthly/tmean/* TEMP/
 
