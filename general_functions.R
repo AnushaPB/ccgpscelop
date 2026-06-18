@@ -17,6 +17,7 @@ get_ca <- function() {
 
 get_corrected_coords <- function() {
   cc <-
+    # File from Brad
     readxl::read_excel(here("data", "CCGP_SCOC_coordfixes.xlsx")) %>%
     dplyr::select(SampleID = SequenceID, x = Longitude1, y = Latitude1)
 }
@@ -90,6 +91,10 @@ get_coords <- function(sf = FALSE, all = FALSE) {
     "\nNumber of samples with coordinates before filtering: ", original_nsamp,
     "\nNumber of samples with coordinates after filtering: ", nrow(coords)
   )
+
+  filepath <- here("data", "final_sceloporus_occidentalis_coordinates.csv")
+  write_csv(coords, filepath)
+  message("Final coordinates written to ", filepath)
 
   return(coords)
 }
