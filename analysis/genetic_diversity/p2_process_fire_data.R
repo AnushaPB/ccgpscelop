@@ -200,6 +200,10 @@ print(allowed_groupveg)
 pfs_replac_vals <- terra::extract(pfs_replac, coords_buffer, na.rm = FALSE, ID = TRUE)
 fri_vals <- terra::extract(fri, coords_buffer, na.rm = FALSE, ID = TRUE)
 
+# Confirm that all values are greater than 0 and the only NA values are -9999
+stopifnot(all(unique(fri_vals$FRI_ALLFIR) > 0 | unique(fri_vals$FRI_ALLFIR) == -9999))
+stopifnot(all(unique(pfs_replac_vals$PRC_REPLAC) > 0 | unique(pfs_replac_vals$PRC_REPLAC) == -9999))
+
 frg_mode_with_ties <-
   data.frame(
     ID = fri_vals$ID,
