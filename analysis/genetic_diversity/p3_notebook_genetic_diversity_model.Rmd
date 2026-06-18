@@ -21,6 +21,7 @@ library("nlme")
 library("broom.mixed")
 library("emmeans")
 library("interactions")
+library("spdep")
 ```
 
 # Paths for outputs
@@ -47,12 +48,17 @@ ca_proj <- ca %>% st_transform(3310)
 coords <- get_coords(sf = TRUE)
 coords_proj <- coords %>% st_transform(crs = st_crs(ca_proj))
 
-# Calculate average sampling distance
+# Calculate average nearest-neighbor sampling distance
 dist_mat <- st_distance(coords_proj)
-avg_dist <- median(dist_mat[lower.tri(dist_mat)])
+# Remove self-distances
+diag(dist_mat) <- NA
+# Nearest-neighbor distance for each point
+nearest_dist <- apply(dist_mat, 1, min, na.rm = TRUE)
+# Mean nearest-neighbor distance
+mean_nearest_dist <- mean(nearest_dist, na.rm = TRUE)
 # Convert to km
-avg_dist_km <- round(as.numeric(avg_dist) / 1000, 0)
-avg_dist_km # 333
+mean_nearest_dist_km <- as.numeric(mean_nearest_dist) / 1000
+message(sprintf("Average nearest-neighbor sampling distance: %.2f km", mean_nearest_dist_km))
 ```
 
 # Heterozygosity data
@@ -194,13 +200,10 @@ PRISM mean temperature data from historical data: https://prism.oregonstate.edu/
 # Processed by scripts in data_processing/env
 get_prism <- function(year, output = "df") {
   # Create PRISM path
-  prism_path <- here("data", "env", "prism", "PRISM_tmean_stable_4kmM3", year)
-
-  # List annual file
-  file <- list.files(prism_path, pattern = paste0(year, "_*.bil.bil$"), full.names = TRUE)
+  prism_path <- here("data", "env", "prism", "prism_time_series_us_an_800m_tmean", year, paste0("prism_tmean_us_30s_", year, ".tif"))
 
   # Load data
-  raster <- terra::rast(file)
+  raster <- terra::rast(prism_path)
 
   if (output == "raster"){
     return(raster)
@@ -705,7 +708,7 @@ performance::check_collinearity(ols_model)
 
 # Compare OLS vs GLS
 anova(gls_model, ols_model) # GLS significantly better, but absolute AIC difference is small
-AIC(gls_model) - AIC(ols_model) # -7.83
+AIC(gls_model) - AIC(ols_model) # -6.65
 
 # Coordinates matrix
 coords_mat <- cbind(mod_sf_unique$x, mod_sf_unique$y)
@@ -721,7 +724,7 @@ moran_ols <- moran.test(residuals(ols_model), lw_8)
 # Moran's I for GLS normalized residuals
 moran_gls <- moran.test(residuals(gls_model), lw_8)
 
-print(moran_ols) # 0.15
+print(moran_ols) # 0.14
 print(moran_gls) # 0.15
 
 # Refit final model with OLS since no gains in spatial autocorrelation and OLS is more interpretable (no spatial parameters like lambda)
@@ -746,15 +749,15 @@ emm <- emmeans(final_model, ~ fire_recent | fire_frq)
 contrast(emm, method = "pairwise") # No adjustment because there are only two levels for fire
 # fire_frq = No Fire/Low Frequency:
 #  contrast           estimate       SE  df t.ratio p.value
-#  Unburned - Burned  2.10e-04 1.64e-04 232   1.277  0.2029
+#  Unburned - Burned  2.34e-04 1.60e-04 232   1.467  0.1438
 
 # fire_frq = Intermediate Frequency:
 #  contrast           estimate       SE  df t.ratio p.value
-#  Unburned - Burned  3.11e-05 4.80e-05 232   0.647  0.5180
+#  Unburned - Burned  4.76e-05 4.67e-05 232   1.018  0.3095
 
 # fire_frq = High Frequency:
 #  contrast           estimate       SE  df t.ratio p.value
-#  Unburned - Burned -1.14e-04 5.11e-05 232  -2.235  0.0264
+#  Unburned - Burned -1.08e-04 4.97e-05 232  -2.182  0.0301
 
 # Results are averaged over the levels of: glacier, evt 
 
@@ -768,8 +771,10 @@ common_evt <-
   arrange(desc(n)) %>% 
   filter(n > 10) %>% 
   pull(evt)
+
 tk %>%
   filter(p.value < 0.05)
+# No significant differences between vegetation groups
 
 tk %>% 
   filter(grepl(paste(paste0(common_evt, " - "), collapse = "|"), contrast)) %>%
@@ -781,36 +786,36 @@ tk %>%
 emm <- emmeans(final_model, specs = "fire_frq")
 contrast(emm, method = "tukey", adjust = "tukey")
 #  contrast                                          estimate       SE  df
-#  (No Fire/Low Frequency) - Intermediate Frequency -2.99e-04 9.07e-05 232
-#  (No Fire/Low Frequency) - High Frequency         -2.27e-04 9.26e-05 232
-#  Intermediate Frequency - High Frequency           7.21e-05 3.92e-05 232
+#  (No Fire/Low Frequency) - Intermediate Frequency -2.86e-04 8.82e-05 232
+#  (No Fire/Low Frequency) - High Frequency         -2.31e-04 9.01e-05 232
+#  Intermediate Frequency - High Frequency           5.51e-05 3.83e-05 232
 #  t.ratio p.value
-#   -3.297  0.0032
-#   -2.451  0.0396
-#    1.843  0.1581
+#   -3.244  0.0039
+#   -2.565  0.0294
+#    1.441  0.3218
 
 # Comparison with interaction term
 emm <- emmeans(final_model, ~ fire_frq | fire_recent)
 contrast(emm, method = "pairwise", adjust = "tukey")
 # fire_recent = Unburned:
 #  contrast                                          estimate       SE  df
-#  (No Fire/Low Frequency) - Intermediate Frequency -2.10e-04 6.08e-05 232
-#  (No Fire/Low Frequency) - High Frequency         -6.51e-05 6.06e-05 232
-#  Intermediate Frequency - High Frequency           1.45e-04 4.14e-05 232
+#  (No Fire/Low Frequency) - Intermediate Frequency -1.93e-04 5.93e-05 232
+#  (No Fire/Low Frequency) - High Frequency         -5.97e-05 5.89e-05 232
+#  Intermediate Frequency - High Frequency           1.33e-04 4.03e-05 232
 #  t.ratio p.value
-#   -3.450  0.0019
-#   -1.075  0.5308
-#    3.496  0.0016
+#   -3.251  0.0038
+#   -1.013  0.5694
+#    3.305  0.0031
 
 # fire_recent = Burned:
 #  contrast                                          estimate       SE  df
-#  (No Fire/Low Frequency) - Intermediate Frequency -3.88e-04 1.65e-04 232
-#  (No Fire/Low Frequency) - High Frequency         -3.89e-04 1.67e-04 232
-#  Intermediate Frequency - High Frequency          -4.53e-07 6.00e-05 232
+#  (No Fire/Low Frequency) - Intermediate Frequency -3.80e-04 1.60e-04 232
+#  (No Fire/Low Frequency) - High Frequency         -4.03e-04 1.63e-04 232
+#  Intermediate Frequency - High Frequency          -2.29e-05 5.85e-05 232
 #  t.ratio p.value
-#   -2.355  0.0505
-#   -2.327  0.0541
-#   -0.008  1.0000
+#   -2.367  0.0490
+#   -2.475  0.0372
+#   -0.391  0.9193
 
 # Results are averaged over the levels of: glacier, evt 
 # P value adjustment: tukey method for comparing a family of 3 estimates 
@@ -832,9 +837,9 @@ ghm_significance <- map_dfr(vars_to_test, ~{
 })
 
 ghm_significance %>% 
-  filter(p_value < 0.05)
+   filter(p_value < 0.05)
 #                     removed_var     estimate    p_value
-# 1 poly(csi_past, 2, raw = TRUE) 5.368732e-05 0.02264467
+# 1 poly(csi_past, 2, raw = TRUE) 4.802315e-05 0.03820603
 ```
 
 # Figures
