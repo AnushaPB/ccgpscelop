@@ -112,6 +112,11 @@ csi_stack <-
   map(~resample(.x, paleobio1[[1]]), method = "bilinear") %>% 
   rast()
 
+# Check that all variables fall within a reasonable range (i.e., no conversion mistakes)
+if (any(csi_stack[] < -100 | csi_stack[] > 100, na.rm = TRUE)) {
+  stop("Some values in the climate stability stack are outside the expected range (-100 to 100). Please check the units of the data.")
+}
+
 # Calculate climate stability based on the standard deviation over the stack of rasters
 # Don't remove NAs, use imputation later (NA values are at some points along the coast)
 # If you remove NAs you will get some outliers because some time periods have data and others do not
