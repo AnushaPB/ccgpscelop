@@ -1,3 +1,4 @@
+# !/bin/bash
 conda activate ccgpscelop
 
 # Genome and VCF files

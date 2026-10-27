@@ -1,3 +1,4 @@
+# !/bin/bash
 conda activate ccgpscelop
 
 PLINK=../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6_chr
