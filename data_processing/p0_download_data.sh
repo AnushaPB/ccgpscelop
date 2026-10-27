@@ -10,7 +10,7 @@ mkdir -p ../data/ccgp_data
 
 # Download specific files to the data directory
 
-# LIst files
+# List files
 rsync --list-only ccgp-download.gi.ucsc.edu::ccgp/CCGP-module/58-Sceloporus/
 
 # Callable sites:
