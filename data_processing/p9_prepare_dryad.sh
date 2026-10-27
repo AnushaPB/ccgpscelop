@@ -1,4 +1,6 @@
+
 #!/bin/bash
+
 # Run from scripts/data_processing/
 # Copy files for Dryad archive
 
@@ -9,8 +11,13 @@ GENOME="$DATA/genome"
 
 mkdir -p "$DRYAD"
 
-# VCF files and indices
+# VCF
 cp "$CCGP/58-Sceloporus_complete_coords_annotated_final_samples.vcf.gz" "$DRYAD/"
+
+# PLINK datasets (BED, BIM, FAM)
+cp "$CCGP/58-Sceloporus_complete_coords_annotated_chr."{bed,bim,fam} "$DRYAD/"
+cp "$CCGP/58-Sceloporus_annotated_pruned_0.6_chr."{bed,bim,fam} "$DRYAD/"
+cp "$CCGP/58-Sceloporus_pruned_0.6_thinned_10kb_chr."{bed,bim,fam} "$DRYAD/"
 
 # Sampling coordinates and callable sites
 cp "$CCGP/58-Sceloporus.coords.txt" "$DRYAD/"
@@ -22,6 +29,7 @@ cp "$CCGP/58-Sceloporus.imiss" "$DRYAD/"
 
 # Reference genome and annotation
 cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna" "$DRYAD/"
+cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna.fai" "$DRYAD/"
 cp "$GENOME/annotation/complete.genomic.gff" "$DRYAD/"
 
 # Copy README file
