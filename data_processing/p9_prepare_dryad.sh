@@ -23,10 +23,6 @@ cp "$CCGP/58-Sceloporus_pruned_0.6_thinned_10kb_chr."{bed,bim,fam} "$DRYAD/"
 cp "$CCGP/58-Sceloporus.coords.txt" "$DRYAD/"
 cp "$CCGP/58-Sceloporus_callable_sites.bed" "$DRYAD/"
 
-# Sequencing depth and missingness
-cp "$CCGP/58-Sceloporus.idepth" "$DRYAD/"
-cp "$CCGP/58-Sceloporus.imiss" "$DRYAD/"
-
 # Reference genome and annotation
 cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna" "$DRYAD/"
 cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna.fai" "$DRYAD/"
