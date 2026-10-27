@@ -25,7 +25,7 @@ cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna" "$DRYAD/"
 cp "$GENOME/annotation/complete.genomic.gff" "$DRYAD/"
 
 # Copy README file
-cp "$DATA/README_dryad.md" "$DRYAD/README.md"
+cp "README_dryad.md" "$DRYAD/README.md"
 
 # Zip the Dryad directory
 cd "$DATA"
