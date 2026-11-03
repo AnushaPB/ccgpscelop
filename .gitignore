@@ -59,6 +59,12 @@ analysis/*/*
 !analysis/*/*.Rmd
 !analysis/*/*.md
 !analysis/*/*_files/
+!analysis/*/envs/
+!analysis/*/*.yaml
+!analysis/*/profiles/
+!analysis/*/Snakefile
+!analysis/*/algatr/
+
 
 # History files
 .Rhistory
