@@ -1,4 +1,4 @@
-# Script to reinstall all required packages for genetic diversity analysis
+# Script to install all required packages for genetic diversity analysis
 # Run this script to install all necessary packages
 
 # List of required packages
