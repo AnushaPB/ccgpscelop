@@ -6,7 +6,7 @@ This dataset accompanies the manuscript "Eco-evolutionary processes mediate the 
 
 It includes genetic data, sampling coordinates, callable genomic regions, and the reference genome and annotation used in the study.
 
-These files provide the genomic data used in the main analyses presented in the manuscript. For the code used for these analyses see the corresponding GitHub repository [AnushaPB/ccgpscelop](https://github.com/anushapb/ccgpscelop/tree/main/analysis).
+These files provide the genomic data used in the main analyses presented in the manuscript. For the code used for these analyses see the corresponding GitHub repository [AnushaPB/ccgpscelop](https://github.com/anushapb/ccgpscelop/tree/main/analysis) which is archived on Zenodo ([![DOI](https://zenodo.org/badge/696150420.svg)](https://doi.org/10.5281/zenodo.24091513)).
 
 ## File descriptions
 
