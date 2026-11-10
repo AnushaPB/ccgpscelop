@@ -38,3 +38,18 @@ plink --bfile ../data/ccgp_data/58-Sceloporus_annotated_pruned_0.6 --allow-extra
 
 # Count number of individuals in filtered PLINK file
 wc -l ../data/ccgp_data/58-Sceloporus_complete_coords_annotated_chr.fam # 257
+
+# Count callable sites per autosome
+awk '$1 ~ /^chr([1-9]|10)$/ {sites[$1] += $3 - $2}
+     END {for (chr in sites) print chr, sites[chr]}' \
+    ../data/ccgp_data/58-Sceloporus_callable_sites.bed | sort -V
+# chr1 354154130
+# chr2 307261242
+# chr3 259828162
+# chr4 239652673
+# chr5 182084322
+# chr6 112154235
+# chr7 46858537
+# chr8 37785102
+# chr9 35288203
+# chr10 13429574
