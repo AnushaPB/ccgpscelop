@@ -104,7 +104,12 @@ pop_label <-
   group_by(pop) %>%
   summarize(x = mean(X, na.rm = TRUE), y = mean(Y, na.rm = TRUE)) %>%
   left_join(distinct(select(gg_df_mean, pop))) %>%
-  drop_na()
+  drop_na() %>%
+  # Move labels 1 and 2 to the left of their original positions
+  mutate(
+    label_x = if_else(as.character(pop) %in% c("1", "2"), x + 1, x),
+    label_y = if_else(as.character(pop) %in% c("1", "2"), y + 0.5, y)
+  )
 
 plt1 <-
   ggplot(data = gg_df) +
@@ -132,8 +137,13 @@ plt2 <-
   ggplot() +
   geom_sf(data = ca, col = NA) +
   geom_sf(data = pop_gg_df, aes(fill = pop), cex = 2, pch = 21, col = "NA")+
-  geom_point(data = pop_label, aes(x = x, y = y, fill = pop), cex = 7, pch = 21, alpha = 0.7) +
-  geom_text(data = pop_label, aes(x = x, y = y, label = pop), cex = 5) +
+  geom_segment(
+    data = filter(pop_label, as.character(pop) %in% c("1", "2")),
+    aes(x = x, y = y, xend = label_x - 0.2, yend = label_y - 0.15),
+    linewidth = 0.4, color = "black"
+  ) +
+  geom_point(data = pop_label, aes(x = label_x, y = label_y, fill = pop), cex = 7, pch = 21, alpha = 0.5) +
+  geom_text(data = pop_label, aes(x = label_x, y = label_y, label = pop), cex = 5) +
   labs(col = "Population") +
   scale_fill_manual(values = fill_cols)  +
   theme_void() +
@@ -195,19 +205,29 @@ pop_label <-
   group_by(pop) %>%
   summarize(x = mean(X, na.rm = TRUE), y = mean(Y, na.rm = TRUE)) %>%
   left_join(distinct(select(gg_df_mean, pop))) %>%
-  drop_na()
+  drop_na() %>%
+  # Move labels 1 and 2 to the left of their original positions
+  mutate(
+    label_x = if_else(as.character(pop) %in% c("1", "2"), x + 1, x),
+    label_y = if_else(as.character(pop) %in% c("1", "2"), y + 0.5, y)
+  )
 
-plt5 <- 
+plt5 <-
   ggplot() +
   geom_sf(data = ca, col = NA) +
-  geom_sf(data = pop_gg_df, aes(fill = pop), cex = 2, pch = 21, col = "NA")+
-  geom_point(data = pop_label, aes(x = x, y = y, fill = pop), cex = 7, pch = 21, alpha = 0.5) +
-  geom_text(data = pop_label, aes(x = x, y = y, label = pop), cex = 5) +
-  scale_fill_manual(values = fill_cols)  +
+  geom_sf(data = pop_gg_df, aes(fill = pop), cex = 2, pch = 21, col = "NA") +
+  geom_segment(
+    data = filter(pop_label, as.character(pop) %in% c("1", "2")),
+    aes(x = x, y = y, xend = label_x - 0.2, yend = label_y - 0.15),
+    linewidth = 0.4, color = "black"
+  ) +
+  geom_point(data = pop_label, aes(x = label_x, y = label_y, fill = pop),
+             cex = 7, pch = 21, alpha = 0.5) +
+  geom_text(data = pop_label, aes(x = label_x, y = label_y, label = pop), cex = 5) +
+  scale_fill_manual(values = fill_cols) +
+  coord_sf(clip = "off") +
   theme_void() +
-  theme(
-    legend.position = "none"
-  )
+  theme(legend.position = "none")
 
 pdf(here(plotpath, "figure_smcpp.pdf"), width = 11.5, height = 4.5)
 cowplot::plot_grid(plt1, plt5, ncol = 2, rel_widths = c(0.7, 0.3), labels = c("A", "B"), label_size = 18)
