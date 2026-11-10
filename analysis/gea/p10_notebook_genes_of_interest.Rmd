@@ -1,7 +1,6 @@
 ```{r}
 library(tidyverse)
 library(here)
-source(here("analysis", "gea", "functions_go.R"))
 source(here("analysis", "gea", "functions_selection_stats.R"))
 outpath <- here("analysis", "gea", "outputs")
 plotpath <- here("analysis", "gea", "plots")
