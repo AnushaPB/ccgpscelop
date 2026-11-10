@@ -28,6 +28,9 @@ cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna" "$DRYAD/"
 cp "$GENOME/rSceOcc1.20250428.p_ctg_chr_names.fna.fai" "$DRYAD/"
 cp "$GENOME/annotation/complete.genomic.gff" "$DRYAD/"
 
+# GEA genes with nonsynonymous variants
+cp "../analysis/gea/outputs/nonsynonymous_gea_genes.csv" "$DRYAD/"
+
 # Copy README file
 cp "README_dryad.md" "$DRYAD/README.md"
 

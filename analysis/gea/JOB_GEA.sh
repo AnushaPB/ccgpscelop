@@ -29,3 +29,6 @@ Rscript -e "rmarkdown::render('p10_notebook_genes_of_interest.Rmd')"
 
 # Render the R Markdown document for windowed pi
 Rscript -e "rmarkdown::render('p11_notebook_window_pi.Rmd')"
+
+# Export for dryad
+Rscript p12_gea_dryad_export.R
